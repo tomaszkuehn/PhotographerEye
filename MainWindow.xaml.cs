@@ -36,6 +36,7 @@ public partial class MainWindow : Window
     private BitmapSource? _baseBitmap;
     private ImageInfo? _baseInfo;
     private bool _baseIsFull;
+    private bool _saving;
     private Size _fullDecodeBox;
     private int _redecodeSeq;
     private int _histSeq;
@@ -542,6 +543,86 @@ public partial class MainWindow : Window
     private void OnPrevClick(object sender, RoutedEventArgs e) => Navigate(-1);
     private void OnNextClick(object sender, RoutedEventArgs e) => Navigate(1);
 
+    private void OnSaveClick(object sender, RoutedEventArgs e) => SaveCurrentImage();
+
+    private void UpdateSaveState()
+    {
+        if (BtnSave is null) return;
+        bool modified = Math.Abs(ShadowSlider.Value) > 0.0001 || Math.Abs(GammaSlider.Value - 1.0) > 0.0005;
+        BtnSave.IsEnabled = modified && _currentPath is not null;
+    }
+
+    private void SaveCurrentImage()
+    {
+        string? path = _currentPath;
+        if (path is null || _files.Count == 0 || _saving) return;
+
+        _saving = true;
+        BtnSave.IsEnabled = false;
+        Mouse.OverrideCursor = Cursors.Wait;
+        double s = ShadowSlider.Value / 100.0;
+        double g = GammaSlider.Value;
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var info = ImageLoader.GetInfo(path);
+                var full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
+                var processed = AdjustmentsProcessor.Apply(full, s, g);
+                if (processed is null) throw new InvalidOperationException("Nie udało się przetworzyć obrazu");
+                string dest = UniqueEditedPath(path);
+                SaveEncoded(processed, path, dest);
+                Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight}");
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (IsCurrent(path)) SetStatus($"Zapisano: {Path.GetFileName(dest)}", error: false);
+                    Mouse.OverrideCursor = null;
+                });
+            }
+            catch (Exception ex)
+            {
+                Debug.Log($"SAVE ERROR: [{ex.GetType().Name}] {ex.Message}\n{ex.StackTrace}");
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (IsCurrent(path)) SetStatus($"Błąd zapisu: {ex.Message}", error: true);
+                    Mouse.OverrideCursor = null;
+                });
+            }
+            finally
+            {
+                _saving = false;
+                Dispatcher.BeginInvoke(UpdateSaveState);
+            }
+        });
+    }
+
+    private static string UniqueEditedPath(string path)
+    {
+        string dir = Path.GetDirectoryName(path)!;
+        string name = Path.GetFileNameWithoutExtension(path);
+        string ext = Path.GetExtension(path).ToLowerInvariant() is ".jpg" or ".jpeg" ? ".jpg" : ".png";
+        string candidate = Path.Combine(dir, $"{name}_edited{ext}");
+        int n = 2;
+        while (File.Exists(candidate))
+        {
+            candidate = Path.Combine(dir, $"{name}_edited{n}{ext}");
+            n++;
+        }
+        return candidate;
+    }
+
+    private static void SaveEncoded(BitmapSource image, string sourcePath, string destPath)
+    {
+        BitmapEncoder encoder = Path.GetExtension(sourcePath).ToLowerInvariant() is ".jpg" or ".jpeg"
+            ? new JpegBitmapEncoder { QualityLevel = 92 }
+            : new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(image));
+        using var fs = File.Create(destPath);
+        encoder.Save(fs);
+    }
+
     private void OnWinMinimizeClick(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
 
     private void OnWinMaximizeClick(object sender, RoutedEventArgs e)
@@ -631,6 +712,7 @@ public partial class MainWindow : Window
         _showHistogram = true;
         ShadowValue.Text = $"{Math.Round(ShadowSlider.Value)} %";
         GammaValue.Text = GammaSlider.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+        UpdateSaveState();
         if (_adjustTimer is not null)
         {
             _adjustTimer.Stop();
@@ -697,6 +779,13 @@ public partial class MainWindow : Window
         if (e.Key == Key.O && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
             ShowOpenDialog();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.S && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            if (BtnSave.IsEnabled) SaveCurrentImage();
             e.Handled = true;
             return;
         }

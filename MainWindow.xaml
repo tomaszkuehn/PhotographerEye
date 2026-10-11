@@ -77,9 +77,9 @@
                 <Button x:Name="BtnOpen" Content="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26"
                         Style="{StaticResource ToolButton}" Click="OnOpenClick" ToolTip="Otwórz (Ctrl+O)" />
 
-                <Button x:Name="BtnPrev" Content="&#x2039;" FontSize="15" Padding="6,1" Style="{StaticResource ToolButton}" Click="OnPrevClick" />
                 <TextBlock x:Name="CounterText" VerticalAlignment="Center" Margin="5,0" MinWidth="52" TextAlignment="Center" Text="&#x2013; / &#x2013;" />
-                <Button x:Name="BtnNext" Content="&#x203A;" FontSize="15" Padding="6,1" Style="{StaticResource ToolButton}" Click="OnNextClick" />
+                <Button x:Name="BtnSave" Content="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" IsEnabled="False"
+                        Style="{StaticResource ToolButton}" Click="OnSaveClick" ToolTip="Zapisz zmodyfikowane zdjęcie (Ctrl+S)" />
 
                 <Border Style="{StaticResource ToolSeparator}" />
 

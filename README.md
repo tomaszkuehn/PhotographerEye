@@ -4,7 +4,7 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 
 ## Funkcje
 
-- Podgląd obrazów z folderu, nawigacja (`‹`/`›`, strzałki, Home/End)
+- Podgląd obrazów z folderu, nawigacja (strzałki, Home/End)
 - Zoom 10–400%: rolka myszy, `+`/`-`, `1` — 100%, `0`/przycisk „Dopasuj" — dopasuj do okna, dwuklik — przełączanie fit/100%
 - Pan: przeciąganie myszką (gdy obraz większy od okna); obraz zawsze wyśrodkowany i nieucięty
 - Korekcja cieni −50%…+70% (podnoszenie i przyciemnianie; pipeline liniowy sRGB, miękka maska luminancji — styl Photoshop) i gamma 0.50–2.00 (LUT środkowych tonów)
@@ -17,6 +17,7 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 - Strzałki przesuwania obrazów na lewym/prawym brzegu okna
 - Symbol ustawień (⚙) w prawym górnym rogu → „O aplikacji…" (autor, e-mail, GitHub, licencja)
 - Reset korekt automatycznie przy przełączeniu obrazu oraz ręcznie: `R`, przycisk „Reset", podwójny klik na suwak
+- Zapis zmodyfikowanego zdjęcia (Ctrl+S lub przycisk zapisu na pasku) w rozdzielczości oryginału — JPG (jakość 92) lub PNG, plik obok oryginału z przyrostkiem `_edited`; przycisk aktywny tylko przy niezerowych korektach
 - Drag & drop pliku, otwieranie przez argument CLI, `Ctrl+O`
 - Ustawienia zapisywane w `%AppData%\ImgViewer\settings.json`
 
@@ -28,7 +29,7 @@ Portable: `dist\ImgViewer.exe [plik|folder]` — bez instalacji, .NET wbudowany 
 
 | Klucz | Akcja |
 |---|---|
-| `‹`/`›`, ←/→, PgUp/PgDn | następny/poprzedni obraz |
+| ←/→, PgUp/PgDn | następny/poprzedni obraz |
 | Home/End | pierwszy/ostatni obraz |
 | rolka myszy | zoom (z punktem pod kursorem) |
 | `Shift`+rolka | przesuwanie poziome |
@@ -36,6 +37,7 @@ Portable: `dist\ImgViewer.exe [plik|folder]` — bez instalacji, .NET wbudowany 
 | `R` | reset korekt |
 | spacja (przytrzymaj) | podgląd oryginału |
 | `Ctrl+O` | otwórz plik |
+| `Ctrl+S` | zapis zmodyfikowanego zdjęcia |
 
 ## Budowanie
 
