@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private bool _baseIsFull;
     private Size _fullDecodeBox;
     private int _redecodeSeq;
+    private int _histSeq;
     private CancellationTokenSource? _redecodeCts;
     private bool _suppressZoomUi;
     private readonly DispatcherTimer _saveTimer;
@@ -155,6 +156,7 @@ public partial class MainWindow : Window
 
         CounterText.Text = $"{idx + 1} / {_files.Count}";
         Title = $"{Path.GetFileName(path)} — {idx + 1}/{_files.Count} — ImgViewer";
+        HistogramPanel.Visibility = Visibility.Hidden;
         HintPanel.Visibility = Visibility.Collapsed;
         SetStatus("Wczytywanie…", error: false);
 
@@ -325,6 +327,7 @@ public partial class MainWindow : Window
         {
             _applyCts?.Cancel();
             Viewer.SetSource(raw, info.DisplaySize);
+            UpdateHistogram(path, raw);
             return;
         }
 
@@ -337,18 +340,50 @@ public partial class MainWindow : Window
         {
             try
             {
-                var processed = AdjustmentsProcessor.Apply(raw, s, g);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var processed = AdjustmentsProcessor.Apply(raw, s, g, out var hist);
+                sw.Stop();
+                Debug.Log($"APPLY: {sw.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##}");
                 if (processed is null || ct.IsCancellationRequested) return;
                 Dispatcher.BeginInvoke(() =>
                 {
                     if (!IsCurrent(path) || !ReferenceEquals(_baseBitmap, raw)) return;
                     Viewer.SetSource(processed, info.DisplaySize);
+                    if (hist is not null) ApplyHistogram(path, hist);
                 });
             }
             catch (Exception)
             {
             }
         });
+    }
+
+    private void UpdateHistogram(string path, BitmapSource src)
+    {
+        ApplyHistogram(path, null);
+        int seq = Interlocked.Increment(ref _histSeq);
+        _ = Task.Run(() =>
+        {
+            var hist = AdjustmentsProcessor.ComputeHistogram(src);
+            if (hist is null) return;
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (seq != Volatile.Read(ref _histSeq) || !IsCurrent(path)) return;
+                ApplyHistogram(path, hist);
+            });
+        });
+    }
+
+    private void ApplyHistogram(string path, HistogramData? hist)
+    {
+        if (!IsCurrent(path)) return;
+        if (hist is null)
+        {
+            HistogramPanel.Visibility = Visibility.Hidden;
+            return;
+        }
+        HistogramPanel.Visibility = Visibility.Visible;
+        HistogramPanel.SetHistogram(hist.Lum, hist.R, hist.G, hist.B);
     }
 
     private void PrefetchNeighbors(string path, Size previewBox)

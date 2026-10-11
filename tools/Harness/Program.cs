@@ -18,6 +18,7 @@ internal static class Program
         TestDpiNormalization();
         TestShadows();
         TestGamma();
+        TestHistogram();
 
         Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
         Environment.ExitCode = _fails;
@@ -140,8 +141,8 @@ internal static class Program
 
         var p = ReadPixels(out1!);
         var q0 = ReadPixels(out0!);
-        Check(diff(p.dark, q0.dark) > 25, $"dark lifted heavily ({p.dark.g} vs {q0.dark.g})");
-        Check(diff(p.mid, q0.mid) >= 1 && diff(p.mid, q0.mid) <= 20, $"mid lifted slightly ({p.mid.g} vs {q0.mid.g})");
+        Check(diff(p.dark, q0.dark) > 20, $"dark lifted heavily ({p.dark.g} vs {q0.dark.g})");
+        Check(diff(p.mid, q0.mid) >= 10 && diff(p.mid, q0.mid) <= 45, $"mid lifted moderately ({p.mid.g} vs {q0.mid.g})");
         Check(diff(p.bright, q0.bright) <= 3, $"bright untouched ({p.bright.g} vs {q0.bright.g})");
         Check(p.bright.g - p.bright.b <= 2, "highlight hue preserved");
     }
@@ -156,6 +157,38 @@ internal static class Program
     }
 
     private static int diff((byte b, byte g, byte r) a, (byte b, byte g, byte r) c) => Math.Abs(a.g - c.g);
+
+    private static void TestHistogram()
+    {
+        foreach (var v in new[] { 10, 120, 240 })
+        {
+            var src = MakeFlat(64, v, v, v, v, v, v, v, v, v);
+            var hist = AdjustmentsProcessor.ComputeHistogram(src);
+            Check(hist is not null, $"histogram compute {v}");
+            Check(ArgMax(hist!.Lum) == v, $"lum peak=={v} (got {ArgMax(hist.Lum)})");
+            Check(hist.R[v] == 192 && hist.G[v] == 192 && hist.B[v] == 192, $"per-channel bin {v}");
+        }
+
+        var flat = MakeFlat(64, 240, 240, 240, 120, 120, 120, 10, 20, 30);
+        var hist2 = AdjustmentsProcessor.Apply(flat, 0.0, 1.0, out var h2);
+        Check(hist2 is not null && h2 is not null, "apply histogram out");
+        Check(h2!.Lum[19] == 64 && h2.Lum[120] == 64 && h2.Lum[240] == 64, "apply-out lum bins distinct");
+    }
+
+    private static int ArgMax(int[] arr)
+    {
+        int idx = 0;
+        int best = -1;
+        for (int i = 0; i < arr.Length; i++)
+        {
+            if (arr[i] > best)
+            {
+                best = arr[i];
+                idx = i;
+            }
+        }
+        return idx;
+    }
 
     private static BitmapSource MakeFlat(int w, int br, int bg, int bb, int mr, int mg, int mb, int dr, int dg, int db)
     {

@@ -1,0 +1,162 @@
+Jak zbudowac aplikacje do edycji obrazow jpg?
+
+Najlepszy fundament to **Python + OpenCV/NumPy + Qt** (PySide6): dekodujesz JPG do pikseli, pracujesz na nieliniowości sRGB, budujesz parametryczny pipeline edycji i renderujesz podgląd na żywo. Pillow nadaje się do prostych operacji, ale do histogramu, masek i cieni OpenCV daje znacznie większą kontrolę. [pillow.readthedocs](https://pillow.readthedocs.io/en/stable/reference/ImageEnhance.html)
+
+## Architektura aplikacji
+
+```text
+UI (PySide6 / Qt)
+ ├─ podgląd obrazu + histogram
+ ├─ suwaki: exposure, shadows, blacks, contrast, saturation
+ └─ maska / brush do lokalnej korekcji
+
+Editor Core
+ ├─ ImageDocument: original pixels, metadata, undo stack
+ ├─ Adjustments: parametry, nie piksele
+ ├─ Pipeline: decode → tone mapping → local edits → preview/export
+ └─ Cache: miniatura, histogram, podgląd w niskiej rozdzielczości
+
+I/O
+ ├─ JPEG decode/encode
+ ├─ EXIF preservation
+ └─ sidecar JSON z ustawieniami
+```
+
+Kluczowa zasada: **nie modyfikuj na bieżąco oryginalnego JPG**. Trzymaj suwaki jako parametry i przeliczaj tylko podgląd; pełnowymiarowy eksport wykonuj dopiero przy zapisie.
+
+## Pipeline obrazu
+
+1. **Dekoduj JPG** do tablicy `float32` w zakresie 0–1.
+2. **Pracuj w przestrzeni liniowej** dla ekspozycji i cieni: usuń gamma sRGB, zastosuj mnożenie ekspozycji, wróć do sRGB.
+3. **Rozjaśnianie cieni** zastosuj tylko do dolnej części tonalnej, z miękkim przejściem.
+4. **Czernie i kontrast** koryguj po rozjaśnieniu cieni.
+5. **Histogram** licz z finalnego podglądu, nie z surowych parametrów.
+6. **Eksport** zapisz jako JPG raz, z zachowaniem EXIF i Orientation.
+
+Pillow udostępnia proste `Brightness`, `Contrast`, `Color` i `Sharpness`, gdzie wartość 1.0 zachowuje obraz oryginalny; to dobre narzędzie do szybkiego MVP, ale mniej kontrolowalne niż własna krzywa tonalna. [pillow.readthedocs](https://pillow.readthedocs.io/en/stable/reference/ImageEnhance.html)
+
+## Rdzeń w Pythonie
+
+```python
+import cv2
+import numpy as np
+
+def srgb_to_linear(img):
+    return np.where(
+        img <= 0.04045,
+        img / 12.92,
+        ((img + 0.055) / 1.055) ** 2.4,
+    ).astype(np.float32)
+
+def linear_to_srgb(img):
+    return np.where(
+        img <= 0.0031308,
+        img * 12.92,
+        1.055 * np.maximum(img, 0) ** (1 / 2.4) - 0.055,
+    ).clip(0, 1)
+
+def lift_shadows(img, amount=0.0, threshold=0.35, softness=0.25):
+    """img: float32 RGB 0..1; amount: 0..1"""
+    lum = img @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+
+    # Miękka maska tylko dla ciemnych tonów
+    lower = threshold - softness
+    upper = threshold + softness
+    mask = np.clip((upper - lum) / (upper - lower), 0, 1)
+    mask = mask[..., None]
+
+    # Podniesienie cieni z ochroną przed przepaleniem
+    lifted = 1 - (1 - img) ** (1 + 2 * amount)
+    return img * (1 - mask) + lifted * mask
+
+def apply_exposure(img, ev=0.0):
+    return img * (2 ** ev)
+
+def adjust_blacks(img, amount=0.0):
+    # amount > 0 podnosi czernie, amount < 0 przyciemnia
+    return np.clip(img + amount * 0.15, 0, 1)
+
+def process(path, exposure=0.0, shadows=0.0, blacks=0.0):
+    bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+
+    lin = srgb_to_linear(rgb)
+    lin = apply_exposure(lin, exposure)
+    lin = lift_shadows(lin, shadows)
+    out = linear_to_srgb(lin)
+    out = adjust_blacks(out, blacks)
+
+    return (out * 255).round().astype(np.uint8)
+```
+
+To jest sensowny punkt startowy: `exposure` działa w świetle liniowym, a `shadows` wpływa głównie na ciemne partie dzięki masce opartej na luminancji. OpenCV dokumentuje CLAHE jako metodę adaptacyjnego wyrównania histogramu z podziałem obrazu na kafle i ograniczeniem kontrastu — przydatne jako opcjonalny, zaawansowany tryb „local contrast”. [helpx.adobe](https://helpx.adobe.com/lightroom/desktop/edit-photos/edit-photos.html)
+
+## Histogram i clipping
+
+Histogram rób per kanał RGB oraz dla luminancji:
+
+```python
+def histogram_rgb(rgb_u8, bins=256):
+    hist = []
+    for c in range(3):
+        h, _ = np.histogram(rgb_u8[..., c], bins=bins, range=(0, 256))
+        hist.append(h)
+    return np.stack(hist)
+
+def clipping_report(rgb_u8):
+    black = np.mean(np.all(rgb_u8 <= 1, axis=-1))
+    white = np.mean(np.all(rgb_u8 >= 254, axis=-1))
+    return black, white
+```
+
+W UI pokaż:
+- histogram luminancji jako główny,
+- RGB jako trzy nakładki,
+- niebieskie/niebieskawe zaznaczenie przyciętych cieni,
+- czerwone zaznaczenie przepalonych świateł.
+
+To odwzorowuje standardowy sposób pracy z histogramem i wskaźnikami clippingu w edytorach zdjęć. 
+
+## UI i wydajność
+
+- **Podgląd:** przetwarzaj wersję maks. 1200–2000 px w dłuższym boku.
+- **Pełny obraz:** przetwarzaj dopiero przy eksporcie.
+- **Undo/redo:** przechowuj listę parametrów, a nie kopie pikseli.
+- **Suwaki:** debounce około 30–60 ms albo przetwarzaj w wątku roboczym.
+- **GPU opcjonalnie:** OpenCV z CUDA, Vulkan lub przetwarzanie w shaderze; dla wersji desktopowej zwykle wystarczy NumPy/OpenCV.
+- **Format projektu:** zapisuj `photo.jpg + photo.edit.json`, aby edycje były odwracalne.
+
+## Eksport JPG
+
+- Domyślna jakość: 90–95.
+- Zachowaj EXIF, orientację, datę i ewentualnie profil kolorów.
+- Nie nadpisuj pliku źródłowego: zapisuj np. `photo_edited.jpg`.
+- Przy wielokrotnych eksportach unikaj ponownego kompresowania już skompresowanego JPG.
+
+JPEG dekodowanie obejmuje m.in. dekodowanie Huffmana, odwrotną kwantyzację i IDCT, a ponowny zapis jest stratny — dlatego edycja powinna być wykonywana raz, na końcu workflow. [geeksforgeeks](https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/)
+
+## Rozbudowa w kolejnych wersjach
+
+| Funkcja | Implementacja |
+|---|---|
+| Lokalne rozjaśnianie pędzlem | Maska 8-bit/float, Gaussowskie rozmycie krawędzi, blendowanie wyniku |
+| Krzywa tonalna | Interpolacja punktów kontrolnych, LUT 256-elementowy |
+| CLAHE | `cv2.createCLAHE()` na kanale L w LAB; parametry `clipLimit`, `tileGridSize`  [helpx.adobe](https://helpx.adobe.com/lightroom/desktop/edit-photos/edit-photos.html) |
+| Redukcja szumu | `cv2.fastNlMeansDenoisingColored` tylko w maskowanych cieniach |
+| Auto-shadow lift | Percentyl histogramu, np. podnieś 5. percentyl luminancji do zadanego poziomu |
+| Batch | Kolejka zadań + te same parametry dla wielu plików |
+
+OpenCV pokazuje również bardziej zaawansowane podejście do cieni: detekcję na podstawie niskiej luminancji i nasycenia, morfologiczne czyszczenie maski oraz blendowanie skorygowanej luminancji tylko w cieniu. To dobry kierunek, gdy chcesz rozjaśniać realne cienie, a nie cały dolny zakres tonalny. [docs.opencv](https://docs.opencv.org/5.0/main_modules/classcv_1_1CLAHE.html)
+
+## Minimalny stack
+
+```text
+Python 3.11+
+PySide6          # GUI
+OpenCV-Python    # dekodowanie, filtry, CLAHE, maski
+NumPy            # pipeline tonalny
+piexif / exiftool # EXIF
+matplotlib lub własny widget Qt # histogram
+```
+
+Zacznij od jednego okna: wczytanie JPG, histogram, trzy suwaki (`Exposure`, `Shadows`, `Blacks`), podgląd i eksport. Gdy to działa stabilnie, dodaj lokalne maski, krzywą tonalną i CLAHE.
