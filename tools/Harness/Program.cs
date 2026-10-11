@@ -14,6 +14,17 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--probe")
+        {
+            ProbeDecode(args[1]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--exif6")
+        {
+            MakeExifJpegBySplice(args[1], args[2], 6);
+            Console.WriteLine($"OK {args[2]}");
+            return;
+        }
         if (args.Length > 0)
         {
             DiagStretch(args);
@@ -25,6 +36,8 @@ internal static class Program
         TestGamma();
         TestHistogram();
         TestAutoStretch();
+        TestCrossImageSwitch();
+        TestExifRotation();
 
         Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
         Environment.ExitCode = _fails;
@@ -265,6 +278,60 @@ internal static class Program
         return src;
     }
 
+    private static void MakeExifJpegBySplice(string src, string dst, ushort orientation)
+    {
+        byte[] jpg = File.ReadAllBytes(src);
+        if (jpg[0] != 0xFF || jpg[1] != 0xD8) throw new InvalidDataException("not a jpeg");
+
+        // TIFF (little endian) IFD0 z jednym tagiem: Orientation (0x0112) SHORT, count 1, value
+        var tiff = new byte[]
+        {
+            (byte)'I', (byte)'I', 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00,
+            0x01, 0x00,
+            0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, (byte)orientation, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
+        };
+        var head = new byte[] { (byte)'E', (byte)'x', (byte)'i', (byte)'f', 0x00, 0x00 };
+        var payload = new byte[head.Length + tiff.Length];
+        head.CopyTo(payload, 0);
+        tiff.CopyTo(payload, head.Length);
+
+        int app1Len = payload.Length + 2;
+        var app1 = new byte[2 + 2 + payload.Length];
+        app1[0] = 0xFF; app1[1] = 0xE1;
+        app1[2] = (byte)(app1Len >> 8); app1[3] = (byte)(app1Len & 0xFF);
+        payload.CopyTo(app1, 4);
+
+        var outb = new byte[2 + app1.Length + (jpg.Length - 2)];
+        outb[0] = 0xFF; outb[1] = 0xD8;
+        app1.CopyTo(outb, 2);
+        Array.Copy(jpg, 2, outb, 2 + app1.Length, jpg.Length - 2);
+        File.WriteAllBytes(dst, outb);
+    }
+
+    private static void ProbeDecode(string path)
+    {
+        try
+        {
+            var info = ImageLoader.GetInfo(path);
+            Console.WriteLine($"{Path.GetFileName(path)}: info={info.Width}x{info.Height} orient={info.Orientation}");
+            try
+            {
+                var img = ImageLoader.LoadScaled(path, info, 1000, 800);
+                Console.WriteLine($"  load ok: {img?.PixelWidth}x{img?.PixelHeight}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  LoadScaled FAIL: [{ex.GetType().Name}] {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"{Path.GetFileName(path)}: GetInfo FAIL [{ex.GetType().Name}] {ex.Message}");
+        }
+    }
+
     private static void DiagStretch(string[] paths)
     {
         foreach (var path in paths)
@@ -336,6 +403,89 @@ internal static class Program
 
     private static string Fmt(byte[]? st) =>
         st is null ? "null" : string.Join(",", st);
+
+    private static void TestExifRotation()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "opencode");
+        Directory.CreateDirectory(dir);
+        string baseJpg = Path.Combine(dir, "exif_base.jpg");
+        if (!File.Exists(baseJpg))
+        {
+            var bmp = MakeGraySource(403, 302);
+            var enc = new JpegBitmapEncoder { QualityLevel = 90 };
+            enc.Frames.Add(BitmapFrame.Create(bmp));
+            using var fs = File.Create(baseJpg);
+            enc.Save(fs);
+        }
+        string jpg = Path.Combine(dir, "exif_rot6.jpg");
+        MakeExifJpegBySplice(baseJpg, jpg, 6);
+
+        var info = ImageLoader.GetInfo(jpg);
+        Check(info.Orientation == 6 && info.RotatedQuarter, $"exif orientation parsed (orient={info.Orientation})");
+        Check(info.Width < info.Height, $"exif display portrait ({info.Width}x{info.Height})");
+
+        try
+        {
+            var img = ImageLoader.LoadScaled(jpg, info, 300, 400);
+            Check(img is not null && img.PixelHeight > img.PixelWidth,
+                  $"exif decode+rotate portrait ({img?.PixelWidth}x{img?.PixelHeight})");
+            Check(Math.Abs(img!.DpiX - 96) < 0.01, $"exif result dpi 96 ({img.DpiX:0.#})");
+            img.CopyPixels(new Int32Rect(0, 0, 1, 1), new byte[4], 4, 0);
+            Check(true, "exif result fully materialized (CopyPixels)");
+        }
+        catch (Exception ex)
+        {
+            Check(false, $"exif load threw: [{ex.GetType().Name}] {ex.Message}");
+        }
+    }
+
+    private static BitmapSource MakeGraySource(int w, int h)
+    {
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        for (int i = 0; i < buf.Length; i += 4)
+        {
+            buf[i] = 128;
+            buf[i + 1] = 128;
+            buf[i + 2] = 128;
+            buf[i + 3] = 255;
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
+    }
+
+    private static void TestCrossImageSwitch()
+    {
+        var vp = new Size(800, 533);
+        var land = MakeGraySource(380, 285);
+        var landNative = new Size(4000, 3000);
+        var port = MakeGraySource(285, 380);
+        var portNative = new Size(3000, 4000);
+        var portHi = MakeGraySource(570, 760);
+
+        var v = MakeViewer(vp, land, landNative);
+        v.SetZoom(2.0);
+        double zoomA = v.Zoom;
+        double wA = v.TestDisplayedWidth, hA = v.TestDisplayedHeight;
+
+        v.SetSource(port, portNative);
+        double wB = v.TestDisplayedWidth, hB = v.TestDisplayedHeight;
+        Check(Math.Abs(wB / hB - 0.75) < 0.01,
+              $"portrait aspect correct after zoomed switch (w/h={wB / hB:0.####})");
+        Check(Math.Abs(v.Zoom - zoomA) < 0.005, $"zoom preserved across switch ({zoomA:0.####} -> {v.Zoom:0.####})");
+
+        v.SetSource(portHi, portNative);
+        double wC = v.TestDisplayedWidth, hC = v.TestDisplayedHeight;
+        Check(Math.Abs(wC - wB) < 0.5 && Math.Abs(hC - hB) < 0.5,
+              $"higher-res redecode keeps displayed size ({wB:0.#}x{hB:0.#} -> {wC:0.#}x{hC:0.#})");
+        Check(Math.Abs(wC / hC - 0.75) < 0.01, $"redecode aspect kept (w/h={wC / hC:0.####})");
+
+        v.SetSource(land, landNative);
+        double wD = v.TestDisplayedWidth, hD = v.TestDisplayedHeight;
+        Check(Math.Abs(wD / hD - wA / hA) < 0.01 && Math.Abs(wD - wA) < 0.5 && Math.Abs(hD - hA) < 0.5,
+              $"switch back restores landscape aspect (was {wA:0.#}x{hA:0.#}, now {wD:0.#}x{hD:0.#})");
+    }
 
     private static BitmapSource MakeRampSource()
     {

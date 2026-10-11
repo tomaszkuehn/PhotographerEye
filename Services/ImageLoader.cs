@@ -17,7 +17,7 @@ public static class ImageLoader
 {
     public static ImageInfo GetInfo(string path)
     {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.None, BitmapCacheOption.OnDemand);
         var frame = decoder.Frames[0];
         int w = frame.PixelWidth;
@@ -60,16 +60,53 @@ public static class ImageLoader
         int dw = Math.Min(rawW, Math.Max(1, (int)Math.Round(rawW * scale)));
         int dh = Math.Min(rawH, Math.Max(1, (int)Math.Round(rawH * scale)));
 
-        var bmp = new BitmapImage();
-        bmp.BeginInit();
-        bmp.CacheOption = BitmapCacheOption.OnLoad;
-        bmp.DecodePixelWidth = dw;
-        bmp.DecodePixelHeight = dh;
-        bmp.UriSource = new Uri(path, UriKind.Absolute);
-        bmp.EndInit();
-        bmp.Freeze();
+        BitmapSource? result = null;
+        try
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            bmp.DecodePixelWidth = dw;
+            bmp.DecodePixelHeight = dh;
+            bmp.UriSource = new Uri(path, UriKind.Absolute);
+            bmp.EndInit();
+            _ = bmp.PixelWidth;
+            _ = bmp.PixelHeight;
+            _ = bmp.DpiX;
+            _ = bmp.DpiY;
+            bmp.Freeze();
+            result = bmp;
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"DECODE FALLBACK: {Path.GetFileName(path)} [{ex.GetType().Name}] {ex.Message}");
+        }
 
-        BitmapSource result = bmp;
+        if (result is null)
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.OnLoad);
+            var frame = decoder.Frames[0];
+            frame.Freeze();
+            if (scale < 1.0 && frame.PixelWidth > 1 && frame.PixelHeight > 1)
+            {
+                var t = new ScaleTransform(dw / (double)rawW, dh / (double)rawH);
+                t.Freeze();
+                var tb = new TransformedBitmap();
+                tb.BeginInit();
+                tb.Source = frame;
+                tb.Transform = t;
+                tb.EndInit();
+                tb.Freeze();
+                result = tb;
+            }
+            else
+            {
+                result = frame;
+            }
+        }
+
         var deg = info.Orientation switch
         {
             3 or 4 => 180.0,
@@ -80,7 +117,7 @@ public static class ImageLoader
 
         if (deg > 0)
         {
-            result = ApplyRotation(bmp, deg);
+            result = ApplyRotation(result, deg);
         }
 
         return NormalizeDpi(result);
@@ -104,7 +141,11 @@ public static class ImageLoader
     {
         var t = new RotateTransform(degrees);
         t.Freeze();
-        var rotated = new TransformedBitmap { Source = source, Transform = t };
+        var rotated = new TransformedBitmap();
+        rotated.BeginInit();
+        rotated.Source = source;
+        rotated.Transform = t;
+        rotated.EndInit();
         rotated.Freeze();
         return rotated;
     }
