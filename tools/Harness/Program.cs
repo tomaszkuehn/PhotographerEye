@@ -208,6 +208,16 @@ internal static class Program
         Check(b.g >= 252, $"stretched bright near 255 ({b.g})");
         Check(m.g is >= 120 and <= 160, $"stretched mid lifted moderately ({m.g})");
 
+        var tiny = AdjustmentsProcessor.Apply(ramp, 0.01, 1.0);
+        int t0 = Math.Abs(ReadRow(tiny!, 0).g - 64);
+        int t1 = Math.Abs(ReadRow(tiny!, 1).g - 128);
+        int t2 = Math.Abs(ReadRow(tiny!, 2).g - 191);
+        Check(t0 <= 6 && t1 <= 6 && t2 <= 6, $"tiny nudge +-1% stays subtle ({t0},{t1},{t2})");
+
+        var half = AdjustmentsProcessor.Apply(ramp, 0.25, 1.0);
+        int h0 = ReadRow(half!, 0).g;
+        Check(h0 > 0 && h0 < 64, $"stretch scales with slider (25%: 64->{h0})");
+
         var full = MakeFlat(255, 255, 255, 255, 120, 120, 120, 0, 0, 0);
         Check(AdjustmentsProcessor.ComputeAutoStretch(full) is null, "full range -> no stretch");
 
@@ -292,7 +302,7 @@ internal static class Program
                 ? "  ComputeAutoStretch: NULL (no stretch)"
                 : $"  ComputeAutoStretch (lum): [{st[0]},{st[1]}]");
 
-            var proc = AdjustmentsProcessor.Apply(img, 0.45, 1.0, out var histOut);
+            var proc = AdjustmentsProcessor.Apply(img, 0.5, 1.0, out var histOut);
             if (proc is not null)
             {
                 int pw = proc.PixelWidth;
@@ -301,7 +311,7 @@ internal static class Program
                 proc.CopyPixels(pbuf, ps, 0);
                 var hOut = new int[3][];
                 for (int c = 0; c < 3; c++) hOut[c] = c == 0 ? histOut!.B : c == 1 ? histOut!.G : histOut!.R;
-                Console.Write("  shadows 45% output p0.5%:");
+                Console.Write("  shadows 50% output p0.5%:");
                 for (int c = 2; c >= 0; c--)
                 {
                     var hd = hOut[c];

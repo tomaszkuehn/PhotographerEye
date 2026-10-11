@@ -55,7 +55,11 @@ public static class AdjustmentsProcessor
                 entry.Value = stretch;
             }
         }
-        if (stretch is not null) ApplyStretch(buffer, stretch);
+        if (stretch is not null)
+        {
+            float k = (float)Math.Min(1.0, Math.Abs(shadowLift) / 0.5);
+            ApplyStretch(buffer, stretch, k);
+        }
 
         if (shadow) ApplyShadow(buffer, shadowLift);
         if (hasGamma) ApplyGamma(buffer, gamma);
@@ -133,10 +137,11 @@ public static class AdjustmentsProcessor
         return new byte[] { loV, hiV };
     }
 
-    private static unsafe void ApplyStretch(byte[] buffer, byte[] st)
+    private static unsafe void ApplyStretch(byte[] buffer, byte[] st, float k)
     {
         float lo = st[0];
         float scale = 255.0f / Math.Max(1, st[1] - st[0]);
+        float ik = 1.0f - k;
         fixed (byte* p = buffer)
         {
             byte* end = p + buffer.Length;
@@ -144,7 +149,11 @@ public static class AdjustmentsProcessor
             {
                 for (int c = 0; c < 3; c++)
                 {
-                    int o = (int)((q[c] - lo) * scale + 0.5f);
+                    float x = q[c];
+                    float s = (x - lo) * scale;
+                    if (s < 0.0f) s = 0.0f;
+                    else if (s > 255.0f) s = 255.0f;
+                    int o = (int)(x * ik + s * k + 0.5f);
                     q[c] = (byte)(o < 0 ? 0 : o > 255 ? 255 : o);
                 }
             }

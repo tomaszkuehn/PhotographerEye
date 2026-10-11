@@ -8,7 +8,7 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 - Zoom 10–400%: `Ctrl+rolka`, `+`/`-`, `1` — 100%, `0`/przycisk „Dopasuj" — dopasuj do okna, dwuklik — przełączanie fit/100%
 - Pan: przeciąganie myszką (gdy obraz większy od okna); obraz zawsze wyśrodkowany i nieucięty
 - Korekcja cieni −50%…+70% (podnoszenie i przyciemnianie; pipeline liniowy sRGB, miękka maska luminancji — styl Photoshop) i gamma 0.50–2.00 (LUT środkowych tonów)
-- Przy regulacji cieni automatyczne rozciąganie histogramu (auto-contrast: percentyle 0.5% z histogramu luminancji, jedna skala dla wszystkich kanałów — balans bieli nietknięty, czernie zakotwiczone, pomijane gdy zakres już pełny lub obraz płaski)
+- Przy regulacji cieni automatyczne rozciąganie histogramu narastające proporcjonalnie z siłą regulacji (pełne od ±50%): auto-contrast z percentyli 0.5% histogramu luminancji, jedna skala dla wszystkich kanałów — balans bieli nietknięty, czernie zakotwiczone, pomijane gdy zakres już pełny lub obraz płaski
 - Porównanie z oryginałem: przytrzymaj przycisk „Porównaj" lub spację (podgląd bez korekt; puszczenie wraca)
 - Overlay histogramu (luminancja + nakładki R/G/B) liczony z finalnego podglądu; pojawia się przy ruchu suwaków korekt, zamykany krzyżykiem; trwa przy zmianie obrazu
 - Kompaktowy ciemny interfejs: jedna linia narzędzi od minimalnej szerokości okna (980 px)
@@ -47,6 +47,12 @@ Harness logiki (zoom/pan/fit, DPI, korekty, histogram):
 
 ```
 dotnet run --project tools\Harness\tools.csproj -c Release
+```
+
+Tryb diagnostyczny auto-stretchu (percentyle kanałów, progi luminancji, wyjście po regulacji):
+
+```
+dotnet run --project tools\Harness\tools.csproj -c Release -- obraz1.jpg obraz2.jpg
 ```
 
 E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
