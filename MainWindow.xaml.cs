@@ -61,6 +61,11 @@ public partial class MainWindow : Window
         GammaSlider.ValueChanged += OnAdjustmentChanged;
         ShadowSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         GammaSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
+        StateChanged += (_, _) =>
+        {
+            if (BtnWinMax is not null)
+                BtnWinMax.Content = WindowState == WindowState.Maximized ? "\uE923" : "\uE739";
+        };
 
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _saveTimer.Tick += (_, _) =>
@@ -536,6 +541,16 @@ public partial class MainWindow : Window
 
     private void OnPrevClick(object sender, RoutedEventArgs e) => Navigate(-1);
     private void OnNextClick(object sender, RoutedEventArgs e) => Navigate(1);
+
+    private void OnWinMinimizeClick(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
+
+    private void OnWinMaximizeClick(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
+        else SystemCommands.MaximizeWindow(this);
+    }
+
+    private void OnWinCloseClick(object sender, RoutedEventArgs e) => Close();
     private void OnZoomInClick(object sender, RoutedEventArgs e) => Viewer.SetZoom(Viewer.Zoom * 1.25);
     private void OnZoomOutClick(object sender, RoutedEventArgs e) => Viewer.SetZoom(Viewer.Zoom / 1.25);
     private void OnFitClick(object sender, RoutedEventArgs e)

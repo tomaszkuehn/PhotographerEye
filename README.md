@@ -12,6 +12,7 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 - Porównanie z oryginałem: przytrzymaj przycisk „Porównaj" lub spację (podgląd bez korekt; puszczenie wraca)
 - Overlay histogramu (luminancja + nakładki R/G/B) liczony z finalnego podglądu; pojawia się przy ruchu suwaków korekt, zamykany krzyżykiem; trwa przy zmianie obrazu
 - Kompaktowy ciemny interfejs: jedna linia narzędzi od minimalnej szerokości okna (980 px)
+- Własny pasek tytułowy: czarny, o obniżonej wysokości, z przyciskami minimalizacji/maksymalizacji/zamknięcia
 - Dynamiczne dekodowanie zależne od zoomu (pełna jakość przy dużych powiększeniach), cache podglądów sąsiednich plików
 - Strzałki przesuwania obrazów na lewym/prawym brzegu okna
 - Symbol ustawień (⚙) w prawym górnym rogu → „O aplikacji…" (autor, e-mail, GitHub, licencja)
