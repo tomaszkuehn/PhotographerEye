@@ -42,6 +42,7 @@ internal static class Program
         TestTriX();
         TestCrossImageSwitch();
         TestRaw();
+        TestPhotoExtras();
         TestExifRotation();
 
         Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
@@ -390,6 +391,137 @@ internal static class Program
 
             Debug.Log($"RAW TEST {f}: info={info.Width}x{info.Height} full={half.PixelWidth}x{half.PixelHeight}");
         }
+    }
+
+    private static float LumMean(BitmapSource img)
+    {
+        var buf = new byte[img.PixelWidth * 4];
+        double total = 0;
+        for (int y = 0; y < img.PixelHeight; y += Math.Max(1, img.PixelHeight / 40))
+        {
+            img.CopyPixels(new Int32Rect(0, y, img.PixelWidth, 1), buf, buf.Length, 0);
+            for (int x = 0; x < img.PixelWidth; x++)
+            {
+                total += 0.2126 * buf[x * 4 + 2] + 0.7152 * buf[x * 4 + 1] + 0.0722 * buf[x * 4];
+            }
+        }
+        return (float)(total / (img.PixelHeight / Math.Max(1, img.PixelHeight / 40)) / img.PixelWidth);
+    }
+
+    private static void TestPhotoExtras()
+    {
+        var src = MakeFlat(255, 255, 255, 255, 128, 128, 128, 0, 0, 0);
+
+        var neutral = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, extra: new PhotoAdjustments());
+        Check(neutral is not null, "photo extras neutral apply");
+
+        var exposed = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Exposure = 2.0 });
+        Check(exposed is not null && LumMean(exposed) > LumMean(src) + 40,
+              $"exposure brightens ({LumMean(src):0.#} -> {LumMean(exposed ?? src):0.#})");
+
+        var desat = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Saturation = 0.0 });
+        var d = desat;
+        if (d is not null)
+        {
+            var px = ReadPixels(d);
+            Check(px.dark.r == px.dark.g && px.dark.g == px.dark.b, "saturation 0 grays out");
+        }
+
+        var contrasted = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Contrast = 1.0 });
+        Check(contrasted is not null, "contrast +100 applies");
+        var tempSrc = MakeFlat(255, 255, 255, 255, 128, 128, 128, 60, 60, 60);
+        var cooled = AdjustmentsProcessor.Apply(tempSrc, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Temperature = -1.0 });
+        var cool = ReadPixels(cooled!);
+        Check(cool.dark.b > cool.dark.r, $"cool temp raises blue over red (B={cool.dark.b} R={cool.dark.r})");
+
+        var warmed = AdjustmentsProcessor.Apply(tempSrc, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Temperature = 1.0 });
+        var warm = ReadPixels(warmed!);
+        Check(warm.dark.r > warm.dark.b, $"warm temp raises red over blue (R={warm.dark.r} B={warm.dark.b})");
+
+        var dehazed = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Dehaze = 1.0 });
+        Check(dehazed is not null && LumMean(dehazed) < LumMean(src), "dehaze darkens flat");
+
+        var noisy = MakeNoisySource(160, 120, seed: 7);
+        var denoised = AdjustmentsProcessor.Apply(noisy, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Denoise = 1.0 });
+        Check(denoised is not null && StddevRegion(denoised!, 40, 30, 60, 40) < StddevRegion(noisy, 40, 30, 60, 40),
+              $"denoise lowers local stddev ({StddevRegion(noisy, 40, 30, 60, 40):0.##} -> {StddevRegion(denoised ?? noisy, 40, 30, 60, 40):0.##})");
+
+        var blocky = MakeBlocksSource(200, 140);
+        var crisp = AdjustmentsProcessor.Apply(blocky, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Clarity = 1.0 });
+        var soft = AdjustmentsProcessor.Apply(blocky, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Clarity = -1.0 });
+        float baseStd = StddevRegion(blocky, 20, 20, 160, 100);
+        float crispStd = StddevRegion(crisp!, 20, 20, 160, 100);
+        float softStd = StddevRegion(soft!, 20, 20, 160, 100);
+        Check(Math.Abs(crispStd - baseStd) > 1 || Math.Abs(softStd - baseStd) > 1,
+              $"clarity changes local contrast (base={baseStd:0.##} crisp={crispStd:0.##} soft={softStd:0.##})");
+
+        var combo = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Exposure = 0.5, Contrast = 0.3, Temperature = 0.2, Saturation = 1.2, Clarity = 0.2, Dehaze = 0.3, Denoise = 0.4 });
+        Check(combo is not null, "photo extras combined apply");
+    }
+
+    private static BitmapSource MakeNoisySource(int w, int h, int seed)
+    {
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        uint s = (uint)seed;
+        for (int i = 0; i < buf.Length; i += 4)
+        {
+            s = s * 1664525u + 1013904223u;
+            byte v = (byte)((s >> 16) & 0xFF);
+            buf[i] = v; buf[i + 1] = v; buf[i + 2] = v; buf[i + 3] = 255;
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
+    }
+
+    private static BitmapSource MakeBlocksSource(int w, int h)
+    {
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int v = (x / 40 + y / 40) % 2 == 0 ? 90 : 180;
+                buf[y * stride + x * 4 + 0] = (byte)v;
+                buf[y * stride + x * 4 + 1] = (byte)v;
+                buf[y * stride + x * 4 + 2] = (byte)v;
+                buf[y * stride + x * 4 + 3] = 255;
+            }
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
+    }
+
+    private static float StddevRegion(BitmapSource img, int x0, int y0, int w, int h)
+    {
+        var buf = new byte[w * h * 4];
+        img.CopyPixels(new Int32Rect(x0, y0, w, h), buf, w * 4, 0);
+        double mean = 0;
+        for (int i = 0; i < buf.Length; i += 4)
+        {
+            mean += 0.2126 * buf[i + 2] + 0.7152 * buf[i + 1] + 0.0722 * buf[i];
+        }
+        mean /= w * h;
+        double var = 0;
+        for (int i = 0; i < buf.Length; i += 4)
+        {
+            double lum = 0.2126 * buf[i + 2] + 0.7152 * buf[i + 1] + 0.0722 * buf[i];
+            var += (lum - mean) * (lum - mean);
+        }
+        return (float)Math.Sqrt(var / (w * h));
     }
 
     private static float RowMean(WriteableBitmap bmp, int row)

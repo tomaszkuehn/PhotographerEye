@@ -66,6 +66,17 @@ public partial class MainWindow : Window
         HistogramPanel.StretchEdited += OnManualStretchChanged;
         ShadowSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         GammaSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
+        ExpSlider.ValueChanged += OnPanelSliderChanged;
+        ContrastSlider.ValueChanged += OnPanelSliderChanged;
+        TempSlider.ValueChanged += OnPanelSliderChanged;
+        SatSlider.ValueChanged += OnPanelSliderChanged;
+        ClaritySlider.ValueChanged += OnPanelSliderChanged;
+        DehazeSlider.ValueChanged += OnPanelSliderChanged;
+        DenoiseSlider.ValueChanged += OnPanelSliderChanged;
+        foreach (var s in new[] { ExpSlider, ContrastSlider, TempSlider, SatSlider, ClaritySlider, DehazeSlider, DenoiseSlider })
+        {
+            s.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
+        }
         StateChanged += (_, _) =>
         {
             if (BtnWinMax is not null)
@@ -346,7 +357,7 @@ public partial class MainWindow : Window
         double g = GammaSlider.Value;
         var manual = HistogramPanel.Snapshot();
 
-        if (AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None)
+        if (AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null)
         {
             _applyCts?.Cancel();
             Viewer.SetSource(raw, info.DisplaySize);
@@ -354,6 +365,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        var extra = PanelExtras();
         _applyCts?.Cancel();
         _applyCts?.Dispose();
         _applyCts = new CancellationTokenSource();
@@ -364,9 +376,9 @@ public partial class MainWindow : Window
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var processed = AdjustmentsProcessor.Apply(raw, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed);
+                var processed = AdjustmentsProcessor.Apply(raw, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
                 sw.Stop();
-                Debug.Log($"APPLY: {sw.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual} mono={_monoMode:D}");
+                Debug.Log($"APPLY: {sw.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual} mono={_monoMode:D} extra={extra is not null}");
                 if (processed is null || ct.IsCancellationRequested) return;
                 Dispatcher.BeginInvoke(() =>
                 {
@@ -598,7 +610,8 @@ public partial class MainWindow : Window
         bool modified = Math.Abs(ShadowSlider.Value) > 0.0001 ||
                         Math.Abs(GammaSlider.Value - 1.0) > 0.0005 ||
                         HistogramPanel.HasManualEffect ||
-                        _monoMode != MonoMode.None;
+                        _monoMode != MonoMode.None ||
+                        PanelExtras() is not null;
         BtnSave.IsEnabled = modified && _currentPath is not null;
     }
 
@@ -613,6 +626,7 @@ public partial class MainWindow : Window
         double s = ShadowSlider.Value / 100.0;
         double g = GammaSlider.Value;
         var manual = HistogramPanel.Snapshot();
+        var extra = PanelExtras();
 
         _ = Task.Run(() =>
         {
@@ -621,7 +635,7 @@ public partial class MainWindow : Window
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var info = ImageLoader.GetInfo(path);
                 var full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
-                var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed);
+                var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
                 if (processed is null) throw new InvalidOperationException("Nie udało się przetworzyć obrazu");
                 string dest = UniqueEditedPath(path);
                 SaveEncoded(processed, path, dest);
@@ -777,6 +791,56 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnPanelToggleClick(object sender, RoutedEventArgs e) => TogglePanel();
+
+    private void TogglePanel()
+    {
+        bool open = RightPanel.Visibility != Visibility.Visible;
+        RightPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        BtnPanel.Foreground = (Brush)FindResource(open ? "AccentBrush" : "ForegroundBrush");
+        SetStatus(open ? "Panel korekt — otwarty (E)" : "Panel korekt — zamknięty", error: false);
+    }
+
+    private PhotoAdjustments? PanelExtras()
+    {
+        if (ExpSlider is null) return null;
+        var a = new PhotoAdjustments
+        {
+            Exposure = ExpSlider.Value,
+            Contrast = ContrastSlider.Value / 100.0,
+            Temperature = TempSlider.Value / 100.0,
+            Saturation = SatSlider.Value / 100.0,
+            Clarity = ClaritySlider.Value / 100.0,
+            Dehaze = DehazeSlider.Value / 100.0,
+            Denoise = DenoiseSlider.Value / 100.0
+        };
+        return a.IsDefault ? null : a;
+    }
+
+    private void OnPanelSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        UpdatePanelLabels();
+        _showHistogram = true;
+        UpdateSaveState();
+        if (_adjustTimer is not null)
+        {
+            _adjustTimer.Stop();
+            _adjustTimer.Start();
+        }
+    }
+
+    private void UpdatePanelLabels()
+    {
+        if (ExpValue is null) return;
+        ExpValue.Text = (ExpSlider.Value > 0 ? "+" : "") + ExpSlider.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+        ContrastValue.Text = ((int)ContrastSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        TempValue.Text = ((int)TempSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        SatValue.Text = $"{(int)SatSlider.Value} %";
+        ClarityValue.Text = ((int)ClaritySlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        DehazeValue.Text = ((int)DehazeSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        DenoiseValue.Text = ((int)DenoiseSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     private void OnResetClick(object sender, RoutedEventArgs e) => ResetAdjustments();
 
     private void OnMonoToggleClick(object sender, RoutedEventArgs e) => ToggleMono();
@@ -812,11 +876,22 @@ public partial class MainWindow : Window
         HistogramPanel.ClearManualStretch();
         ShadowSlider.Value = 0;
         GammaSlider.Value = 1.0;
+        if (ExpSlider is not null)
+        {
+            ExpSlider.Value = 0;
+            ContrastSlider.Value = 0;
+            TempSlider.Value = 0;
+            SatSlider.Value = 100;
+            ClaritySlider.Value = 0;
+            DehazeSlider.Value = 0;
+            DenoiseSlider.Value = 0;
+            UpdatePanelLabels();
+        }
         _monoMode = MonoMode.None;
         UpdateMonoButton();
         if (!silent)
         {
-            SetStatus("Korekty przywrócone do wartości domyślnych (Cienie 0, Gamma 1.00)", error: false);
+            SetStatus("Korekty przywrócone do wartości domyślnych", error: false);
             ReapplyAdjustments();
         }
     }
@@ -826,6 +901,13 @@ public partial class MainWindow : Window
         if (e.ClickCount != 2) return;
         if (ReferenceEquals(sender, ShadowSlider)) ShadowSlider.Value = 0;
         else if (ReferenceEquals(sender, GammaSlider)) GammaSlider.Value = 1.0;
+        else if (ReferenceEquals(sender, ExpSlider)) ExpSlider.Value = 0;
+        else if (ReferenceEquals(sender, ContrastSlider)) ContrastSlider.Value = 0;
+        else if (ReferenceEquals(sender, TempSlider)) TempSlider.Value = 0;
+        else if (ReferenceEquals(sender, SatSlider)) SatSlider.Value = 100;
+        else if (ReferenceEquals(sender, ClaritySlider)) ClaritySlider.Value = 0;
+        else if (ReferenceEquals(sender, DehazeSlider)) DehazeSlider.Value = 0;
+        else if (ReferenceEquals(sender, DenoiseSlider)) DenoiseSlider.Value = 0;
         e.Handled = true;
     }
 
@@ -918,6 +1000,10 @@ public partial class MainWindow : Window
                 break;
             case Key.B:
                 ToggleMono();
+                e.Handled = true;
+                break;
+            case Key.E:
+                TogglePanel();
                 e.Handled = true;
                 break;
             case Key.Space:

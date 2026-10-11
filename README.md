@@ -11,6 +11,7 @@ Portable przeglądarka zdjęć JPG/JPEG/PNG oraz RAW dla Windows (WPF, .NET 8, p
 - Przy regulacji cieni automatyczne rozciąganie histogramu narastające proporcjonalnie z siłą regulacji (pełne od ±50%): auto-contrast z percentyli 0.5% histogramu luminancji, jedna skala dla wszystkich kanałów — balans bieli nietknięty, czernie zakotwiczone, pomijane gdy zakres już pełny lub obraz płaski
 - Porównanie z oryginałem: przytrzymaj przycisk „Porównaj" lub spację (podgląd bez korekt; puszczenie wraca)
 - Podgląd plików RAW: RW2 (Panasonic), NEF/NRW (Nikon), ARW/SRF/SR2 (Sony), CR2/CR3/CRW (Canon), ORF (Olympus), RAF (Fuji), PEF (Pentax), DNG i inne — wbudowany LibRaw: demosaikacja, balans bieli z aparatu, auto-flip orientacji; dekodowanie w cache (podgląd 1/4 skali, pełna rozdzielczość przy przybliżeniu); zapis edycji jako `_edited.jpg`
+- Panel korekt (pionowy pasek po prawej, przycisk ⚙-obok ikony suwaków lub klawisz `E`): **ekspozycja** (±2 EV, mnożenie liniowe z hard-clippingiem świateł), **kontrast** (±100: tanh S-krzywa / spłaszczenie), **balans bieli** (temperatura: wzmocnienie R/B, ±100), **nasycenie** (0–200 %, interpolacja do luminancji), **clarity** (±100: unsharp-mask na low-pass luminancji), **dehaze** (0–100: odejmowanie poziomu szronu + lekki boost saturacji), **odszumianie** (0–100, mieszanina z rozmyciem dwuprzebiegowym); reset przy zmianie obrazu i przyciskiem ♻ w panelu; histogram pokazuje wynik; zapis uwzględnia panel w pełnej rozdzielczości
 - Overlay histogramu (luminancja + nakładki R/G/B) liczony z finalnego podglądu; pojawia się przy ruchu suwaków korekt lub chwytaniu histogramu, chowany przy zmianie obrazu i krzyżykiem
 - Ręczne rozciąganie histogramu: przeciągnij punkt na histogramie — część po jednej stronie punktu ściska się, po drugiej rozciąga (mapa odcinkowo-liniowa, końce 0 i 1 zakotwiczone, punkty zachowują monotoniczność); dodawanie kolejnych punktów kolejnymi chwytami; punkty usuwa: podwójny klik na histogramie, przycisk resetu (♻) przy krzyżyku overlayu, `R`/Reset
 - Czarno-białe w fotograficznym stylu dokumentalnym: szybki przełącznik trzy-stanowy — przycisk na pasku lub klawisz `B`: kolor → **dokumentalny** (konwersja panchromatyczna z lekką przewagą czerwieni — jak filtr żółto-czerwony: jasna skóra, przyciemniony błękit + filmowa krzywa S: głębokie czernie, wyraziste środki, miękkie rolloff świecidełek) → **Tri-X 400** (emulacja: mocniejsza krzywa i ziarno filmowe o stałym wzorcu per obraz, widoczne głównie w półtonach); histogram pokazuje wynik; reset przy zmianie obrazu; zapis uwzględnia tryb
@@ -20,7 +21,7 @@ Portable przeglądarka zdjęć JPG/JPEG/PNG oraz RAW dla Windows (WPF, .NET 8, p
 - Strzałki przesuwania obrazów na lewym/prawym brzegu okna
 - Symbol ustawień (⚙) w prawym górnym rogu → „O aplikacji…" (autor, e-mail, GitHub, licencja)
 - Reset korekt automatycznie przy przełączeniu obrazu oraz ręcznie: `R`, przycisk „Reset", podwójny klik na suwak (lub na histogram — czyści punkty rozciągania)
-- Zapis zmodyfikowanego zdjęcia (Ctrl+S lub przycisk zapisu na pasku) w rozdzielczości oryginału — JPG (jakość 92) lub PNG, plik obok oryginału z przyrostkiem `_edited`; przycisk aktywny tylko gdy któraś korekta (cienie, gamma, punkty rozciągania, tryb czarno-biały) jest aktywna
+- Zapis zmodyfikowanego zdjęcia (Ctrl+S lub przycisk zapisu na pasku) w rozdzielczości oryginału — JPG (jakość 92) lub PNG (RAW → JPG), plik obok oryginału z przyrostkiem `_edited`; przycisk aktywny tylko gdy któraś korekta (cienie, gamma, punkty rozciągania, tryb czarno-biały, panel korekt) jest aktywna
 - Drag & drop pliku, otwieranie przez argument CLI, `Ctrl+O`
 - Ustawienia zapisywane w `%AppData%\PhotographerEye\settings.json`
 
@@ -38,6 +39,7 @@ Portable: `dist\PhotographerEye.exe [plik|folder]` — bez instalacji, .NET wbud
 | `Shift`+rolka | przesuwanie poziome |
 | `1` / `0` | 100% / dopasuj |
 | `R` | reset korekt |
+| `E` | panel korekt: ekspozycja, kontrast, balans bieli, nasycenie, clarity, dehaze, odszumianie |
 | `B` | czarno-białe: kolor → dokumentalny → Tri-X 400 (pętla) |
 | spacja (przytrzymaj) | podgląd oryginału |
 | `Ctrl+O` | otwórz plik |
@@ -52,7 +54,7 @@ dotnet publish ImgViewer.csproj -c Release -r win-x64 --self-contained true -p:P
 
 ## Testy
 
-Harness logiki (zoom/pan/fit, DPI, korekty, histogram, RAW):
+Harness logiki (zoom/pan/fit, DPI, korekty, histogram, RAW, panel korekt):
 
 ```
 dotnet run --project tools\Harness\tools.csproj -c Release

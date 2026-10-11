@@ -41,7 +41,7 @@ public static class AdjustmentsProcessor
     private static readonly float[] MonoTriXx = { 0.00f, 0.03f, 0.12f, 0.30f, 0.50f, 0.70f, 0.85f, 0.94f, 1.00f };
     private static readonly float[] MonoTriXy = { 0.008f, 0.032f, 0.098f, 0.300f, 0.545f, 0.800f, 0.930f, 0.985f, 1.000f };
 
-    public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, bool autoStretch = true, MonoMode mono = MonoMode.None, int grainSeed = 0)
+    public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, bool autoStretch = true, MonoMode mono = MonoMode.None, int grainSeed = 0, PhotoAdjustments? extra = null)
     {
         BitmapSource baseSource = EnsureBgra(source);
         int w = baseSource.PixelWidth;
@@ -55,6 +55,13 @@ public static class AdjustmentsProcessor
         int stride = w * 4;
         var buffer = new byte[(long)stride * h];
         baseSource.CopyPixels(buffer, stride, 0);
+
+        if (extra is not null && !extra.IsDefault)
+        {
+            if (extra.Denoise > 0.0005) PhotoOps.ApplyDenoise(buffer, w, h, extra.Denoise);
+            PhotoOps.ApplyColorPoints(buffer, extra);
+            if (Math.Abs(extra.Clarity) > 0.0005) PhotoOps.ApplyClarity(buffer, w, h, extra.Clarity);
+        }
 
         bool shadow = Math.Abs(shadowLift) > 0.0001;
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;

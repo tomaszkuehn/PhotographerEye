@@ -111,6 +111,9 @@
                 <Button x:Name="BtnMono" Content="&#xE792;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
                         Style="{StaticResource ToolButton}" Click="OnMonoToggleClick"
                         ToolTip="Czarno-białe: dokumentalny / Tri-X 400 (B — trzy stany)" />
+                <Button x:Name="BtnPanel" Content="&#xE9E9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
+                        Style="{StaticResource ToolButton}" Click="OnPanelToggleClick"
+                        ToolTip="Panel korekt — ekspozycja, kontrast, balans bieli, nasycenie, clarity, dehaze, odszumianie (E)" />
                 </WrapPanel>
             </DockPanel>
         </Border>
@@ -126,7 +129,12 @@
             </DockPanel>
         </Border>
 
-        <Grid Background="{StaticResource PanelBrushDark}">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Grid Grid.Column="0" Background="{StaticResource PanelBrushDark}">
             <v:ImageViewer x:Name="Viewer" />
             <Button x:Name="BtnEdgeLeft"
                     Content="&#x2039;"
@@ -180,10 +188,93 @@
                 <StackPanel>
                     <TextBlock Text="Otwórz obraz" FontSize="22" Foreground="{StaticResource ForegroundBrush}" HorizontalAlignment="Center" />
                     <TextBlock Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"
-                               Text="Ctrl+O — dialog Otwórz, przeciągnij plik z Eksploratora;&#x0a;strzałki ←/→ — następny/poprzedni, rolka myszy — zoom, przeciągnij myszką — przesuwanie;&#x0a;1 — 100 %, 0 — dopasuj, R — reset korekt, Ctrl+S — zapis zmodyfikowanego zdjęcia" TextAlignment="Center" />
-                </StackPanel>
-            </Border>
-        </Grid>
-    </DockPanel>
-    </DockPanel>
-</Window>
+                                Text="Ctrl+O — dialog Otwórz, przeciągnij plik z Eksploratora;&#x0a;strzałki ←/→ — następny/poprzedni, rolka myszy — zoom, przeciągnij myszką — przesuwanie;&#x0a;1 — 100 %, 0 — dopasuj, R — reset korekt, E — panel korekt, Ctrl+S — zapis zmodyfikowanego zdjęcia" TextAlignment="Center" />
+                 </StackPanel>
+             </Border>
+             </Grid>
+
+             <Border Grid.Column="1" x:Name="RightPanel"
+                     Width="256"
+                     Visibility="Collapsed"
+                     Background="{StaticResource PanelBrush}"
+                     BorderBrush="{StaticResource BorderBrushCol}"
+                     BorderThickness="1,0,0,0">
+                 <DockPanel>
+                     <Border DockPanel.Dock="Top"
+                             BorderBrush="{StaticResource BorderBrushCol}"
+                             BorderThickness="0,0,0,1"
+                             Padding="10,6">
+                         <DockPanel>
+                             <Button x:Name="BtnPanelReset"
+                                     DockPanel.Dock="Right"
+                                     Width="18" Height="18"
+                                     Content="&#xE72C;"
+                                     FontFamily="Segoe MDL2 Assets"
+                                     FontSize="10"
+                                     Padding="0"
+                                     MinWidth="0"
+                                     Style="{StaticResource ToolButton}"
+                                     Click="OnResetClick"
+                                     ToolTip="Reset wszystkich korekt" />
+                             <TextBlock Text="Korekty" FontWeight="SemiBold" VerticalAlignment="Center" />
+                         </DockPanel>
+                     </Border>
+                     <ScrollViewer VerticalScrollBarVisibility="Auto">
+                         <StackPanel Margin="12,8,12,12">
+                             <StackPanel Margin="0,2,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Ekspozycja" />
+                                     <TextBlock x:Name="ExpValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0.00" />
+                                 </Grid>
+                                 <Slider x:Name="ExpSlider" Minimum="-2" Maximum="2" SmallChange="0.05" LargeChange="0.25" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Kontrast" />
+                                     <TextBlock x:Name="ContrastValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                 </Grid>
+                                 <Slider x:Name="ContrastSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Balans bieli" />
+                                     <TextBlock x:Name="TempValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                 </Grid>
+                                 <Slider x:Name="TempSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Nasycenie" />
+                                     <TextBlock x:Name="SatValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="100 %" />
+                                 </Grid>
+                                 <Slider x:Name="SatSlider" Value="100" Minimum="0" Maximum="200" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Clarity" />
+                                     <TextBlock x:Name="ClarityValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                 </Grid>
+                                 <Slider x:Name="ClaritySlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Dehaze" />
+                                     <TextBlock x:Name="DehazeValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                 </Grid>
+                                 <Slider x:Name="DehazeSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Odszumianie" />
+                                     <TextBlock x:Name="DenoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                 </Grid>
+                                 <Slider x:Name="DenoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                         </StackPanel>
+                     </ScrollViewer>
+                 </DockPanel>
+             </Border>
+         </Grid>
+     </DockPanel>
+     </DockPanel>
+ </Window>
