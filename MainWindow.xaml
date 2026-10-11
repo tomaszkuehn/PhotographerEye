@@ -40,7 +40,7 @@
                 <Border Style="{StaticResource ToolSeparator}" />
 
                 <TextBlock Text="Cienie" Style="{StaticResource ToolLabel}" />
-                <Slider x:Name="ShadowSlider" Width="90" VerticalAlignment="Center" Minimum="-50" Maximum="50" SmallChange="1" LargeChange="10" />
+                <Slider x:Name="ShadowSlider" Width="90" VerticalAlignment="Center" Minimum="-50" Maximum="70" SmallChange="1" LargeChange="10" />
                 <TextBlock x:Name="ShadowValue" Width="48" Margin="5,0,0,0" VerticalAlignment="Center" Text="0 %" TextAlignment="Right" />
 
                 <TextBlock Text="Gamma" Style="{StaticResource ToolLabel}" />

@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -9,21 +10,25 @@ public sealed record HistogramData(int[] Lum, int[] R, int[] G, int[] B);
 
 public static class AdjustmentsProcessor
 {
+    private static readonly ConditionalWeakTable<BitmapSource, StretchEntry> StretchCache = new();
+
+    private sealed class StretchEntry
+    {
+        public byte[]? Value;
+    }
+
     public static bool IsNeutral(double shadowLift, double gamma) =>
         Math.Abs(shadowLift) <= 0.0001 && Math.Abs(gamma - 1.0) < 0.0005;
 
+    public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma, bool autoStretch) =>
+        Apply(source, shadowLift, gamma, out _, autoStretch);
+
     public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma) =>
-        Apply(source, shadowLift, gamma, out _);
+        Apply(source, shadowLift, gamma, out _, autoStretch: true);
 
-    public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma, out HistogramData? histogram)
+    public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma, out HistogramData? histogram, bool autoStretch = true)
     {
-        BitmapSource baseSource = source;
-        if (baseSource.Format != PixelFormats.Bgr32 && baseSource.Format != PixelFormats.Bgra32)
-        {
-            baseSource = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
-            baseSource.Freeze();
-        }
-
+        BitmapSource baseSource = EnsureBgra(source);
         int w = baseSource.PixelWidth;
         int h = baseSource.PixelHeight;
         if (w <= 0 || h <= 0)
@@ -38,6 +43,20 @@ public static class AdjustmentsProcessor
 
         bool shadow = Math.Abs(shadowLift) > 0.0001;
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
+
+        byte[]? stretch = null;
+        if (shadow && autoStretch)
+        {
+            var entry = StretchCache.GetOrCreateValue(source);
+            stretch = entry.Value;
+            if (stretch is null)
+            {
+                stretch = ComputeStretchFromBuffer(buffer);
+                entry.Value = stretch;
+            }
+        }
+        if (stretch is not null) ApplyStretch(buffer, stretch);
+
         if (shadow) ApplyShadow(buffer, shadowLift);
         if (hasGamma) ApplyGamma(buffer, gamma);
 
@@ -49,14 +68,92 @@ public static class AdjustmentsProcessor
         return result;
     }
 
+    public static byte[]? ComputeAutoStretch(BitmapSource source)
+    {
+        BitmapSource baseSource = EnsureBgra(source);
+        int w = baseSource.PixelWidth;
+        int h = baseSource.PixelHeight;
+        if (w <= 0 || h <= 0) return null;
+        int stride = w * 4;
+        var buffer = new byte[(long)stride * h];
+        baseSource.CopyPixels(buffer, stride, 0);
+        return ComputeStretchFromBuffer(buffer);
+    }
+
+    private static BitmapSource EnsureBgra(BitmapSource source)
+    {
+        if (source.Format == PixelFormats.Bgr32 || source.Format == PixelFormats.Bgra32) return source;
+        var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+        converted.Freeze();
+        return converted;
+    }
+
+    private static unsafe byte[]? ComputeStretchFromBuffer(byte[] buffer)
+    {
+        Span<int> hl = stackalloc int[256];
+        fixed (byte* p = buffer)
+        {
+            byte* end = p + buffer.Length;
+            for (byte* q = p; q < end; q += 4)
+            {
+                hl[(int)(0.2126f * q[2] + 0.7152f * q[1] + 0.0722f * q[0] + 0.5f)]++;
+            }
+        }
+
+        long n = buffer.Length / 4;
+        long loT = (long)(n * 0.005);
+        if (loT < 1) loT = 1;
+        long hiT = n - loT;
+
+        long cum = 0;
+        byte loV = 0;
+        for (int v = 0; v < 256; v++)
+        {
+            cum += hl[v];
+            if (cum >= loT)
+            {
+                loV = (byte)v;
+                break;
+            }
+        }
+        cum = 0;
+        byte hiV = 255;
+        for (int v = 0; v < 256; v++)
+        {
+            cum += hl[v];
+            if (cum > hiT)
+            {
+                hiV = (byte)(v - 1);
+                break;
+            }
+        }
+
+        if (!(hiV > loV && hiV - loV >= 16 && (loV > 0 || 255.0f / (hiV - loV) > 1.01f)))
+            return null;
+        return new byte[] { loV, hiV };
+    }
+
+    private static unsafe void ApplyStretch(byte[] buffer, byte[] st)
+    {
+        float lo = st[0];
+        float scale = 255.0f / Math.Max(1, st[1] - st[0]);
+        fixed (byte* p = buffer)
+        {
+            byte* end = p + buffer.Length;
+            for (byte* q = p; q < end; q += 4)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    int o = (int)((q[c] - lo) * scale + 0.5f);
+                    q[c] = (byte)(o < 0 ? 0 : o > 255 ? 255 : o);
+                }
+            }
+        }
+    }
+
     public static HistogramData? ComputeHistogram(BitmapSource source)
     {
-        BitmapSource src = source;
-        if (src.Format != PixelFormats.Bgr32 && src.Format != PixelFormats.Bgra32)
-        {
-            src = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
-            src.Freeze();
-        }
+        BitmapSource src = EnsureBgra(source);
         int w = src.PixelWidth;
         int h = src.PixelHeight;
         if (w <= 0 || h <= 0) return null;
@@ -90,14 +187,13 @@ public static class AdjustmentsProcessor
     {
         var lift = new float[1024];
         float exp = 1.0f + (float)(2.0 * Math.Abs(strength));
-        float floorLift = strength > 0 ? (float)(0.02 * strength) : 0.0f;
-        lift[0] = floorLift;
+        lift[0] = 0.0f;
         if (strength >= 0)
         {
             for (int i = 1; i < 1024; i++)
             {
                 float x = i / 1023.0f;
-                lift[i] = MathF.Min(1.0f, floorLift + 1.0f - MathF.Pow(1.0f - x, exp));
+                lift[i] = 1.0f - MathF.Pow(1.0f - x, exp);
             }
         }
         else

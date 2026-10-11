@@ -12,13 +12,19 @@ internal static class Program
     private static int _fails;
 
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        if (args.Length > 0)
+        {
+            DiagStretch(args);
+            return;
+        }
         TestCentering();
         TestDpiNormalization();
         TestShadows();
         TestGamma();
         TestHistogram();
+        TestAutoStretch();
 
         Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
         Environment.ExitCode = _fails;
@@ -135,18 +141,18 @@ internal static class Program
     private static void TestShadows()
     {
         var src = MakeFlat(255, 240, 240, 240, 120, 120, 120, 10, 10, 10);
-        var out1 = AdjustmentsProcessor.Apply(src, 0.5, 1.0);
+        var out1 = AdjustmentsProcessor.Apply(src, 0.5, 1.0, autoStretch: false);
         var out0 = AdjustmentsProcessor.Apply(src, 0.0, 1.0);
         Check(out1 is not null && out0 is not null, "shadows apply");
 
         var p = ReadPixels(out1!);
         var q0 = ReadPixels(out0!);
-        Check(diff(p.dark, q0.dark) > 20, $"dark lifted heavily ({p.dark.g} vs {q0.dark.g})");
+        Check(diff(p.dark, q0.dark) >= 6, $"dark lifted from near-black ({p.dark.g} vs {q0.dark.g})");
         Check(diff(p.mid, q0.mid) >= 10 && diff(p.mid, q0.mid) <= 45, $"mid lifted moderately ({p.mid.g} vs {q0.mid.g})");
         Check(diff(p.bright, q0.bright) <= 3, $"bright untouched ({p.bright.g} vs {q0.bright.g})");
         Check(p.bright.g - p.bright.b <= 2, "highlight hue preserved");
 
-        var outN = AdjustmentsProcessor.Apply(src, -0.5, 1.0);
+        var outN = AdjustmentsProcessor.Apply(src, -0.5, 1.0, autoStretch: false);
         var pN = ReadPixels(outN!);
         Check(pN.bright.g <= q0.bright.g, "darkened bright not above base");
         Check(diff(pN.dark, q0.dark) > 8, $"dark darkened heavily ({pN.dark.g} vs {q0.dark.g})");
@@ -180,6 +186,172 @@ internal static class Program
         var hist2 = AdjustmentsProcessor.Apply(flat, 0.0, 1.0, out var h2);
         Check(hist2 is not null && h2 is not null, "apply histogram out");
         Check(h2!.Lum[19] == 64 && h2.Lum[120] == 64 && h2.Lum[240] == 64, "apply-out lum bins distinct");
+    }
+
+    private static void TestAutoStretch()
+    {
+        var ramp = MakeRampSource();
+        var without = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0);
+        var w0 = ReadRow(without!, 0);
+        var w2 = ReadRow(without!, 2);
+        Check(w0.g == 64 && w2.g == 191, "neutral leaves narrow range intact");
+
+        var st = AdjustmentsProcessor.ComputeAutoStretch(ramp);
+        Check(st is not null && st.Length == 2 && st[0] == 64 && st[1] == 190,
+              $"auto-stretch bounds lo=64 hi=190 (got {Fmt(st)})");
+
+        var outS = AdjustmentsProcessor.Apply(ramp, 0.5, 1.0);
+        var p = ReadRow(outS!, 0);
+        var m = ReadRow(outS!, 1);
+        var b = ReadRow(outS!, 2);
+        Check(p.g <= 1, $"stretched dark anchored at 0 ({p.g})");
+        Check(b.g >= 252, $"stretched bright near 255 ({b.g})");
+        Check(m.g is >= 120 and <= 160, $"stretched mid lifted moderately ({m.g})");
+
+        var full = MakeFlat(255, 255, 255, 255, 120, 120, 120, 0, 0, 0);
+        Check(AdjustmentsProcessor.ComputeAutoStretch(full) is null, "full range -> no stretch");
+
+        var flatS = MakeFlat(64, 128, 128, 128, 128, 128, 128, 128, 128, 128);
+        Check(AdjustmentsProcessor.ComputeAutoStretch(flatS) is null, "flat image -> no stretch");
+
+        var wb = MakeWbSource();
+        Check(AdjustmentsProcessor.ComputeAutoStretch(wb) is not null, "wb fixture triggers stretch");
+        var wbOut = AdjustmentsProcessor.Apply(wb, 0.45, 1.0);
+        int Spread(int row, int col)
+        {
+            var px = ReadRow(wbOut!, row, col);
+            return Math.Max(Math.Abs(px.r - px.g), Math.Max(Math.Abs(px.g - px.b), Math.Abs(px.r - px.b)));
+        }
+        Check(Spread(0, 25) <= 1 && Spread(0, 50) <= 1 && Spread(0, 75) <= 1 && Spread(1, 50) <= 1,
+              $"neutral grays stay neutral under stretch+shadows ({Spread(0, 25)},{Spread(0, 50)},{Spread(0, 75)},{Spread(1, 50)})");
+    }
+
+    private static BitmapSource MakeWbSource()
+    {
+        const int w = 100, h = 6;
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        for (int x = 0; x < w; x++)
+        {
+            int vn = 30 + x * 170 / (w - 1);
+            for (int row = 0; row < 3; row++)
+            {
+                buf[row * stride + x * 4 + 0] = (byte)vn;
+                buf[row * stride + x * 4 + 1] = (byte)vn;
+                buf[row * stride + x * 4 + 2] = (byte)vn;
+                buf[row * stride + x * 4 + 3] = 255;
+            }
+            int v = x * 255 / (w - 1);
+            for (int row = 3; row < 6; row++)
+            {
+                buf[row * stride + x * 4 + 0] = (byte)v;
+                buf[row * stride + x * 4 + 1] = (byte)(v / 2);
+                buf[row * stride + x * 4 + 2] = (byte)(v / 4);
+                buf[row * stride + x * 4 + 3] = 255;
+            }
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
+    }
+
+    private static void DiagStretch(string[] paths)
+    {
+        foreach (var path in paths)
+        {
+            var info = ImageLoader.GetInfo(path);
+            var img = ImageLoader.LoadScaled(path, info, 4096, 4096);
+            int w = img.PixelWidth, h = img.PixelHeight;
+            int stride = w * 4;
+            var buf = new byte[(long)stride * h];
+            img.CopyPixels(buf, stride, 0);
+
+            long n = (long)w * h;
+            Console.WriteLine($"{Path.GetFileName(path)}  {w}x{h}  n={n}");
+            string[] names = { "B", "G", "R" };
+            for (int c = 0; c < 3; c++)
+            {
+                var hist = new long[256];
+                for (long i = c; i < buf.Length; i += 4) hist[buf[i]]++;
+                long cum = 0; int minV = -1, maxV = -1;
+                for (int v = 0; v < 256; v++) if (hist[v] > 0) { if (minV < 0) minV = v; maxV = v; }
+                var sb = new System.Text.StringBuilder();
+                foreach (double p in new[] { 0.001, 0.005, 0.01, 0.02 })
+                {
+                    long t = (long)(n * p); if (t < 1) t = 1;
+                    long lo = t, hi = n - t; cum = 0; int loV = 0, hiV = 255;
+                    for (int v = 0; v < 256; v++) { cum += hist[v]; if (cum >= lo) { loV = v; break; } }
+                    cum = 0;
+                    for (int v = 0; v < 256; v++) { cum += hist[v]; if (cum > hi) { hiV = v - 1; break; } }
+                    sb.Append($"  p{p * 100:0.##}%=[{loV},{hiV}]");
+                }
+                Console.WriteLine($"  {names[c]} min={minV} max={maxV}{sb}");
+            }
+            var st = AdjustmentsProcessor.ComputeAutoStretch(img);
+            Console.WriteLine(st is null
+                ? "  ComputeAutoStretch: NULL (no stretch)"
+                : $"  ComputeAutoStretch (lum): [{st[0]},{st[1]}]");
+
+            var proc = AdjustmentsProcessor.Apply(img, 0.45, 1.0, out var histOut);
+            if (proc is not null)
+            {
+                int pw = proc.PixelWidth;
+                int ps = pw * 4;
+                var pbuf = new byte[(long)ps * proc.PixelHeight];
+                proc.CopyPixels(pbuf, ps, 0);
+                var hOut = new int[3][];
+                for (int c = 0; c < 3; c++) hOut[c] = c == 0 ? histOut!.B : c == 1 ? histOut!.G : histOut!.R;
+                Console.Write("  shadows 45% output p0.5%:");
+                for (int c = 2; c >= 0; c--)
+                {
+                    var hd = hOut[c];
+                    long cum = 0; int loV = 0, hiV = 255;
+                    long t = (long)((long)pw * proc.PixelHeight * 0.005); if (t < 1) t = 1;
+                    for (int v = 0; v < 256; v++) { cum += hd[v]; if (cum >= t) { loV = v; break; } }
+                    cum = 0;
+                    for (int v = 0; v < 256; v++) { cum += hd[v]; if (cum > (long)pw * proc.PixelHeight - t) { hiV = v - 1; break; } }
+                    Console.Write($" {names[c]}=[{loV},{hiV}]");
+                }
+                Console.WriteLine();
+            }
+        }
+    }
+
+    private static (byte b, byte g, byte r) ReadRow(WriteableBitmap bmp, int row, int col = 0)
+    {
+        var buf = new byte[4];
+        bmp.CopyPixels(new Int32Rect(col, row, 1, 1), buf, 4, 0);
+        return (buf[0], buf[1], buf[2]);
+    }
+
+    private static string Fmt(byte[]? st) =>
+        st is null ? "null" : string.Join(",", st);
+
+    private static BitmapSource MakeRampSource()
+    {
+        const int w = 100, h = 100;
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        for (int y = 0; y < h; y++)
+        {
+            byte v = y switch
+            {
+                0 => (byte)64,
+                1 => (byte)128,
+                2 => (byte)191,
+                _ => (byte)Math.Min(190, 65 + (y - 3) * 126 / 97)
+            };
+            for (int x = 0; x < w; x++)
+            {
+                buf[y * stride + x * 4 + 0] = v;
+                buf[y * stride + x * 4 + 1] = v;
+                buf[y * stride + x * 4 + 2] = v;
+                buf[y * stride + x * 4 + 3] = 255;
+            }
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
     }
 
     private static int ArgMax(int[] arr)
