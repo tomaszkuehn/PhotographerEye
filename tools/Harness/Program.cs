@@ -467,6 +467,118 @@ internal static class Program
         var combo = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
             extra: new PhotoAdjustments { Exposure = 0.5, Contrast = 0.3, Temperature = 0.2, Saturation = 1.2, Clarity = 0.2, Dehaze = 0.3, Denoise = 0.4 });
         Check(combo is not null, "photo extras combined apply");
+
+        TestPhotoExtras2();
+    }
+
+    private static void TestPhotoExtras2()
+    {
+        var split = MakeHighlightSource();
+        var rec = AdjustmentsProcessor.Apply(split, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Highlights = -0.8 });
+        float brightBefore = LumMeanRegion(split, 0, 0, 90, 100);
+        float brightAfter = LumMeanRegion(rec!, 0, 0, 90, 100);
+        float darkBefore = LumMeanRegion(split, 0, 100, 90, 100);
+        float darkAfter = LumMeanRegion(rec!, 0, 100, 90, 100);
+        Check(brightAfter < brightBefore - 5, $"highlights recovery darkens bright region ({brightBefore:0.#} -> {brightAfter:0.#})");
+        Check(Math.Abs(darkAfter - darkBefore) < 2, $"highlights spares dark region ({darkBefore:0.#} -> {darkAfter:0.#})");
+
+        var blocks = MakeBlocksSource(200, 140);
+        var sharp = AdjustmentsProcessor.Apply(blocks, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Sharpen = 1.0 });
+        float baseStd = StddevRegion(blocks, 80, 20, 40, 100);
+        float sharpStd = StddevRegion(sharp!, 80, 20, 40, 100);
+        Check(sharpStd > baseStd, $"sharpen increases edge stddev ({baseStd:0.##} -> {sharpStd:0.##})");
+
+        var chroma = MakeChromaNoiseSource(160, 120, seed: 11);
+        var cnr = AdjustmentsProcessor.Apply(chroma, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { ColorNoise = 1.0 });
+        Check(cnr is not null && ChromaStddev(cnr!) < ChromaStddev(chroma),
+              $"chroma NR reduces color noise ({ChromaStddev(chroma):0.###} -> {ChromaStddev(cnr ?? chroma):0.###})");
+
+        double tWarmSample = PhotoOps.WbTemperatureFromSample(90, 130, 170);
+        double tCoolSample = PhotoOps.WbTemperatureFromSample(170, 130, 90);
+        double tNeutral = PhotoOps.WbTemperatureFromSample(128, 128, 128);
+        Check(tWarmSample > 0.5, $"wb picker blue-ish sample -> warm correction ({tWarmSample:0.##})");
+        Check(tCoolSample < -0.5, $"wb picker red-ish sample -> cool correction ({tCoolSample:0.##})");
+        Check(Math.Abs(tNeutral) < 0.01, $"wb picker neutral sample -> no change ({tNeutral:0.###})");
+    }
+
+    private static BitmapSource MakeHighlightSource()
+    {
+        int w = 240, h = 200;
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        for (int y = 0; y < h; y++)
+        {
+            byte v = (byte)(y < 100 ? 235 : 60);
+            for (int x = 0; x < w; x++)
+            {
+                buf[y * stride + x * 4 + 0] = v;
+                buf[y * stride + x * 4 + 1] = v;
+                buf[y * stride + x * 4 + 2] = v;
+                buf[y * stride + x * 4 + 3] = 255;
+            }
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
+    }
+
+    private static float LumMeanRegion(BitmapSource img, int x0, int y0, int w, int h)
+    {
+        var buf = new byte[w * 4];
+        double total = 0;
+        for (int y = 0; y < h; y++)
+        {
+            img.CopyPixels(new Int32Rect(x0, y0 + y, w, 1), buf, buf.Length, 0);
+            for (int x = 0; x < w; x++)
+            {
+                total += 0.2126 * buf[x * 4 + 2] + 0.7152 * buf[x * 4 + 1] + 0.0722 * buf[x * 4];
+            }
+        }
+        return (float)(total / Math.Max(1, w * h));
+    }
+
+    private static BitmapSource MakeChromaNoiseSource(int w, int h, int seed)
+    {
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        uint s = (uint)seed;
+        for (int i = 0; i < buf.Length; i += 4)
+        {
+            s = s * 1664525u + 1013904223u;
+            int d = (int)(((s >> 16) & 0xFF) % 60) - 30;
+            buf[i + 0] = (byte)Math.Clamp(128 + d, 0, 255);
+            s = s * 1664525u + 1013904223u;
+            d = (int)(((s >> 16) & 0xFF) % 60) - 30;
+            buf[i + 1] = (byte)Math.Clamp(128 + d, 0, 255);
+            s = s * 1664525u + 1013904223u;
+            d = (int)(((s >> 16) & 0xFF) % 60) - 30;
+            buf[i + 2] = (byte)Math.Clamp(128 + d, 0, 255);
+            buf[i + 3] = 255;
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
+    }
+
+    private static float ChromaStddev(BitmapSource img)
+    {
+        var buf = new byte[img.PixelWidth * img.PixelHeight * 4];
+        int w = img.PixelWidth, h = img.PixelHeight;
+        img.CopyPixels(buf, w * 4, 0);
+        double sum = 0, sum2 = 0;
+        long n = 0;
+        for (int i = 0; i < buf.Length - 1; i += 4)
+        {
+            double d = (double)buf[i + 2] - buf[i + 1];
+            sum += d;
+            sum2 += d * d;
+            n++;
+        }
+        double mean = sum / n;
+        return (float)Math.Sqrt(Math.Max(0, sum2 / n - mean * mean));
     }
 
     private static BitmapSource MakeNoisySource(int w, int h, int seed)

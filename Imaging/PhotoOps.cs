@@ -9,8 +9,11 @@ public sealed class PhotoAdjustments
     public double Temperature;
     public double Saturation = 1.0;
     public double Clarity;
+    public double Sharpen;
+    public double Highlights;
     public double Dehaze;
     public double Denoise;
+    public double ColorNoise;
 
     public bool IsDefault =>
         Math.Abs(Exposure) < 0.0005 &&
@@ -18,8 +21,26 @@ public sealed class PhotoAdjustments
         Math.Abs(Temperature) < 0.0005 &&
         Math.Abs(Saturation - 1.0) < 0.005 &&
         Math.Abs(Clarity) < 0.0005 &&
+        Math.Abs(Sharpen) < 0.0005 &&
+        Math.Abs(Highlights) < 0.0005 &&
         Math.Abs(Dehaze) < 0.0005 &&
-        Math.Abs(Denoise) < 0.0005;
+        Math.Abs(Denoise) < 0.0005 &&
+        Math.Abs(ColorNoise) < 0.0005;
+
+    public static PhotoAdjustments FromUi(double exposure, double contrast, double temperature, double saturation, double clarity, double sharpen, double highlights, double dehaze, double denoise, double colorNoise) =>
+        new()
+        {
+            Exposure = exposure,
+            Contrast = contrast / 100.0,
+            Temperature = temperature / 100.0,
+            Saturation = saturation / 100.0,
+            Clarity = clarity / 100.0,
+            Sharpen = sharpen / 100.0,
+            Highlights = highlights / 100.0,
+            Dehaze = dehaze / 100.0,
+            Denoise = denoise / 100.0,
+            ColorNoise = colorNoise / 100.0
+        };
 }
 
 public static class PhotoOps
@@ -107,6 +128,78 @@ public static class PhotoOps
         return (byte)(i < 0 ? 0 : i > 255 ? 255 : i);
     }
 
+    public static unsafe void ApplyChromaDenoise(byte[] buffer, int w, int h, double colorNoise)
+    {
+        double n = Math.Clamp(colorNoise, 0.0, 1.0);
+        if (n <= 0.0005) return;
+        int r = n < 0.34 ? 1 : (n < 0.67 ? 2 : 3);
+        float blend = (float)(0.15 + 0.65 * n);
+
+        var temp = new byte[buffer.Length];
+        var blurred = new byte[buffer.Length];
+        BoxBlurBgrPass(buffer, temp, w, h, r, vertical: false);
+        BoxBlurBgrPass(temp, blurred, w, h, r, vertical: true);
+
+        var lum0 = new float[w * h];
+        var lumB = new float[w * h];
+        ComputeLuma(buffer, lum0, w, h);
+        ComputeLuma(blurred, lumB, w, h);
+
+        fixed (byte* p = buffer)
+        fixed (byte* bp = blurred)
+        fixed (float* l0 = lum0, lb = lumB)
+        {
+            byte* end = p + buffer.Length;
+            float* a = l0;
+            float* b = lb;
+            for (byte* q = p, s = bp; q < end; q += 4, s += 4, a++, b++)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    float corrected = *a + (s[c] - *b);
+                    q[c] = MixByte(q[c], (int)Math.Round(corrected), blend);
+                }
+            }
+        }
+    }
+
+    private static unsafe void ComputeLuma(byte[] buffer, float[] lum, int w, int h)
+    {
+        fixed (byte* p = buffer)
+        fixed (float* lp = lum)
+        {
+            float* l = lp;
+            byte* end = p + buffer.Length;
+            for (byte* q = p; q < end; q += 4, l++)
+                *l = 0.2126f * q[2] + 0.7152f * q[1] + 0.0722f * q[0];
+        }
+    }
+
+    public static double WbTemperatureFromSample(double mR, double mG, double mB)
+    {
+        if (mR < 1.0 || mG < 1.0 || mB < 1.0) return 0.0;
+        double gR = mG / mR;
+        double gB = mG / mB;
+        double t;
+        if (gR >= 1.0 && gB <= 1.0)
+        {
+            double tR = (gR - 1.0) / 0.30;
+            double tB = (1.0 - gB) / 0.30;
+            t = (tR + tB) * 0.5;
+        }
+        else if (gR <= 1.0 && gB >= 1.0)
+        {
+            double kR = (1.0 - gR) / 0.10;
+            double kB = (gB - 1.0) / 0.30;
+            t = -((kR + kB) * 0.5);
+        }
+        else
+        {
+            t = (gR - gB) / 0.60;
+        }
+        return Math.Clamp(t, -1.0, 1.0);
+    }
+
     public static unsafe void ApplyDenoise(byte[] buffer, int w, int h, double denoise)
     {
         double n = Math.Clamp(denoise, 0.0, 1.0);
@@ -130,6 +223,106 @@ public static class PhotoOps
                 q[2] = MixByte(q[2], s[2], blend);
             }
         }
+    }
+
+    public static unsafe void ApplyHighlights(byte[] buffer, int w, int h, double highlights)
+    {
+        double v = Math.Clamp(highlights, -1.0, 1.0);
+        if (Math.Abs(v) <= 0.0005) return;
+        float exp = 1.0f + (float)(2.0 * Math.Abs(v));
+
+        const float threshold = 0.72f;
+        const float softness = 0.16f;
+        float lower = threshold - softness;
+        float upper = threshold + softness;
+        float denom = upper - lower;
+
+        var srgbLin = new float[256];
+        for (int i = 0; i < 256; i++)
+        {
+            double c = i / 255.0;
+            srgbLin[i] = (float)(c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4));
+        }
+
+        var linSrgb = new byte[1024];
+        for (int i = 0; i < 1024; i++)
+        {
+            double c = i / 1023.0;
+            double s = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.Pow(c, 1.0 / 2.4) - 0.055;
+            linSrgb[i] = (byte)Math.Clamp(Math.Round(s * 255.0), 0, 255);
+        }
+
+        var lift = new float[1024];
+        if (v > 0)
+        {
+            for (int i = 0; i < 1024; i++)
+                lift[i] = 1.0f - MathF.Pow(1.0f - i / 1023.0f, exp);
+        }
+        else
+        {
+            for (int i = 1; i < 1024; i++)
+                lift[i] = MathF.Pow(i / 1023.0f, exp);
+            lift[0] = 0.0f;
+        }
+
+        fixed (byte* p = buffer)
+        {
+            byte* end = p + buffer.Length;
+            for (byte* q = p; q < end; q += 4)
+            {
+                float lr = srgbLin[q[2]];
+                float lg = srgbLin[q[1]];
+                float lb = srgbLin[q[0]];
+
+                float lum = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
+                float ramp = (lum - lower) / denom;
+                if (ramp < 0.0f) ramp = 0.0f;
+                else if (ramp > 1.0f) ramp = 1.0f;
+                float mask = ramp * ramp;
+                if (mask <= 0.0f) continue;
+
+                float inv = 1.0f - mask;
+                q[2] = linSrgb[(int)((lr * inv + lift[LiftIndex(lr)] * mask) * 1023.0f + 0.5f)];
+                q[1] = linSrgb[(int)((lg * inv + lift[LiftIndex(lg)] * mask) * 1023.0f + 0.5f)];
+                q[0] = linSrgb[(int)((lb * inv + lift[LiftIndex(lb)] * mask) * 1023.0f + 0.5f)];
+            }
+        }
+    }
+
+    public static unsafe void ApplySharpen(byte[] buffer, int w, int h, double sharpen)
+    {
+        double amt = Math.Clamp(sharpen, 0.0, 1.0);
+        if (amt <= 0.0005) return;
+        int r = Math.Clamp((int)Math.Round(Math.Min(w, h) * 0.0005), 1, 3);
+
+        var lum = new float[w * h];
+        ComputeLuma(buffer, lum, w, h);
+        var low = new float[w * h];
+        var low2 = new float[w * h];
+        BoxBlurFloatPass(lum, low, w, h, r, vertical: false);
+        BoxBlurFloatPass(low, low2, w, h, r, vertical: true);
+
+        float a = (float)(amt * 1.15);
+        fixed (byte* p = buffer)
+        fixed (float* lp = lum, op = low2)
+        {
+            float* l = lp;
+            float* o = op;
+            byte* end = p + buffer.Length;
+            for (byte* q = p; q < end; q += 4, l++, o++)
+            {
+                float delta = (*l - *o) * a;
+                q[0] = ClampByte(q[0] + delta);
+                q[1] = ClampByte(q[1] + delta);
+                q[2] = ClampByte(q[2] + delta);
+            }
+        }
+    }
+
+    private static int LiftIndex(float lin)
+    {
+        int i = (int)(lin * 1023.0f + 0.5f);
+        return i < 0 ? 0 : (i > 1023 ? 1023 : i);
     }
 
     private static byte MixByte(int a, int b, float t)

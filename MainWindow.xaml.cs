@@ -45,6 +45,7 @@ public partial class MainWindow : Window
     private MonoMode _monoMode = MonoMode.None;
     private int _monoSeed;
     private CancellationTokenSource? _redecodeCts;
+    private bool _wbPicking;
     private bool _suppressZoomUi;
     private long _lastApplyTicks;
     private readonly DispatcherTimer _saveTimer;
@@ -71,12 +72,18 @@ public partial class MainWindow : Window
         TempSlider.ValueChanged += OnPanelSliderChanged;
         SatSlider.ValueChanged += OnPanelSliderChanged;
         ClaritySlider.ValueChanged += OnPanelSliderChanged;
+        SharpenSlider.ValueChanged += OnPanelSliderChanged;
+        HighlightsSlider.ValueChanged += OnPanelSliderChanged;
+        PanelShadowSlider.ValueChanged += OnPanelSliderChanged;
         DehazeSlider.ValueChanged += OnPanelSliderChanged;
         DenoiseSlider.ValueChanged += OnPanelSliderChanged;
-        foreach (var s in new[] { ExpSlider, ContrastSlider, TempSlider, SatSlider, ClaritySlider, DehazeSlider, DenoiseSlider })
+        ColorNoiseSlider.ValueChanged += OnPanelSliderChanged;
+        foreach (var s in new[] { ExpSlider, ContrastSlider, TempSlider, SatSlider, ClaritySlider, SharpenSlider, HighlightsSlider, PanelShadowSlider, DehazeSlider, DenoiseSlider, ColorNoiseSlider })
         {
             s.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         }
+        ShadowSlider.ValueChanged += OnToolbarShadowSynced;
+        Viewer.PreviewMouseLeftButtonDown += OnViewerPickClick;
         StateChanged += (_, _) =>
         {
             if (BtnWinMax is not null)
@@ -804,21 +811,101 @@ public partial class MainWindow : Window
     private PhotoAdjustments? PanelExtras()
     {
         if (ExpSlider is null) return null;
-        var a = new PhotoAdjustments
-        {
-            Exposure = ExpSlider.Value,
-            Contrast = ContrastSlider.Value / 100.0,
-            Temperature = TempSlider.Value / 100.0,
-            Saturation = SatSlider.Value / 100.0,
-            Clarity = ClaritySlider.Value / 100.0,
-            Dehaze = DehazeSlider.Value / 100.0,
-            Denoise = DenoiseSlider.Value / 100.0
-        };
+        var a = PhotoAdjustments.FromUi(
+            ExpSlider.Value,
+            ContrastSlider.Value,
+            TempSlider.Value,
+            SatSlider.Value,
+            ClaritySlider.Value,
+            SharpenSlider.Value,
+            HighlightsSlider.Value,
+            DehazeSlider.Value,
+            DenoiseSlider.Value,
+            ColorNoiseSlider.Value);
         return a.IsDefault ? null : a;
+    }
+
+    private bool _syncingShadow;
+
+    private void OnToolbarShadowSynced(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_syncingShadow || PanelShadowSlider is null) return;
+        _syncingShadow = true;
+        try
+        {
+            PanelShadowSlider.Value = e.NewValue;
+            PanelShadowValue.Text = $"{Math.Round(e.NewValue)} %";
+        }
+        finally
+        {
+            _syncingShadow = false;
+        }
+    }
+
+    private void OnWbPickerClick(object sender, RoutedEventArgs e)
+    {
+        _wbPicking = !_wbPicking;
+        Mouse.OverrideCursor = _wbPicking ? Cursors.Cross : null;
+        SetStatus(_wbPicking
+            ? "Pipeta punktu bieli — kliknij neutralny obszar zdjęcia (Esc — anuluj)"
+            : "Pipeta punktu bieli — anulowana", error: false);
+    }
+
+    private void OnViewerPickClick(object sender, MouseButtonEventArgs e)
+    {
+        if (!_wbPicking) return;
+        e.Handled = true;
+        _wbPicking = false;
+        Mouse.OverrideCursor = null;
+
+        if (_baseBitmap is not null && Viewer.TryScreenToPixel(e.GetPosition(Viewer), out double bx, out double by))
+        {
+            int cx = (int)bx;
+            int cy = (int)by;
+            int r = 4;
+            int x0 = Math.Max(0, cx - r);
+            int y0 = Math.Max(0, cy - r);
+            int w = Math.Min(_baseBitmap.PixelWidth, cx + r + 1) - x0;
+            int h = Math.Min(_baseBitmap.PixelHeight, cy + r + 1) - y0;
+            if (w > 0 && h > 0)
+            {
+                var buf = new byte[w * h * 4];
+                _baseBitmap.CopyPixels(new Int32Rect(x0, y0, w, h), buf, w * 4, 0);
+                double sr = 0, sg = 0, sb = 0, n = 0;
+                for (int i = 0; i < buf.Length - 3; i += 4)
+                {
+                    if (buf[i + 3] < 16) continue;
+                    sb += buf[i];
+                    sg += buf[i + 1];
+                    sr += buf[i + 2];
+                    n++;
+                }
+                if (n > 0)
+                {
+                    double t = PhotoOps.WbTemperatureFromSample(sr / n, sg / n, sb / n);
+                    TempSlider.Value = Math.Clamp(t * 100.0, TempSlider.Minimum, TempSlider.Maximum);
+                    SetStatus($"Balans bieli z punktu bieli — temperatura {(int)Math.Round(TempSlider.Value)}", error: false);
+                    return;
+                }
+            }
+        }
+        SetStatus("Punkt bieli — próbkowanie poza obrazem", error: true);
     }
 
     private void OnPanelSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        if (sender is Slider s && ReferenceEquals(s, PanelShadowSlider) && !_syncingShadow)
+        {
+            _syncingShadow = true;
+            try
+            {
+                ShadowSlider.Value = e.NewValue;
+            }
+            finally
+            {
+                _syncingShadow = false;
+            }
+        }
         UpdatePanelLabels();
         _showHistogram = true;
         UpdateSaveState();
@@ -836,9 +923,13 @@ public partial class MainWindow : Window
         ContrastValue.Text = ((int)ContrastSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         TempValue.Text = ((int)TempSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         SatValue.Text = $"{(int)SatSlider.Value} %";
+        PanelShadowValue.Text = $"{Math.Round(PanelShadowSlider.Value)} %";
+        HighlightsValue.Text = ((int)HighlightsSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         ClarityValue.Text = ((int)ClaritySlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        SharpenValue.Text = ((int)SharpenSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         DehazeValue.Text = ((int)DehazeSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         DenoiseValue.Text = ((int)DenoiseSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        ColorNoiseValue.Text = ((int)ColorNoiseSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private void OnResetClick(object sender, RoutedEventArgs e) => ResetAdjustments();
@@ -882,9 +973,13 @@ public partial class MainWindow : Window
             ContrastSlider.Value = 0;
             TempSlider.Value = 0;
             SatSlider.Value = 100;
+            PanelShadowSlider.Value = 0;
+            HighlightsSlider.Value = 0;
             ClaritySlider.Value = 0;
+            SharpenSlider.Value = 0;
             DehazeSlider.Value = 0;
             DenoiseSlider.Value = 0;
+            ColorNoiseSlider.Value = 0;
             UpdatePanelLabels();
         }
         _monoMode = MonoMode.None;
@@ -905,9 +1000,13 @@ public partial class MainWindow : Window
         else if (ReferenceEquals(sender, ContrastSlider)) ContrastSlider.Value = 0;
         else if (ReferenceEquals(sender, TempSlider)) TempSlider.Value = 0;
         else if (ReferenceEquals(sender, SatSlider)) SatSlider.Value = 100;
+        else if (ReferenceEquals(sender, PanelShadowSlider)) PanelShadowSlider.Value = 0;
+        else if (ReferenceEquals(sender, HighlightsSlider)) HighlightsSlider.Value = 0;
         else if (ReferenceEquals(sender, ClaritySlider)) ClaritySlider.Value = 0;
+        else if (ReferenceEquals(sender, SharpenSlider)) SharpenSlider.Value = 0;
         else if (ReferenceEquals(sender, DehazeSlider)) DehazeSlider.Value = 0;
         else if (ReferenceEquals(sender, DenoiseSlider)) DenoiseSlider.Value = 0;
+        else if (ReferenceEquals(sender, ColorNoiseSlider)) ColorNoiseSlider.Value = 0;
         e.Handled = true;
     }
 
@@ -937,6 +1036,15 @@ public partial class MainWindow : Window
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (_wbPicking)
+        {
+            _wbPicking = false;
+            Mouse.OverrideCursor = null;
+            SetStatus("Pipeta punktu bieli — anulowana", error: false);
+            if (e.Key != Key.Escape) return;
+            e.Handled = true;
+            return;
+        }
         if (e.Key is Key.LeftCtrl or Key.RightCtrl) return;
 
         if (Keyboard.FocusedElement is Slider) return;

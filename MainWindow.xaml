@@ -238,7 +238,20 @@
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Balans bieli" />
-                                     <TextBlock x:Name="TempValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                         <Button x:Name="BtnWbPicker"
+                                                 Width="18" Height="18"
+                                                 Content="&#xE790;"
+                                                 FontFamily="Segoe MDL2 Assets"
+                                                 FontSize="10"
+                                                 Padding="0"
+                                                 MinWidth="0"
+                                                 Margin="0,0,6,0"
+                                                 Style="{StaticResource ToolButton}"
+                                                 Click="OnWbPickerClick"
+                                                 ToolTip="Punkt bieli — kliknij neutralny obszar zdjęcia (pipeta)" />
+                                         <TextBlock x:Name="TempValue" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                     </StackPanel>
                                  </Grid>
                                  <Slider x:Name="TempSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
                              </StackPanel>
@@ -251,10 +264,31 @@
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
+                                     <TextBlock Text="Cienie" />
+                                     <TextBlock x:Name="PanelShadowValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0 %" />
+                                 </Grid>
+                                 <Slider x:Name="PanelShadowSlider" Minimum="-50" Maximum="70" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Światła" />
+                                     <TextBlock x:Name="HighlightsValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                 </Grid>
+                                 <Slider x:Name="HighlightsSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
                                      <TextBlock Text="Clarity" />
                                      <TextBlock x:Name="ClarityValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                                  </Grid>
                                  <Slider x:Name="ClaritySlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Wyostrzenie" />
+                                     <TextBlock x:Name="SharpenValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                 </Grid>
+                                 <Slider x:Name="SharpenSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
@@ -269,6 +303,13 @@
                                      <TextBlock x:Name="DenoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                                  </Grid>
                                  <Slider x:Name="DenoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                             </StackPanel>
+                             <StackPanel Margin="0,12,0,0">
+                                 <Grid>
+                                     <TextBlock Text="Redukcja szumu kolorów" />
+                                     <TextBlock x:Name="ColorNoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                                 </Grid>
+                                 <Slider x:Name="ColorNoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
                              </StackPanel>
                          </StackPanel>
                      </ScrollViewer>

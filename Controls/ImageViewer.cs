@@ -108,6 +108,16 @@ public sealed partial class ImageViewer : Grid
         RaiseZoomChanged();
     }
 
+    public bool TryScreenToPixel(Point p, out double bx, out double by)
+    {
+        bx = 0;
+        by = 0;
+        if (_image.Source is not BitmapSource bmp || _dipPerPx <= 0) return false;
+        bx = (p.X - MarginLeft) / _dipPerPx;
+        by = (p.Y - MarginTop) / _dipPerPx;
+        return bx >= 0 && by >= 0 && bx < bmp.PixelWidth && by < bmp.PixelHeight;
+    }
+
     public void FitToWindow()
     {
         if (_image.Source is null || _nativeSize.Width <= 0 || _nativeSize.Height <= 0 || ActualWidth <= 0 || ActualHeight <= 0)
