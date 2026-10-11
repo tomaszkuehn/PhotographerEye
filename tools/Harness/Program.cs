@@ -37,6 +37,8 @@ internal static class Program
         TestHistogram();
         TestAutoStretch();
         TestManualStretch();
+        TestMono();
+        TestTriX();
         TestCrossImageSwitch();
         TestExifRotation();
 
@@ -318,6 +320,79 @@ internal static class Program
     }
 
     private static bool Near(double a, double b) => Math.Abs(a - b) < 0.001;
+
+    private static void TestTriX()
+    {
+        var src = MakeFlat(255, 255, 255, 255, 128, 128, 128, 0, 0, 0);
+        var a1 = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.TriX, 777);
+        var a2 = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.TriX, 777);
+        var b = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.TriX, 911);
+        Check(a1 is not null && SamePixels(a1, a2), "trix grain deterministic (same seed)");
+        Check(!SamePixels(a1, b), "trix grain differs (different seed)");
+
+        var m = ReadPixels(a1!);
+        Check(m.dark.b == m.dark.g && m.dark.g == m.dark.r, "trix channels collapsed");
+        Check(m.dark.g <= 8 && m.dark.g >= 1, "trix black toe deep");
+        Check(m.bright.g >= 250, "trix white shoulder holds");
+
+        var doc = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.Documentary, 777);
+        float trixMid = RowMean(a1!, 1);
+        float docMid = RowMean(doc!, 1);
+        Check(trixMid > docMid + 3.0f, $"trix midtone punchier (trix {trixMid:0.##} vs doc {docMid:0.##})");
+
+        var ramp = MakeRampSource();
+        var rm = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.TriX, 5);
+        int r0 = ReadRow(rm!, 0).g, r1 = ReadRow(rm!, 1).g, r2 = ReadRow(rm!, 2).g;
+        Check(r0 < r1 && r1 < r2, "trix monotonic on ramp");
+
+        float midNoise = RowMean(a1!, 1);
+        Check(Math.Abs(midNoise - 140) < 12, $"grain mean near trix curve mid ({midNoise:0.#})");
+    }
+
+    private static float RowMean(WriteableBitmap bmp, int row)
+    {
+        int w = bmp.PixelWidth;
+        var buf = new byte[w * 4];
+        bmp.CopyPixels(new Int32Rect(0, row, w, 1), buf, w * 4, 0);
+        long s = 0;
+        for (int x = 0; x < w; x++) s += buf[x * 4 + 1];
+        return s / (float)w;
+    }
+
+    private static void TestMono()
+    {
+        var src = MakeFlat(255, 255, 255, 255, 128, 128, 128, 0, 0, 0);
+        var mono = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary);
+        Check(mono is not null, "mono apply");
+        var m = ReadPixels(mono!);
+        Check(m.bright.b == m.bright.g && m.bright.g == m.bright.r && m.dark.b == m.dark.g && m.dark.g == m.dark.r,
+              "mono collapses channels");
+
+        var color = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.None);
+        var c = ReadPixels(color!);
+        Check(c.bright.b == 255, "no-mono keeps color");
+
+        Check(m.bright.g >= 250, "mono white stays white");
+        Check(m.dark.g <= 8 && m.dark.g >= 1, "mono black toe lifted slightly (m.bright)");
+        Check(m.mid.g is >= 125 and <= 140, "mono mid gently lifted");
+
+        var warm = MakeFlat(255, 240, 60, 10, 240, 60, 10, 240, 60, 10);
+        var cool = MakeFlat(255, 10, 60, 240, 10, 60, 240, 10, 60, 240);
+        var mw = ReadPixels(AdjustmentsProcessor.Apply(warm, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary)!);
+        var mc = ReadPixels(AdjustmentsProcessor.Apply(cool, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary)!);
+        Check(mw.bright.g - mc.bright.g > 40, $"red-light documentary tone (warm {mw.bright.g} vs cool {mc.bright.g})");
+
+        bool monoIn = false, monoOut = false;
+        var ramp = MakeRampSource();
+        var rm = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary);
+        var rc = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.None);
+        int a0 = ReadRow(rm!, 0).g, a1 = ReadRow(rm!, 1).g, a2 = ReadRow(rm!, 2).g;
+        int b0 = ReadRow(rc!, 0).g, b1 = ReadRow(rc!, 1).g, b2 = ReadRow(rc!, 2).g;
+        monoIn = a0 < a1 && a1 < a2;
+        monoOut = a1 - b1 >= 4;
+        Check(monoIn, "mono S-curve monotonic on ramp");
+        Check(monoOut, $"mono S-curve adds mid contrast ({a1} vs {b1})");
+    }
 
     private static BitmapSource MakeWbSource()
     {
@@ -633,3 +708,4 @@ internal static class Program
         return (px(2), px(1), px(0));
     }
 }
+

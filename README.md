@@ -10,15 +10,16 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 - Korekcja cieni −50%…+70% (podnoszenie i przyciemnianie; pipeline liniowy sRGB, miękka maska luminancji — styl Photoshop) i gamma 0.50–2.00 (LUT środkowych tonów)
 - Przy regulacji cieni automatyczne rozciąganie histogramu narastające proporcjonalnie z siłą regulacji (pełne od ±50%): auto-contrast z percentyli 0.5% histogramu luminancji, jedna skala dla wszystkich kanałów — balans bieli nietknięty, czernie zakotwiczone, pomijane gdy zakres już pełny lub obraz płaski
 - Porównanie z oryginałem: przytrzymaj przycisk „Porównaj" lub spację (podgląd bez korekt; puszczenie wraca)
-- Overlay histogramu (luminancja + nakładki R/G/B) liczony z finalnego podglądu; pojawia się przy ruchu suwaków korekt, zamykany krzyżykiem; trwa przy zmianie obrazu
-- Ręczne rozciąganie histogramu: przeciągnij punkt na histogramie — część po jednej stronie punktu ściska się, po drugiej rozciąga (mapa odcinkowo-liniowa, końce 0 i 1 zakotwiczone, punkty zachowują monotoniczność); dodawanie kolejnych punktów kolejnymi chwytami; podwójny klik na histogramie usuwa wszystkie punkty; `R`/Reset czyści też punkty
+- Overlay histogramu (luminancja + nakładki R/G/B) liczony z finalnego podglądu; pojawia się przy ruchu suwaków korekt lub chwytaniu histogramu, chowany przy zmianie obrazu i krzyżykiem
+- Ręczne rozciąganie histogramu: przeciągnij punkt na histogramie — część po jednej stronie punktu ściska się, po drugiej rozciąga (mapa odcinkowo-liniowa, końce 0 i 1 zakotwiczone, punkty zachowują monotoniczność); dodawanie kolejnych punktów kolejnymi chwytami; punkty usuwa: podwójny klik na histogramie, przycisk resetu (♻) przy krzyżyku overlayu, `R`/Reset
+- Czarno-białe w fotograficznym stylu dokumentalnym: szybki przełącznik trzy-stanowy — przycisk na pasku lub klawisz `B`: kolor → **dokumentalny** (konwersja panchromatyczna z lekką przewagą czerwieni — jak filtr żółto-czerwony: jasna skóra, przyciemniony błękit + filmowa krzywa S: głębokie czernie, wyraziste środki, miękkie rolloff świecidełek) → **Tri-X 400** (emulacja: mocniejsza krzywa i ziarno filmowe o stałym wzorcu per obraz, widoczne głównie w półtonach); histogram pokazuje wynik; reset przy zmianie obrazu; zapis uwzględnia tryb
 - Kompaktowy ciemny interfejs: jedna linia narzędzi od minimalnej szerokości okna (980 px)
 - Własny pasek tytułowy: czarny, o obniżonej wysokości, z przyciskami minimalizacji/maksymalizacji/zamknięcia
 - Dynamiczne dekodowanie zależne od zoomu (pełna jakość przy dużych powiększeniach), cache podglądów sąsiednich plików
 - Strzałki przesuwania obrazów na lewym/prawym brzegu okna
 - Symbol ustawień (⚙) w prawym górnym rogu → „O aplikacji…" (autor, e-mail, GitHub, licencja)
 - Reset korekt automatycznie przy przełączeniu obrazu oraz ręcznie: `R`, przycisk „Reset", podwójny klik na suwak (lub na histogram — czyści punkty rozciągania)
-- Zapis zmodyfikowanego zdjęcia (Ctrl+S lub przycisk zapisu na pasku) w rozdzielczości oryginału — JPG (jakość 92) lub PNG, plik obok oryginału z przyrostkiem `_edited`; przycisk aktywny tylko gdy któraś korekta (cienie, gamma, punkty rozciągania) jest aktywna
+- Zapis zmodyfikowanego zdjęcia (Ctrl+S lub przycisk zapisu na pasku) w rozdzielczości oryginału — JPG (jakość 92) lub PNG, plik obok oryginału z przyrostkiem `_edited`; przycisk aktywny tylko gdy któraś korekta (cienie, gamma, punkty rozciągania, tryb czarno-biały) jest aktywna
 - Drag & drop pliku, otwieranie przez argument CLI, `Ctrl+O`
 - Ustawienia zapisywane w `%AppData%\ImgViewer\settings.json`
 
@@ -36,6 +37,7 @@ Portable: `dist\ImgViewer.exe [plik|folder]` — bez instalacji, .NET wbudowany 
 | `Shift`+rolka | przesuwanie poziome |
 | `1` / `0` | 100% / dopasuj |
 | `R` | reset korekt |
+| `B` | czarno-białe: kolor → dokumentalny → Tri-X 400 (pętla) |
 | spacja (przytrzymaj) | podgląd oryginału |
 | `Ctrl+O` | otwórz plik |
 | `Ctrl+S` | zapis zmodyfikowanego zdjęcia |

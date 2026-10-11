@@ -10,7 +10,7 @@
     <RootNamespace>ImgViewer</RootNamespace>
     <AssemblyName>ImgViewer</AssemblyName>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
-    <Version>0.8.0</Version>
+    <Version>0.86</Version>
     <NeutralLanguage>pl-PL</NeutralLanguage>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

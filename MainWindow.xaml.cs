@@ -42,6 +42,8 @@ public partial class MainWindow : Window
     private int _histSeq;
     private bool _showHistogram;
     private bool _compareOn;
+    private MonoMode _monoMode = MonoMode.None;
+    private int _monoSeed;
     private CancellationTokenSource? _redecodeCts;
     private bool _suppressZoomUi;
     private long _lastApplyTicks;
@@ -163,6 +165,7 @@ public partial class MainWindow : Window
         _index = idx;
         string path = _files[idx];
         _currentPath = path;
+        _monoSeed = MonoSeed(path);
         _baseBitmap = null;
         _baseInfo = null;
         _fullDecodeBox = default;
@@ -343,7 +346,7 @@ public partial class MainWindow : Window
         double g = GammaSlider.Value;
         var manual = HistogramPanel.Snapshot();
 
-        if (AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect)
+        if (AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None)
         {
             _applyCts?.Cancel();
             Viewer.SetSource(raw, info.DisplaySize);
@@ -361,9 +364,9 @@ public partial class MainWindow : Window
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var processed = AdjustmentsProcessor.Apply(raw, s, g, manual, out var hist);
+                var processed = AdjustmentsProcessor.Apply(raw, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed);
                 sw.Stop();
-                Debug.Log($"APPLY: {sw.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual}");
+                Debug.Log($"APPLY: {sw.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual} mono={_monoMode:D}");
                 if (processed is null || ct.IsCancellationRequested) return;
                 Dispatcher.BeginInvoke(() =>
                 {
@@ -413,6 +416,14 @@ public partial class MainWindow : Window
     {
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
+    }
+
+    private void OnHistResetClick(object sender, RoutedEventArgs e)
+    {
+        HistogramPanel.ClearManualStretch();
+        UpdateSaveState();
+        ReapplyAdjustments();
+        SetStatus("Punkty rozciągania histogramu usunięte", error: false);
     }
 
     private void OnManualStretchChanged(object? sender, EventArgs e)
@@ -505,6 +516,17 @@ public partial class MainWindow : Window
     private bool IsCurrent(string path) =>
         string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase) && _index >= 0;
 
+    private static int MonoSeed(string path)
+    {
+        uint h = 2166136261u;
+        foreach (char ch in path.ToUpperInvariant())
+        {
+            h ^= ch;
+            h *= 16777619u;
+        }
+        return unchecked((int)h);
+    }
+
     private Size GetViewportBox(double multiplier)
     {
         double dpi = Viewer.PpiFactor;
@@ -575,7 +597,8 @@ public partial class MainWindow : Window
         if (BtnSave is null) return;
         bool modified = Math.Abs(ShadowSlider.Value) > 0.0001 ||
                         Math.Abs(GammaSlider.Value - 1.0) > 0.0005 ||
-                        HistogramPanel.HasManualEffect;
+                        HistogramPanel.HasManualEffect ||
+                        _monoMode != MonoMode.None;
         BtnSave.IsEnabled = modified && _currentPath is not null;
     }
 
@@ -598,11 +621,11 @@ public partial class MainWindow : Window
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var info = ImageLoader.GetInfo(path);
                 var full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
-                var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _);
+                var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed);
                 if (processed is null) throw new InvalidOperationException("Nie udało się przetworzyć obrazu");
                 string dest = UniqueEditedPath(path);
                 SaveEncoded(processed, path, dest);
-                Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight} manual={manual}");
+                Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight} manual={manual} mono={_monoMode:D}");
                 Dispatcher.BeginInvoke(() =>
                 {
                     if (IsCurrent(path)) SetStatus($"Zapisano: {Path.GetFileName(dest)}", error: false);
@@ -755,11 +778,41 @@ public partial class MainWindow : Window
 
     private void OnResetClick(object sender, RoutedEventArgs e) => ResetAdjustments();
 
+    private void OnMonoToggleClick(object sender, RoutedEventArgs e) => ToggleMono();
+
+    private void ToggleMono()
+    {
+        if (_currentPath is null) return;
+        _monoMode = _monoMode switch
+        {
+            MonoMode.None => MonoMode.Documentary,
+            MonoMode.Documentary => MonoMode.TriX,
+            _ => MonoMode.None
+        };
+        UpdateMonoButton();
+        UpdateSaveState();
+        ReapplyAdjustments();
+        SetStatus(_monoMode switch
+        {
+            MonoMode.Documentary => "Czarno-białe (styl dokumentalny)",
+            MonoMode.TriX => "Czarno-białe (Tri-X 400, ziarno)",
+            _ => "Kolor — korekty bieżące"
+        }, error: false);
+    }
+
+    private void UpdateMonoButton()
+    {
+        if (BtnMono is null) return;
+        BtnMono.Foreground = (Brush)FindResource(_monoMode == MonoMode.None ? "ForegroundBrush" : "AccentBrush");
+    }
+
     private void ResetAdjustments(bool silent = false)
     {
         HistogramPanel.ClearManualStretch();
         ShadowSlider.Value = 0;
         GammaSlider.Value = 1.0;
+        _monoMode = MonoMode.None;
+        UpdateMonoButton();
         if (!silent)
         {
             SetStatus("Korekty przywrócone do wartości domyślnych (Cienie 0, Gamma 1.00)", error: false);
@@ -862,6 +915,10 @@ public partial class MainWindow : Window
                 ResetAdjustments();
                 e.Handled = true;
                 break;
+            case Key.B:
+                ToggleMono();
+                e.Handled = true;
+                break;
             case Key.Space:
                 if (_baseBitmap is not null)
                 {
@@ -872,3 +929,4 @@ public partial class MainWindow : Window
         }
     }
 }
+

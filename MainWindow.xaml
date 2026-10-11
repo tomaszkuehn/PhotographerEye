@@ -108,6 +108,9 @@
                         MouseLeftButtonUp="OnCompareRelease"
                         LostMouseCapture="OnCompareLostCapture"
                         ToolTip="Przytrzymaj — podgląd oryginału bez korekt (spacja)" />
+                <Button x:Name="BtnMono" Content="&#xE792;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
+                        Style="{StaticResource ToolButton}" Click="OnMonoToggleClick"
+                        ToolTip="Czarno-białe: dokumentalny / Tri-X 400 (B — trzy stany)" />
                 </WrapPanel>
             </DockPanel>
         </Border>
@@ -147,17 +150,28 @@
                   Margin="0,10,10,0"
                   Visibility="Hidden">
                 <v:HistogramOverlay x:Name="HistogramPanel" />
-                <Button x:Name="BtnHistClose"
-                        Width="18" Height="18"
-                        HorizontalAlignment="Right" VerticalAlignment="Top"
-                        Margin="0,3,3,0"
-                        Content="&#x2715;"
-                        FontSize="10"
-                        Padding="0"
-                        MinWidth="0"
-                        Style="{StaticResource ToolButton}"
-                        Click="OnHistCloseClick"
-                        ToolTip="Zamknij histogram" />
+                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,3,0" Orientation="Horizontal">
+                    <Button x:Name="BtnHistReset"
+                            Width="18" Height="18"
+                            Content="&#xE72C;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="10"
+                            Padding="0"
+                            MinWidth="0"
+                            Margin="0,0,4,0"
+                            Style="{StaticResource ToolButton}"
+                            Click="OnHistResetClick"
+                            ToolTip="Usuń punkty rozciągania histogramu" />
+                    <Button x:Name="BtnHistClose"
+                            Width="18" Height="18"
+                            Content="&#x2715;"
+                            FontSize="10"
+                            Padding="0"
+                            MinWidth="0"
+                            Style="{StaticResource ToolButton}"
+                            Click="OnHistCloseClick"
+                            ToolTip="Zamknij histogram" />
+                </StackPanel>
             </Grid>
             <Border x:Name="HintPanel"
                     IsHitTestVisible="False"
