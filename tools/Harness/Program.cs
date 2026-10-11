@@ -6,6 +6,7 @@ using System.Windows.Media.Imaging;
 using ImgViewer.Controls;
 using ImgViewer.Imaging;
 using ImgViewer.Services;
+using ImgViewer;
 
 internal static class Program
 {
@@ -40,6 +41,7 @@ internal static class Program
         TestMono();
         TestTriX();
         TestCrossImageSwitch();
+        TestRaw();
         TestExifRotation();
 
         Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
@@ -347,6 +349,47 @@ internal static class Program
 
         float midNoise = RowMean(a1!, 1);
         Check(Math.Abs(midNoise - 140) < 12, $"grain mean near trix curve mid ({midNoise:0.#})");
+    }
+
+    private static void TestRaw()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "imgviewer_rawtest"));
+        foreach (var f in new[] { "sample1.rw2", "sample1.nef" })
+        {
+            string src = Path.Combine(Path.GetTempPath(), "opencode", "rawsamples", f);
+            if (!File.Exists(src))
+            {
+                Check(false, $"raw sample present: {f}");
+                continue;
+            }
+            Check(ImageLoader.IsRaw(src), $"raw extension detected ({f})");
+
+            var info = ImageLoader.GetInfo(src);
+            Check(info.Width > 0 && info.Height > 0, $"raw info dims {f}: {info.Width}x{info.Height}");
+            Check(info.RotatedQuarter is false, $"raw orientation baked ({f})");
+
+            var half = ImageLoader.LoadScaled(src, info, info.Width, info.Height);
+            Check(half is not null, $"raw full load ok ({f})");
+            if (half is null) continue;
+
+            var buf = new byte[half.PixelWidth * 4];
+            half.CopyPixels(new Int32Rect(0, half.PixelHeight / 2, half.PixelWidth, 1), buf, half.PixelWidth * 4, 0);
+            double bMean = 0, gMean = 0, rMean = 0;
+            for (int i = 0; i < half.PixelWidth; i++)
+            {
+                bMean += buf[i * 4];
+                gMean += buf[i * 4 + 1];
+                rMean += buf[i * 4 + 2];
+            }
+            bMean /= half.PixelWidth; gMean /= half.PixelWidth; rMean /= half.PixelWidth;
+            Check(bMean > 5 && gMean > 5 && rMean > 5 && bMean < 250, $"raw midrow channels sane ({f}) B={bMean:0.#} G={gMean:0.#} R={rMean:0.#}");
+            Check(bMean != gMean || gMean != rMean, $"raw color not collapsed ({f})");
+
+            var processed = AdjustmentsProcessor.Apply(half, -10.0, 1.2, null, out _, autoStretch: false, MonoMode.None, 1);
+            Check(processed is not null, $"raw adjustments pipeline ({f})");
+
+            Debug.Log($"RAW TEST {f}: info={info.Width}x{info.Height} full={half.PixelWidth}x{half.PixelHeight}");
+        }
     }
 
     private static float RowMean(WriteableBitmap bmp, int row)
@@ -708,4 +751,5 @@ internal static class Program
         return (px(2), px(1), px(0));
     }
 }
+
 

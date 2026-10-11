@@ -25,7 +25,7 @@ function Shot($name)
     $b.Dispose()
 }
 
-$log = "$env:TEMP\imgviewer-debug.log"
+$log = "$env:TEMP\photographereye-debug.log"
 
 # --- baseline: cienie 0
 $gamma.SetValue(1.0)

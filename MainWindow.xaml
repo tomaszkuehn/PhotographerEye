@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:v="clr-namespace:ImgViewer.Controls"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="ImgViewer"
+        Title="PhotographerEye"
         Height="800" Width="1200" MinHeight="440" MinWidth="980"
         Background="{StaticResource WindowBrush}"
         Foreground="{StaticResource ForegroundBrush}"

@@ -12,7 +12,7 @@ public sealed class AboutWindow : Window
 {
     public AboutWindow()
     {
-        Title = "ImgViewer — O aplikacji";
+        Title = "PhotographerEye — O aplikacji";
         Width = 420;
         SizeToContent = SizeToContent.Height;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -29,7 +29,7 @@ public sealed class AboutWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "ImgViewer",
+            Text = "PhotographerEye",
             FontSize = 20,
             FontWeight = FontWeights.SemiBold,
             HorizontalAlignment = HorizontalAlignment.Center

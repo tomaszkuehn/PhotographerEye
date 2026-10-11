@@ -9,13 +9,13 @@ public static class Debug
 
     public static void Log(string message)
     {
-        if (Environment.GetEnvironmentVariable("IMGVIEWER_DEBUG") != "1") return;
+        if (Environment.GetEnvironmentVariable("PHOTOGRAPHEREYE_DEBUG") != "1") return;
         try
         {
             lock (Gate)
             {
                 File.AppendAllText(
-                    Path.Combine(Path.GetTempPath(), "imgviewer-debug.log"),
+                    Path.Combine(Path.GetTempPath(), "photographereye-debug.log"),
                     $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}");
             }
         }

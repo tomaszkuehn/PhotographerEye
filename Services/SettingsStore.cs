@@ -18,7 +18,7 @@ public static class SettingsStore
     };
 
     private static string DirectoryPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ImgViewer");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PhotographerEye");
 
     private static string FilePath => Path.Combine(DirectoryPath, "settings.json");
 

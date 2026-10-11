@@ -15,8 +15,15 @@ public readonly record struct ImageInfo(int Width, int Height, int Orientation)
 
 public static class ImageLoader
 {
+    public static bool IsRaw(string path) => Imaging.RawDecoder.IsRaw(path);
+
     public static ImageInfo GetInfo(string path)
     {
+        if (IsRaw(path))
+        {
+            return Imaging.RawDecoder.GetInfo(path);
+        }
+
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.None, BitmapCacheOption.OnDemand);
         var frame = decoder.Frames[0];
@@ -46,6 +53,11 @@ public static class ImageLoader
 
     public static BitmapSource LoadScaled(string path, ImageInfo info, int maxWidth, int maxHeight)
     {
+        if (IsRaw(path))
+        {
+            return Imaging.RawDecoder.LoadScaled(path, info, maxWidth, maxHeight);
+        }
+
         int rawW = info.RotatedQuarter ? info.Height : info.Width;
         int rawH = info.RotatedQuarter ? info.Width : info.Height;
         if (rawW <= 0 || rawH <= 0)

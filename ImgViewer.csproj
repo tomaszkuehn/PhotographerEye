@@ -8,12 +8,19 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <RootNamespace>ImgViewer</RootNamespace>
-    <AssemblyName>ImgViewer</AssemblyName>
+    <AssemblyName>PhotographerEye</AssemblyName>
+    <AssemblyTitle>PhotographerEye</AssemblyTitle>
+    <Product>PhotographerEye</Product>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
     <Version>0.86</Version>
     <NeutralLanguage>pl-PL</NeutralLanguage>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Sdcb.LibRaw" Version="0.21.1.7" />
+    <PackageReference Include="Sdcb.LibRaw.runtime.win64" Version="0.21.1" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="tools\**" />

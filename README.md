@@ -1,6 +1,6 @@
-# ImgViewer
+# PhotographerEye
 
-Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedynczy plik `.exe`), z korekcją tonów (cienie, gamma, rozciąganie histogramu) i zapisem zmodyfikowanych zdjęć.
+Portable przeglądarka zdjęć JPG/JPEG/PNG oraz RAW dla Windows (WPF, .NET 8, pojedynczy plik `.exe`), z korekcją tonów (cienie, gamma, rozciąganie histogramu) i zapisem zmodyfikowanych zdjęć.
 
 ## Funkcje
 
@@ -10,6 +10,7 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 - Korekcja cieni −50%…+70% (podnoszenie i przyciemnianie; pipeline liniowy sRGB, miękka maska luminancji — styl Photoshop) i gamma 0.50–2.00 (LUT środkowych tonów)
 - Przy regulacji cieni automatyczne rozciąganie histogramu narastające proporcjonalnie z siłą regulacji (pełne od ±50%): auto-contrast z percentyli 0.5% histogramu luminancji, jedna skala dla wszystkich kanałów — balans bieli nietknięty, czernie zakotwiczone, pomijane gdy zakres już pełny lub obraz płaski
 - Porównanie z oryginałem: przytrzymaj przycisk „Porównaj" lub spację (podgląd bez korekt; puszczenie wraca)
+- Podgląd plików RAW: RW2 (Panasonic), NEF/NRW (Nikon), ARW/SRF/SR2 (Sony), CR2/CR3/CRW (Canon), ORF (Olympus), RAF (Fuji), PEF (Pentax), DNG i inne — wbudowany LibRaw: demosaikacja, balans bieli z aparatu, auto-flip orientacji; dekodowanie w cache (podgląd 1/4 skali, pełna rozdzielczość przy przybliżeniu); zapis edycji jako `_edited.jpg`
 - Overlay histogramu (luminancja + nakładki R/G/B) liczony z finalnego podglądu; pojawia się przy ruchu suwaków korekt lub chwytaniu histogramu, chowany przy zmianie obrazu i krzyżykiem
 - Ręczne rozciąganie histogramu: przeciągnij punkt na histogramie — część po jednej stronie punktu ściska się, po drugiej rozciąga (mapa odcinkowo-liniowa, końce 0 i 1 zakotwiczone, punkty zachowują monotoniczność); dodawanie kolejnych punktów kolejnymi chwytami; punkty usuwa: podwójny klik na histogramie, przycisk resetu (♻) przy krzyżyku overlayu, `R`/Reset
 - Czarno-białe w fotograficznym stylu dokumentalnym: szybki przełącznik trzy-stanowy — przycisk na pasku lub klawisz `B`: kolor → **dokumentalny** (konwersja panchromatyczna z lekką przewagą czerwieni — jak filtr żółto-czerwony: jasna skóra, przyciemniony błękit + filmowa krzywa S: głębokie czernie, wyraziste środki, miękkie rolloff świecidełek) → **Tri-X 400** (emulacja: mocniejsza krzywa i ziarno filmowe o stałym wzorcu per obraz, widoczne głównie w półtonach); histogram pokazuje wynik; reset przy zmianie obrazu; zapis uwzględnia tryb
@@ -21,11 +22,11 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 - Reset korekt automatycznie przy przełączeniu obrazu oraz ręcznie: `R`, przycisk „Reset", podwójny klik na suwak (lub na histogram — czyści punkty rozciągania)
 - Zapis zmodyfikowanego zdjęcia (Ctrl+S lub przycisk zapisu na pasku) w rozdzielczości oryginału — JPG (jakość 92) lub PNG, plik obok oryginału z przyrostkiem `_edited`; przycisk aktywny tylko gdy któraś korekta (cienie, gamma, punkty rozciągania, tryb czarno-biały) jest aktywna
 - Drag & drop pliku, otwieranie przez argument CLI, `Ctrl+O`
-- Ustawienia zapisywane w `%AppData%\ImgViewer\settings.json`
+- Ustawienia zapisywane w `%AppData%\PhotographerEye\settings.json`
 
 ## Uruchamianie
 
-Portable: `dist\ImgViewer.exe [plik|folder]` — bez instalacji, .NET wbudowany w plik.
+Portable: `dist\PhotographerEye.exe [plik|folder]` — bez instalacji, .NET wbudowany w plik. Obsługuje też pliki RAW (RW2, NEF, ARW, CR2/CR3, ORF, RAF, DNG…) przez wbudowany LibRaw.
 
 ## Skróty klawiszowe
 
@@ -51,7 +52,7 @@ dotnet publish ImgViewer.csproj -c Release -r win-x64 --self-contained true -p:P
 
 ## Testy
 
-Harness logiki (zoom/pan/fit, DPI, korekty, histogram):
+Harness logiki (zoom/pan/fit, DPI, korekty, histogram, RAW):
 
 ```
 dotnet run --project tools\Harness\tools.csproj -c Release
@@ -70,7 +71,7 @@ E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
 - `MainWindow.xaml(.cs)` — toolbar, pasek tytułowy, nawigacja, zapis, odświeżanie widoku, ustawienia
 - `Controls/ImageViewer.cs` — zoom/pan/fit (renderowanie layoutowe, bez transformacji macierzowej)
 - `Controls/HistogramOverlay.cs` — histogram w prawym górnym rogu + interaktywne punkty rozciągania
-- `Services/ImageLoader.cs` — dekodowanie, DPI 96, orientacja EXIF
+- `Services/ImageLoader.cs` — dekodowanie, DPI 96, orientacja EXIF; delegacja RAW do `Imaging/RawDecoder.cs` (LibRaw: dekodowanie, cache podglądów, zapis `_edited.jpg`)
 - `Services/AdjustmentsProcessor.cs` — cienie (pipeline liniowy) + gamma + auto-stretch + ręczna mapa rozciągania + histogram
 - `Imaging/ManualStretch.cs` — mapa odcinkowo-liniowa punktów rozciągania
 - `Services/ImageFolder.cs`, `Services/SettingsStore.cs` — lista plików, ustawienia
@@ -79,7 +80,7 @@ E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
 
 ## Debugowanie
 
-Ustaw `IMGVIEWER_DEBUG=1`, log: `%TEMP%\imgviewer-debug.log`.
+Ustaw `PHOTOGRAPHEREYE_DEBUG=1`, log: `%TEMP%\photographereye-debug.log`.
 
 ## Licencja
 

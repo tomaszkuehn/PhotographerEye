@@ -173,7 +173,7 @@ public partial class MainWindow : Window
         _redecodeCts?.Cancel();
 
         CounterText.Text = $"{idx + 1} / {_files.Count}";
-        Title = $"{Path.GetFileName(path)} — {idx + 1}/{_files.Count} — ImgViewer";
+        Title = $"{Path.GetFileName(path)} — {idx + 1}/{_files.Count} — PhotographerEye";
         ResetAdjustments(silent: true);
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
@@ -653,7 +653,8 @@ public partial class MainWindow : Window
     {
         string dir = Path.GetDirectoryName(path)!;
         string name = Path.GetFileNameWithoutExtension(path);
-        string ext = Path.GetExtension(path).ToLowerInvariant() is ".jpg" or ".jpeg" ? ".jpg" : ".png";
+        bool raw = ImageLoader.IsRaw(path);
+        string ext = Path.GetExtension(path).ToLowerInvariant() is ".jpg" or ".jpeg" || raw ? ".jpg" : ".png";
         string candidate = Path.Combine(dir, $"{name}_edited{ext}");
         int n = 2;
         while (File.Exists(candidate))
@@ -666,7 +667,7 @@ public partial class MainWindow : Window
 
     private static void SaveEncoded(BitmapSource image, string sourcePath, string destPath)
     {
-        BitmapEncoder encoder = Path.GetExtension(sourcePath).ToLowerInvariant() is ".jpg" or ".jpeg"
+        BitmapEncoder encoder = Path.GetExtension(sourcePath).ToLowerInvariant() is ".jpg" or ".jpeg" || ImageLoader.IsRaw(sourcePath)
             ? new JpegBitmapEncoder { QualityLevel = 92 }
             : new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(image));
@@ -724,7 +725,7 @@ public partial class MainWindow : Window
         var dlg = new OpenFileDialog
         {
             Title = "Otwórz obraz",
-            Filter = "Obrazy|*.jpg;*.jpeg;*.png|Wszystkie pliki|*.*",
+            Filter = "Obrazy|*.jpg;*.jpeg;*.png|RAW|*.rw2;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.cr2;*.cr3;*.crw;*.orf;*.raf;*.pef;*.ptx;*.dng;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.mos;*.erf;*.kdc;*.dcr;*.mef;*.rwl|Wszystkie pliki|*.*",
             CheckFileExists = true
         };
         if (dlg.ShowDialog(this) == true)
