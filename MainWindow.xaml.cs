@@ -103,6 +103,7 @@ public partial class MainWindow : Window
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         Debug.Log($"Tier={RenderCapability.Tier >> 16}");
+        SetToolbarMinWidth();
         var target = Environment.GetCommandLineArgs().Skip(1)
             .FirstOrDefault(a => !a.StartsWith('-') && (File.Exists(a) || Directory.Exists(a)));
         if (target is not null)
@@ -236,6 +237,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            Debug.Log($"LOAD ERROR: {Path.GetFileName(path)} [{ex.GetType().Name}] {ex.Message}\n{ex.StackTrace}");
             await Dispatcher.BeginInvoke(() =>
             {
                 if (!IsCurrent(path)) return;
@@ -544,6 +546,31 @@ public partial class MainWindow : Window
     private void On100Click(object sender, RoutedEventArgs e) => Viewer.SetZoom(1.0);
 
     private void OnOpenClick(object sender, RoutedEventArgs e) => ShowOpenDialog();
+
+    private void SetToolbarMinWidth()
+    {
+        ToolbarDock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        Debug.Log($"MINW: desired={ToolbarDock.DesiredSize.Width:0.#}x{ToolbarDock.DesiredSize.Height:0.#} actual={ToolbarDock.ActualWidth:0.#}x{ToolbarDock.ActualHeight:0.#} minWidth={MinWidth:0.#}");
+        double w = ToolbarDock.DesiredSize.Width;
+        if (w > 0)
+        {
+            MinWidth = Math.Ceiling(w) + 40;
+        }
+    }
+
+    private void OnSettingsClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.ContextMenu is not ContextMenu menu) return;
+        menu.PlacementTarget = sender as Button;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    private void OnAboutClick(object sender, RoutedEventArgs e)
+    {
+        var about = new AboutWindow { Owner = this };
+        about.ShowDialog();
+    }
 
     private void ShowOpenDialog()
     {

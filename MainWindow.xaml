@@ -21,8 +21,27 @@
                 BorderBrush="{StaticResource BorderBrushCol}"
                 BorderThickness="0,0,0,1"
                 Padding="8,5">
-            <WrapPanel>
-                <Button x:Name="BtnOpen" Content="Otwórz" Style="{StaticResource ToolButton}" Click="OnOpenClick" />
+            <DockPanel x:Name="ToolbarDock">
+                <Button x:Name="BtnSettings"
+                        DockPanel.Dock="Right"
+                        VerticalAlignment="Center"
+                        Content="&#xE713;"
+                        FontFamily="Segoe MDL2 Assets"
+                        FontSize="14"
+                        Width="30" Height="26"
+                        Margin="8,0,0,0"
+                        Style="{StaticResource ToolButton}"
+                        Click="OnSettingsClick"
+                        ToolTip="Ustawienia">
+                    <Button.ContextMenu>
+                        <ContextMenu Placement="Bottom" StaysOpen="False">
+                            <MenuItem x:Name="MnuAbout" Header="O aplikacji…" Click="OnAboutClick" />
+                        </ContextMenu>
+                    </Button.ContextMenu>
+                </Button>
+                <WrapPanel>
+                <Button x:Name="BtnOpen" Content="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26"
+                        Style="{StaticResource ToolButton}" Click="OnOpenClick" ToolTip="Otwórz (Ctrl+O)" />
 
                 <Button x:Name="BtnPrev" Content="&#x2039;" FontSize="15" Padding="6,1" Style="{StaticResource ToolButton}" Click="OnPrevClick" />
                 <TextBlock x:Name="CounterText" VerticalAlignment="Center" Margin="5,0" MinWidth="52" TextAlignment="Center" Text="&#x2013; / &#x2013;" />
@@ -34,7 +53,8 @@
                 <Slider x:Name="ZoomSlider" Width="80" Margin="6,0" VerticalAlignment="Center" Minimum="0.1" Maximum="4" SmallChange="0.05" LargeChange="0.25" />
                 <TextBlock x:Name="ZoomLabel" VerticalAlignment="Center" MinWidth="46" TextAlignment="Right" Margin="0,0,4,0" Text="100 %" />
                 <Button x:Name="BtnZoomIn" Content="+" Style="{StaticResource ToolButton}" Click="OnZoomInClick" />
-                <Button x:Name="BtnFit" Content="Dopasuj" Margin="6,0,0,0" Style="{StaticResource ToolButton}" Click="OnFitClick" />
+                <Button x:Name="BtnFit" Content="&#xE9A9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
+                        Style="{StaticResource ToolButton}" Click="OnFitClick" ToolTip="Dopasuj do okna (0)" />
                 <Button x:Name="Btn100" Content="100 %" Margin="5,0,0,0" Style="{StaticResource ToolButton}" Click="On100Click" />
 
                 <Border Style="{StaticResource ToolSeparator}" />
@@ -48,12 +68,14 @@
                 <TextBlock x:Name="GammaValue" Width="48" Margin="5,0,0,0" VerticalAlignment="Center" Text="1.00" TextAlignment="Right" />
 
                 <Button x:Name="BtnReset" Content="Reset" Margin="8,0,0,0" Style="{StaticResource ToolButton}" Click="OnResetClick" />
-                <Button x:Name="BtnCompare" Content="Porównaj" Margin="6,0,0,0" Style="{StaticResource ToolButton}"
+                <Button x:Name="BtnCompare" Content="&#xE89A;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
+                        Style="{StaticResource ToolButton}"
                         PreviewMouseLeftButtonDown="OnComparePress"
                         MouseLeftButtonUp="OnCompareRelease"
                         LostMouseCapture="OnCompareLostCapture"
                         ToolTip="Przytrzymaj — podgląd oryginału bez korekt (spacja)" />
-            </WrapPanel>
+                </WrapPanel>
+            </DockPanel>
         </Border>
 
         <Border DockPanel.Dock="Bottom"

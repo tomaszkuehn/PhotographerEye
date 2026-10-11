@@ -174,20 +174,14 @@ public sealed partial class ImageViewer : Grid
     private void AdjustForNewRatio(double oldRatio, double oldDipPerPx)
     {
         if (oldRatio <= 0 || _decodedRatio <= 0 || oldDipPerPx <= 0) return;
-        if (Math.Abs(_decodedRatio - oldRatio) < 1e-9) return;
+        if (_image.Source is not BitmapSource bmp) return;
 
         double n = oldRatio / _decodedRatio;
-        double cx = ActualWidth / 2.0;
-        double cy = ActualHeight / 2.0;
-        double ox = MarginLeft;
-        double oy = MarginTop;
+        double dipPerPx = oldDipPerPx * n;
 
-        double newW = DisplayedWidth * n;
-        double newH = DisplayedHeight * n;
-        _image.Width = newW;
-        _image.Height = newH;
-        _image.Margin = new Thickness(cx - (cx - ox) * n, cy - (cy - oy) * n, 0, 0);
-        _dipPerPx = oldDipPerPx * n;
+        _dipPerPx = dipPerPx;
+        _image.Width = bmp.PixelWidth * dipPerPx;
+        _image.Height = bmp.PixelHeight * dipPerPx;
         ClampAndCenter();
     }
 
@@ -247,18 +241,14 @@ public sealed partial class ImageViewer : Grid
         if (_image.Source is null) return;
         e.Handled = true;
 
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
-        {
-            double factor = Math.Pow(1.2, e.Delta / 120.0);
-            SetZoom(Zoom * factor, e.GetPosition(this));
-        }
-        else if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
         {
             Pan(e.Delta * 0.4, 0);
         }
         else
         {
-            Pan(0, e.Delta * 0.4);
+            double factor = Math.Pow(1.2, e.Delta / 120.0);
+            SetZoom(Zoom * factor, e.GetPosition(this));
         }
     }
 

@@ -5,7 +5,7 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 ## Funkcje
 
 - Podgląd obrazów z folderu, nawigacja (`‹`/`›`, strzałki, Home/End)
-- Zoom 10–400%: `Ctrl+rolka`, `+`/`-`, `1` — 100%, `0`/przycisk „Dopasuj" — dopasuj do okna, dwuklik — przełączanie fit/100%
+- Zoom 10–400%: rolka myszy, `+`/`-`, `1` — 100%, `0`/przycisk „Dopasuj" — dopasuj do okna, dwuklik — przełączanie fit/100%
 - Pan: przeciąganie myszką (gdy obraz większy od okna); obraz zawsze wyśrodkowany i nieucięty
 - Korekcja cieni −50%…+70% (podnoszenie i przyciemnianie; pipeline liniowy sRGB, miękka maska luminancji — styl Photoshop) i gamma 0.50–2.00 (LUT środkowych tonów)
 - Przy regulacji cieni automatyczne rozciąganie histogramu narastające proporcjonalnie z siłą regulacji (pełne od ±50%): auto-contrast z percentyli 0.5% histogramu luminancji, jedna skala dla wszystkich kanałów — balans bieli nietknięty, czernie zakotwiczone, pomijane gdy zakres już pełny lub obraz płaski
@@ -14,6 +14,7 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 - Kompaktowy ciemny interfejs: jedna linia narzędzi od minimalnej szerokości okna (980 px)
 - Dynamiczne dekodowanie zależne od zoomu (pełna jakość przy dużych powiększeniach), cache podglądów sąsiednich plików
 - Strzałki przesuwania obrazów na lewym/prawym brzegu okna
+- Symbol ustawień (⚙) w prawym górnym rogu → „O aplikacji…" (autor, e-mail, GitHub, licencja)
 - Reset korekt automatycznie przy przełączeniu obrazu oraz ręcznie: `R`, przycisk „Reset", podwójny klik na suwak
 - Drag & drop pliku, otwieranie przez argument CLI, `Ctrl+O`
 - Ustawienia zapisywane w `%AppData%\ImgViewer\settings.json`
@@ -28,7 +29,8 @@ Portable: `dist\ImgViewer.exe [plik|folder]` — bez instalacji, .NET wbudowany 
 |---|---|
 | `‹`/`›`, ←/→, PgUp/PgDn | następny/poprzedni obraz |
 | Home/End | pierwszy/ostatni obraz |
-| `Ctrl+rolka`, `+`/`-` | zoom |
+| rolka myszy | zoom (z punktem pod kursorem) |
+| `Shift`+rolka | przesuwanie poziome |
 | `1` / `0` | 100% / dopasuj |
 | `R` | reset korekt |
 | spacja (przytrzymaj) | podgląd oryginału |
@@ -71,3 +73,7 @@ E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
 ## Debugowanie
 
 Ustaw `IMGVIEWER_DEBUG=1`, log: `%TEMP%\imgviewer-debug.log`.
+
+## Licencja
+
+Użycie prywatne, niekomercyjne. Zabroniona modyfikacja i redystrybucja — pełne warunki: [LICENSE](LICENSE).
