@@ -36,6 +36,7 @@ internal static class Program
         TestGamma();
         TestHistogram();
         TestAutoStretch();
+        TestManualStretch();
         TestCrossImageSwitch();
         TestExifRotation();
 
@@ -248,6 +249,75 @@ internal static class Program
         Check(Spread(0, 25) <= 1 && Spread(0, 50) <= 1 && Spread(0, 75) <= 1 && Spread(1, 50) <= 1,
               $"neutral grays stay neutral under stretch+shadows ({Spread(0, 25)},{Spread(0, 50)},{Spread(0, 75)},{Spread(1, 50)})");
     }
+
+    private static void TestManualStretch()
+    {
+        var map = new ManualStretchMap();
+        Check(!map.HasEffect && map.Count == 0, "manual map starts neutral");
+        Check(Near(map.Map(0.25), 0.25) && Near(map.Map(0.9), 0.9), "neutral map is identity");
+
+        map.Upsert(0.5, 0.7);
+        Check(Near(map.Map(0.5), 0.7), "knot output honored");
+        Check(Near(map.Map(0.25), 0.35), "left side stretches toward knot");
+        Check(Near(map.Map(0.75), 0.85), "right side compresses toward knot");
+        Check(Near(map.Map(0.0), 0.0) && Near(map.Map(1.0), 1.0), "manual endpoints fixed");
+        Check(Near(map.Inverse(0.7), 0.5), "inverse maps knot back");
+        Check(Near(map.Inverse(0.85), 0.75), "inverse on right segment");
+
+        bool monotonic = true;
+        double prev = 0;
+        for (int i = 0; i <= 255; i++)
+        {
+            double v = map.Map(i / 255.0);
+            if (v < prev - 1e-9) monotonic = false;
+            prev = v;
+        }
+        Check(monotonic, "manual map monotonic");
+
+        var src = MakeRampSource();
+        var plain = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false);
+        Check(plain is not null, "apply with null manual");
+        var stretched = AdjustmentsProcessor.Apply(src, 0.0, 1.0, map, out _, autoStretch: false);
+        Check(stretched is not null, "apply with manual map");
+        var r0 = ReadRow(stretched!, 0);
+        var r1 = ReadRow(stretched!, 1);
+        var r2 = ReadRow(stretched!, 2);
+        int exp0 = (int)Math.Round(map.Map(64 / 255.0) * 255.0);
+        int exp1 = (int)Math.Round(map.Map(128 / 255.0) * 255.0);
+        int exp2 = (int)Math.Round(map.Map(191 / 255.0) * 255.0);
+        Check(Math.Abs(r0.g - exp0) <= 1 && Math.Abs(r1.g - exp1) <= 1 && Math.Abs(r2.g - exp2) <= 1,
+              $"manual map applied to pixels ({r0.g}/{exp0}, {r1.g}/{exp1}, {r2.g}/{exp2})");
+        Check(r0.r == r0.g && r0.g == r0.b && r2.r == r2.g && r2.g == r2.b, "manual map preserves gray");
+
+        var clone = map.Clone();
+        clone.Upsert(0.2, 0.05);
+        Check(map.Count == 1 && clone.Count == 2, "clone isolation");
+        Check(Near(map.Map(0.25), 0.35), "clone edit does not leak into original");
+
+        var empty = new ManualStretchMap();
+        Check(!empty.HasEffect, "empty map has no effect");
+
+        var neutral = new ManualStretchMap();
+        Check(SamePixels(
+            AdjustmentsProcessor.Apply(src, 0.0, 1.0, neutral, out _, autoStretch: false)!,
+            AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false)!),
+              "empty manual map applies as identity");
+    }
+
+    private static bool SamePixels(WriteableBitmap a, WriteableBitmap b)
+    {
+        if (a.PixelWidth != b.PixelWidth || a.PixelHeight != b.PixelHeight) return false;
+        int n = a.PixelWidth * a.PixelHeight * 4;
+        var ba = new byte[n];
+        var bb = new byte[n];
+        a.CopyPixels(ba, a.PixelWidth * 4, 0);
+        b.CopyPixels(bb, b.PixelWidth * 4, 0);
+        for (int i = 0; i < n; i++)
+            if (ba[i] != bb[i]) return false;
+        return true;
+    }
+
+    private static bool Near(double a, double b) => Math.Abs(a - b) < 0.001;
 
     private static BitmapSource MakeWbSource()
     {

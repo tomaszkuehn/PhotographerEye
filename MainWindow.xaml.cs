@@ -44,6 +44,7 @@ public partial class MainWindow : Window
     private bool _compareOn;
     private CancellationTokenSource? _redecodeCts;
     private bool _suppressZoomUi;
+    private long _lastApplyTicks;
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _adjustTimer;
     private readonly DispatcherTimer _redecodeTimer;
@@ -60,6 +61,7 @@ public partial class MainWindow : Window
         ZoomSlider.ValueChanged += OnZoomSliderValueChanged;
         ShadowSlider.ValueChanged += OnAdjustmentChanged;
         GammaSlider.ValueChanged += OnAdjustmentChanged;
+        HistogramPanel.StretchEdited += OnManualStretchChanged;
         ShadowSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         GammaSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         StateChanged += (_, _) =>
@@ -336,10 +338,12 @@ public partial class MainWindow : Window
         var raw = _baseBitmap;
         if (raw is null) return;
 
+        _lastApplyTicks = Environment.TickCount64;
         double s = ShadowSlider.Value / 100.0;
         double g = GammaSlider.Value;
+        var manual = HistogramPanel.Snapshot();
 
-        if (AdjustmentsProcessor.IsNeutral(s, g))
+        if (AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect)
         {
             _applyCts?.Cancel();
             Viewer.SetSource(raw, info.DisplaySize);
@@ -357,9 +361,9 @@ public partial class MainWindow : Window
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var processed = AdjustmentsProcessor.Apply(raw, s, g, out var hist);
+                var processed = AdjustmentsProcessor.Apply(raw, s, g, manual, out var hist);
                 sw.Stop();
-                Debug.Log($"APPLY: {sw.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##}");
+                Debug.Log($"APPLY: {sw.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual}");
                 if (processed is null || ct.IsCancellationRequested) return;
                 Dispatcher.BeginInvoke(() =>
                 {
@@ -409,6 +413,27 @@ public partial class MainWindow : Window
     {
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
+    }
+
+    private void OnManualStretchChanged(object? sender, EventArgs e)
+    {
+        if (_currentPath is null) return;
+        _showHistogram = true;
+        HistHost.Visibility = Visibility.Visible;
+        UpdateSaveState();
+        if (_adjustTimer is null) return;
+        long now = Environment.TickCount64;
+        if (now - _lastApplyTicks >= 40)
+        {
+            _lastApplyTicks = now;
+            _adjustTimer.Stop();
+            ReapplyAdjustments();
+        }
+        else
+        {
+            _adjustTimer.Stop();
+            _adjustTimer.Start();
+        }
     }
 
     private void OnComparePress(object sender, MouseButtonEventArgs e)
@@ -548,7 +573,9 @@ public partial class MainWindow : Window
     private void UpdateSaveState()
     {
         if (BtnSave is null) return;
-        bool modified = Math.Abs(ShadowSlider.Value) > 0.0001 || Math.Abs(GammaSlider.Value - 1.0) > 0.0005;
+        bool modified = Math.Abs(ShadowSlider.Value) > 0.0001 ||
+                        Math.Abs(GammaSlider.Value - 1.0) > 0.0005 ||
+                        HistogramPanel.HasManualEffect;
         BtnSave.IsEnabled = modified && _currentPath is not null;
     }
 
@@ -562,6 +589,7 @@ public partial class MainWindow : Window
         Mouse.OverrideCursor = Cursors.Wait;
         double s = ShadowSlider.Value / 100.0;
         double g = GammaSlider.Value;
+        var manual = HistogramPanel.Snapshot();
 
         _ = Task.Run(() =>
         {
@@ -570,11 +598,11 @@ public partial class MainWindow : Window
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var info = ImageLoader.GetInfo(path);
                 var full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
-                var processed = AdjustmentsProcessor.Apply(full, s, g);
+                var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _);
                 if (processed is null) throw new InvalidOperationException("Nie udało się przetworzyć obrazu");
                 string dest = UniqueEditedPath(path);
                 SaveEncoded(processed, path, dest);
-                Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight}");
+                Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight} manual={manual}");
                 Dispatcher.BeginInvoke(() =>
                 {
                     if (IsCurrent(path)) SetStatus($"Zapisano: {Path.GetFileName(dest)}", error: false);
@@ -729,11 +757,13 @@ public partial class MainWindow : Window
 
     private void ResetAdjustments(bool silent = false)
     {
+        HistogramPanel.ClearManualStretch();
         ShadowSlider.Value = 0;
         GammaSlider.Value = 1.0;
         if (!silent)
         {
             SetStatus("Korekty przywrócone do wartości domyślnych (Cienie 0, Gamma 1.00)", error: false);
+            ReapplyAdjustments();
         }
     }
 

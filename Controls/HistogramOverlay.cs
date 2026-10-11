@@ -1,25 +1,50 @@
 using System;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
+using ImgViewer.Imaging;
 
 namespace ImgViewer.Controls;
 
 public sealed class HistogramOverlay : FrameworkElement
 {
+    private const double Pad = 7.0;
+
     private static readonly Brush BgBrush = Freeze(new SolidColorBrush(Color.FromArgb(0xD9, 0x14, 0x14, 0x14)));
     private static readonly Brush BorderBrushH = Freeze(new SolidColorBrush(Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)));
     private static readonly Brush RedFill = Freeze(new SolidColorBrush(Color.FromArgb(0x59, 0xFF, 0x3D, 0x3D)));
     private static readonly Brush GreenFill = Freeze(new SolidColorBrush(Color.FromArgb(0x59, 0x45, 0xFF, 0x45)));
     private static readonly Brush BlueFill = Freeze(new SolidColorBrush(Color.FromArgb(0x59, 0x4D, 0x5C, 0xFF)));
     private static readonly Brush LumStroke = Freeze(new SolidColorBrush(Color.FromArgb(0xE0, 0xEC, 0xEC, 0xEC)));
+    private static readonly Brush KnotFill = Freeze(new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)));
+    private static readonly Brush KnotBorder = Freeze(new SolidColorBrush(Color.FromArgb(0xFF, 0x2A, 0x33, 0x44)));
 
     private static readonly Pen BorderPen = Freeze(new Pen(BorderBrushH, 1.0));
     private static readonly Pen LumPen = Freeze(new Pen(LumStroke, 1.2));
+    private static readonly Pen KnotPen = Freeze(new Pen(KnotBorder, 1.5));
 
     private int[]? _lum;
     private int[]? _r;
     private int[]? _g;
     private int[]? _b;
+
+    private readonly ManualStretchMap _manual = new();
+    private int _grabIdx = -1;
+    private bool _moved;
+    private long _lastRaiseTicks;
+
+    public event EventHandler? StretchEdited;
+
+    public ManualStretchMap Snapshot() => _manual.Clone();
+
+    public bool HasManualEffect => _manual.HasEffect;
+
+    public void ClearManualStretch()
+    {
+        if (_manual.Count == 0) return;
+        _manual.Clear();
+        InvalidateVisual();
+    }
 
     public void SetHistogram(int[] lum, int[] r, int[] g, int[] b)
     {
@@ -29,6 +54,15 @@ public sealed class HistogramOverlay : FrameworkElement
         _b = b;
         InvalidateVisual();
     }
+
+    public HistogramOverlay()
+    {
+        SnapsToDevicePixels = true;
+        ToolTip = "Przeciągnij punkt na histogramie — ręczne rozciągnięcie tonów (podwójny klik — usuń punkty)";
+    }
+
+    protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer() =>
+        new System.Windows.Automation.Peers.UIElementAutomationPeer(this);
 
     private static Brush Freeze(Brush b)
     {
@@ -40,6 +74,106 @@ public sealed class HistogramOverlay : FrameworkElement
     {
         p.Freeze();
         return p;
+    }
+
+    protected override void OnMouseEnter(MouseEventArgs e) => Cursor = Cursors.Hand;
+
+    protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+    {
+        if (_lum is null) return;
+        double u = OutAt(e.GetPosition(this));
+
+        if (e.ClickCount == 2)
+        {
+            if (_manual.Count > 0)
+            {
+                _manual.Clear();
+                _grabIdx = -1;
+                InvalidateVisual();
+                StretchEdited?.Invoke(this, EventArgs.Empty);
+            }
+            e.Handled = true;
+            return;
+        }
+
+        int hit = -1;
+        double best = 0.02;
+        for (int i = 0; i < _manual.Count; i++)
+        {
+            double d = Math.Abs(_manual.Knots[i].Out - u);
+            if (d < best)
+            {
+                best = d;
+                hit = i;
+            }
+        }
+        if (hit >= 0)
+        {
+            _grabIdx = hit;
+        }
+        else
+        {
+            double xin = _manual.Inverse(u);
+            _grabIdx = _manual.Upsert(xin, u);
+            _moved = false;
+        }
+        CaptureMouse();
+        e.Handled = true;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        if (_grabIdx < 0 || !IsMouseCaptured) return;
+        if (_lum is null)
+        {
+            _grabIdx = -1;
+            return;
+        }
+        if (_grabIdx >= _manual.Count)
+        {
+            _grabIdx = -1;
+            return;
+        }
+        double u = OutAt(e.GetPosition(this));
+        var knots = _manual.Knots;
+        double lo = _grabIdx > 0 ? knots[_grabIdx - 1].Out : 0.0;
+        double hi = _grabIdx < knots.Count - 1 ? knots[_grabIdx + 1].Out : 1.0;
+        double newOut = Math.Clamp(u, lo, hi);
+        var k = knots[_grabIdx];
+        if (Math.Abs(newOut - k.Out) < 1e-5) return;
+        _moved = true;
+        _manual.SetOut(_grabIdx, newOut);
+        InvalidateVisual();
+        RaiseThrottled();
+        e.Handled = true;
+    }
+
+    protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+    {
+        if (_grabIdx < 0) return;
+        _grabIdx = -1;
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        if (_moved)
+        {
+            _moved = false;
+            StretchEdited?.Invoke(this, EventArgs.Empty);
+        }
+        e.Handled = true;
+    }
+
+    private void RaiseThrottled()
+    {
+        long now = Environment.TickCount64;
+        if (now - _lastRaiseTicks < 30) return;
+        _lastRaiseTicks = now;
+        StretchEdited?.Invoke(this, EventArgs.Empty);
+    }
+
+    private double OutAt(Point p)
+    {
+        double plotW = Math.Max(1.0, ActualWidth - Pad - Pad);
+        double u = (p.X - Pad) / plotW;
+        return Math.Clamp(u, 0.0, 1.0);
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -60,7 +194,7 @@ public sealed class HistogramOverlay : FrameworkElement
                 if (v > max) max = v;
         }
 
-        double pl = 7, pt = 7, pb = 7, pr = 7;
+        double pl = Pad, pt = 7, pb = 7, pr = Pad;
         double plotW = w - pl - pr;
         double plotH = h - pt - pb;
         double yb = h - pb;
@@ -69,6 +203,12 @@ public sealed class HistogramOverlay : FrameworkElement
         DrawFill(dc, _g, max, pl, plotW, plotH, yb, GreenFill);
         DrawFill(dc, _r, max, pl, plotW, plotH, yb, RedFill);
         dc.DrawGeometry(null, LumPen, Poly(_lum, max, pl, plotW, plotH, yb, closed: false));
+
+        foreach (var k in _manual.Knots)
+        {
+            double mx = pl + k.Out * plotW;
+            dc.DrawEllipse(KnotFill, KnotPen, new Point(mx, yb - 2), 4, 4);
+        }
     }
 
     private static void DrawFill(DrawingContext dc, int[] data, int max, double x0, double plotW, double plotH, double yb, Brush brush)

@@ -21,12 +21,15 @@ public static class AdjustmentsProcessor
         Math.Abs(shadowLift) <= 0.0001 && Math.Abs(gamma - 1.0) < 0.0005;
 
     public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma, bool autoStretch) =>
-        Apply(source, shadowLift, gamma, out _, autoStretch);
+        Apply(source, shadowLift, gamma, null, out _, autoStretch);
 
     public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma) =>
-        Apply(source, shadowLift, gamma, out _, autoStretch: true);
+        Apply(source, shadowLift, gamma, null, out _, autoStretch: true);
 
-    public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma, out HistogramData? histogram, bool autoStretch = true)
+    public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma, out HistogramData? histogram, bool autoStretch = true) =>
+        Apply(source, shadowLift, gamma, null, out histogram, autoStretch);
+
+    public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, bool autoStretch = true)
     {
         BitmapSource baseSource = EnsureBgra(source);
         int w = baseSource.PixelWidth;
@@ -63,6 +66,7 @@ public static class AdjustmentsProcessor
 
         if (shadow) ApplyShadow(buffer, shadowLift);
         if (hasGamma) ApplyGamma(buffer, gamma);
+        if (manual is not null && manual.HasEffect) ApplyManual(buffer, manual);
 
         histogram = ComputeFromBuffer(buffer, w);
 
@@ -263,6 +267,27 @@ public static class AdjustmentsProcessor
     {
         int i = (int)(lin * 1023.0f + 0.5f);
         return i < 0 ? 0 : (i > 1023 ? 1023 : i);
+    }
+
+    private static unsafe void ApplyManual(byte[] buffer, ManualStretchMap manual)
+    {
+        var lut = new byte[256];
+        for (int i = 0; i < 256; i++)
+        {
+            double v = manual.Map(i / 255.0);
+            lut[i] = (byte)Math.Clamp(Math.Round(v * 255.0), 0, 255);
+        }
+
+        fixed (byte* p = buffer)
+        {
+            byte* end = p + buffer.Length;
+            for (byte* q = p; q < end; q += 4)
+            {
+                q[0] = lut[q[0]];
+                q[1] = lut[q[1]];
+                q[2] = lut[q[2]];
+            }
+        }
     }
 
     private static unsafe void ApplyGamma(byte[] buffer, double gamma)
