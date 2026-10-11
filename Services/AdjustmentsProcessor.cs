@@ -10,7 +10,7 @@ public sealed record HistogramData(int[] Lum, int[] R, int[] G, int[] B);
 public static class AdjustmentsProcessor
 {
     public static bool IsNeutral(double shadowLift, double gamma) =>
-        shadowLift <= 0.0001 && Math.Abs(gamma - 1.0) < 0.0005;
+        Math.Abs(shadowLift) <= 0.0001 && Math.Abs(gamma - 1.0) < 0.0005;
 
     public static WriteableBitmap? Apply(BitmapSource source, double shadowLift, double gamma) =>
         Apply(source, shadowLift, gamma, out _);
@@ -36,7 +36,7 @@ public static class AdjustmentsProcessor
         var buffer = new byte[(long)stride * h];
         baseSource.CopyPixels(buffer, stride, 0);
 
-        bool shadow = shadowLift > 0.0001;
+        bool shadow = Math.Abs(shadowLift) > 0.0001;
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
         if (shadow) ApplyShadow(buffer, shadowLift);
         if (hasGamma) ApplyGamma(buffer, gamma);
@@ -89,13 +89,24 @@ public static class AdjustmentsProcessor
     private static unsafe void ApplyShadow(byte[] buffer, double strength)
     {
         var lift = new float[1024];
-        float exp = 1.0f + (float)(2.0 * strength);
-        float floorLift = (float)(0.02 * strength);
-        lift[0] = MathF.Min(1.0f, floorLift);
-        for (int i = 1; i < 1024; i++)
+        float exp = 1.0f + (float)(2.0 * Math.Abs(strength));
+        float floorLift = strength > 0 ? (float)(0.02 * strength) : 0.0f;
+        lift[0] = floorLift;
+        if (strength >= 0)
         {
-            float x = i / 1023.0f;
-            lift[i] = MathF.Min(1.0f, floorLift + 1.0f - MathF.Pow(1.0f - x, exp));
+            for (int i = 1; i < 1024; i++)
+            {
+                float x = i / 1023.0f;
+                lift[i] = MathF.Min(1.0f, floorLift + 1.0f - MathF.Pow(1.0f - x, exp));
+            }
+        }
+        else
+        {
+            for (int i = 1; i < 1024; i++)
+            {
+                float x = i / 1023.0f;
+                lift[i] = MathF.Pow(x, exp);
+            }
         }
 
         const float threshold = 0.25f;

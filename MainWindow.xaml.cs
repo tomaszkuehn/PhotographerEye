@@ -39,6 +39,8 @@ public partial class MainWindow : Window
     private Size _fullDecodeBox;
     private int _redecodeSeq;
     private int _histSeq;
+    private bool _showHistogram;
+    private bool _compareOn;
     private CancellationTokenSource? _redecodeCts;
     private bool _suppressZoomUi;
     private readonly DispatcherTimer _saveTimer;
@@ -49,16 +51,16 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        var settings = SettingsStore.Load();
+        ShadowSlider.Value = Math.Clamp(settings.ShadowLift, ShadowSlider.Minimum, ShadowSlider.Maximum);
+        GammaSlider.Value = Math.Clamp(settings.Gamma, GammaSlider.Minimum, GammaSlider.Maximum);
+
         Viewer.ZoomChanged += OnViewerZoomChanged;
         ZoomSlider.ValueChanged += OnZoomSliderValueChanged;
         ShadowSlider.ValueChanged += OnAdjustmentChanged;
         GammaSlider.ValueChanged += OnAdjustmentChanged;
         ShadowSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         GammaSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
-
-        var settings = SettingsStore.Load();
-        ShadowSlider.Value = Math.Clamp(settings.ShadowLift, ShadowSlider.Minimum, ShadowSlider.Maximum);
-        GammaSlider.Value = Math.Clamp(settings.Gamma, GammaSlider.Minimum, GammaSlider.Maximum);
 
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _saveTimer.Tick += (_, _) =>
@@ -156,7 +158,6 @@ public partial class MainWindow : Window
 
         CounterText.Text = $"{idx + 1} / {_files.Count}";
         Title = $"{Path.GetFileName(path)} — {idx + 1}/{_files.Count} — ImgViewer";
-        HistogramPanel.Visibility = Visibility.Hidden;
         HintPanel.Visibility = Visibility.Collapsed;
         SetStatus("Wczytywanie…", error: false);
 
@@ -348,6 +349,10 @@ public partial class MainWindow : Window
                 Dispatcher.BeginInvoke(() =>
                 {
                     if (!IsCurrent(path) || !ReferenceEquals(_baseBitmap, raw)) return;
+                    if (_compareOn)
+                    {
+                        return;
+                    }
                     Viewer.SetSource(processed, info.DisplaySize);
                     if (hist is not null) ApplyHistogram(path, hist);
                 });
@@ -360,7 +365,6 @@ public partial class MainWindow : Window
 
     private void UpdateHistogram(string path, BitmapSource src)
     {
-        ApplyHistogram(path, null);
         int seq = Interlocked.Increment(ref _histSeq);
         _ = Task.Run(() =>
         {
@@ -377,13 +381,59 @@ public partial class MainWindow : Window
     private void ApplyHistogram(string path, HistogramData? hist)
     {
         if (!IsCurrent(path)) return;
-        if (hist is null)
+        if (hist is null || !_showHistogram)
         {
-            HistogramPanel.Visibility = Visibility.Hidden;
+            HistHost.Visibility = Visibility.Hidden;
             return;
         }
-        HistogramPanel.Visibility = Visibility.Visible;
+        HistHost.Visibility = Visibility.Visible;
         HistogramPanel.SetHistogram(hist.Lum, hist.R, hist.G, hist.B);
+    }
+
+    private void OnHistCloseClick(object sender, RoutedEventArgs e)
+    {
+        _showHistogram = false;
+        HistHost.Visibility = Visibility.Hidden;
+    }
+
+    private void OnComparePress(object sender, MouseButtonEventArgs e)
+    {
+        var btn = (Button)sender;
+        btn.CaptureMouse();
+        SetCompare(true);
+        e.Handled = true;
+    }
+
+    private void OnCompareRelease(object sender, MouseButtonEventArgs e)
+    {
+        ((Button)sender).ReleaseMouseCapture();
+        SetCompare(false);
+        e.Handled = true;
+    }
+
+    private void OnCompareLostCapture(object sender, MouseEventArgs e) => SetCompare(false);
+
+    private void SetCompare(bool on)
+    {
+        if (_compareOn == on) return;
+        _compareOn = on;
+        ApplyCompare();
+    }
+
+    private void ApplyCompare()
+    {
+        if (_baseBitmap is null || _baseInfo is not ImageInfo info || _currentPath is null) return;
+        if (_compareOn)
+        {
+            Viewer.SetSource(_baseBitmap, info.DisplaySize);
+            UpdateHistogram(_currentPath, _baseBitmap);
+            SetStatus("Porównanie — oryginał bez korekt", error: false);
+        }
+        else
+        {
+            ReapplyAdjustments();
+            SetStatus("Gotowy", error: false);
+        }
     }
 
     private void PrefetchNeighbors(string path, Size previewBox)
@@ -529,6 +579,7 @@ public partial class MainWindow : Window
 
     private void OnAdjustmentChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        _showHistogram = true;
         ShadowValue.Text = $"{Math.Round(ShadowSlider.Value)} %";
         GammaValue.Text = GammaSlider.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
         if (_adjustTimer is not null)
@@ -575,11 +626,21 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnPreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Space && _compareOn)
+        {
+            SetCompare(false);
+            e.Handled = true;
+        }
+    }
+
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key is Key.LeftCtrl or Key.RightCtrl) return;
 
         if (Keyboard.FocusedElement is Slider) return;
+        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase) return;
 
         if (e.Key == Key.O && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
@@ -628,6 +689,13 @@ public partial class MainWindow : Window
                 break;
             case Key.R:
                 ResetAdjustments();
+                e.Handled = true;
+                break;
+            case Key.Space:
+                if (_baseBitmap is not null)
+                {
+                    SetCompare(true);
+                }
                 e.Handled = true;
                 break;
         }

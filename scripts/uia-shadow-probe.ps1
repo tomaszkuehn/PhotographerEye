@@ -1,4 +1,4 @@
-param([int]$Pid0, [string]$Dir="C:\Users\Asus\AppData\Local\Temp\opencode")
+param([int]$Pid0, [string]$Dir="C:\Users\Asus\AppData\Local\Temp\opencode", [switch]$Darken)
 
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -32,7 +32,7 @@ $gamma.SetValue(1.0)
 $shadow.SetValue(0.0)
 Start-Sleep -Milliseconds 1600
 $t0 = Get-Date
-$shadow.SetValue(75.0)
+if ($Darken) { $shadow.SetValue(-75.0) } else { $shadow.SetValue(75.0) }
 Start-Sleep -Milliseconds 60
 Shot "$Dir\sh_early.png"
 Start-Sleep -Milliseconds 2200

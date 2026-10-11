@@ -17,16 +17,15 @@
     <Style x:Key="ToolLabel" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
         <Setter Property="VerticalAlignment" Value="Center" />
-        <Setter Property="Margin" Value="12,0,7,0" />
+        <Setter Property="Margin" Value="8,0,5,0" />
     </Style>
-
     <Style x:Key="ToolButton" TargetType="Button">
         <Setter Property="Background" Value="{StaticResource ControlBrush}" />
         <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}" />
-        <Setter Property="BorderBrush" Value="{StaticResource BorderBrushCol}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="Padding" Value="10,5" />
-        <Setter Property="MinWidth" Value="30" />
+        <Setter Property="BorderBrush" Value="{x:Null}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="8,3" />
+        <Setter Property="MinWidth" Value="26" />
         <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="Template">
@@ -36,7 +35,7 @@
                             Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="4"
+                            CornerRadius="6"
                             Padding="{TemplateBinding Padding}">
                         <ContentPresenter HorizontalAlignment="Center"
                                           VerticalAlignment="Center"
@@ -48,7 +47,8 @@
                             <Setter TargetName="Bd" Property="Background" Value="{StaticResource ControlHoverBrush}" />
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource ControlPressedBrush}" />
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentBrush}" />
+                            <Setter Property="Foreground" Value="#FF171A22" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.45" />
@@ -95,13 +95,11 @@
                                 </RepeatButton>
                             </Track.IncreaseRepeatButton>
                             <Track.Thumb>
-                                <Thumb Width="14" Height="18" Focusable="False">
+                                <Thumb Width="12" Height="14" Focusable="False">
                                     <Thumb.Template>
                                         <ControlTemplate TargetType="Thumb">
                                             <Border CornerRadius="3"
-                                                    Background="{StaticResource AccentBrush}"
-                                                    BorderBrush="#FF5A6478"
-                                                    BorderThickness="1" />
+                                                    Background="{StaticResource AccentBrush}" />
                                         </ControlTemplate>
                                     </Thumb.Template>
                                 </Thumb>
@@ -115,9 +113,9 @@
 
     <Style x:Key="ToolSeparator" TargetType="Border">
         <Setter Property="Width" Value="1" />
-        <Setter Property="Height" Value="22" />
+        <Setter Property="Height" Value="18" />
         <Setter Property="Background" Value="{StaticResource BorderBrushCol}" />
-        <Setter Property="Margin" Value="12,0" />
+        <Setter Property="Margin" Value="8,0" />
     </Style>
 
 </ResourceDictionary>

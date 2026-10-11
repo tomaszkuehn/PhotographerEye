@@ -145,6 +145,13 @@ internal static class Program
         Check(diff(p.mid, q0.mid) >= 10 && diff(p.mid, q0.mid) <= 45, $"mid lifted moderately ({p.mid.g} vs {q0.mid.g})");
         Check(diff(p.bright, q0.bright) <= 3, $"bright untouched ({p.bright.g} vs {q0.bright.g})");
         Check(p.bright.g - p.bright.b <= 2, "highlight hue preserved");
+
+        var outN = AdjustmentsProcessor.Apply(src, -0.5, 1.0);
+        var pN = ReadPixels(outN!);
+        Check(pN.bright.g <= q0.bright.g, "darkened bright not above base");
+        Check(diff(pN.dark, q0.dark) > 8, $"dark darkened heavily ({pN.dark.g} vs {q0.dark.g})");
+        Check(Math.Abs(pN.mid.g - q0.mid.g) >= 8 && Math.Abs(pN.mid.g - q0.mid.g) <= 40, $"mid darkened moderately ({pN.mid.g} vs {q0.mid.g})");
+        Check(diff(pN.bright, q0.bright) <= 3, "bright untouched on darken");
     }
 
     private static void TestGamma()
