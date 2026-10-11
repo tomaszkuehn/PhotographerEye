@@ -12,7 +12,8 @@ Portable przeglądarka obrazów JPG/JPEG/PNG dla Windows (WPF, .NET 8, pojedyncz
 - Overlay histogramu (luminancja + nakładki R/G/B) liczony z finalnego podglądu; pojawia się przy ruchu suwaków korekt, zamykany krzyżykiem; trwa przy zmianie obrazu
 - Kompaktowy ciemny interfejs: jedna linia narzędzi od minimalnej szerokości okna (980 px)
 - Dynamiczne dekodowanie zależne od zoomu (pełna jakość przy dużych powiększeniach), cache podglądów sąsiednich plików
-- Reset korekt: `R`, przycisk „Reset", podwójny klik na suwak; przeglądanie ustawień nie jest resetowane przy zmianie obrazu
+- Strzałki przesuwania obrazów na lewym/prawym brzegu okna
+- Reset korekt automatycznie przy przełączeniu obrazu oraz ręcznie: `R`, przycisk „Reset", podwójny klik na suwak
 - Drag & drop pliku, otwieranie przez argument CLI, `Ctrl+O`
 - Ustawienia zapisywane w `%AppData%\ImgViewer\settings.json`
 

@@ -69,6 +69,22 @@
 
         <Grid Background="{StaticResource PanelBrushDark}">
             <v:ImageViewer x:Name="Viewer" />
+            <Button x:Name="BtnEdgeLeft"
+                    Content="&#x2039;"
+                    HorizontalAlignment="Left"
+                    Margin="16,0,0,0"
+                    Style="{StaticResource EdgeButton}"
+                    Visibility="Collapsed"
+                    Click="OnPrevClick"
+                    ToolTip="Poprzedni obraz (&#x2190;)" />
+            <Button x:Name="BtnEdgeRight"
+                    Content="&#x203A;"
+                    HorizontalAlignment="Right"
+                    Margin="0,0,16,0"
+                    Style="{StaticResource EdgeButton}"
+                    Visibility="Collapsed"
+                    Click="OnNextClick"
+                    ToolTip="Następny obraz (&#x2192;)" />
             <Grid x:Name="HistHost"
                   Width="250" Height="130"
                   HorizontalAlignment="Right" VerticalAlignment="Top"

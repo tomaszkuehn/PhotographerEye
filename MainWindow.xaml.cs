@@ -125,8 +125,12 @@ public partial class MainWindow : Window
             SetStatus("Folder nie zawiera obrazów (jpg, jpeg, png)", error: true);
             CounterText.Text = "– / –";
             _index = -1;
+            BtnEdgeLeft.Visibility = Visibility.Collapsed;
+            BtnEdgeRight.Visibility = Visibility.Collapsed;
             return;
         }
+        BtnEdgeLeft.Visibility = Visibility.Visible;
+        BtnEdgeRight.Visibility = Visibility.Visible;
 
         int idx = _files.FindIndex(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
         SwitchTo(idx >= 0 ? idx : 0);
@@ -158,6 +162,9 @@ public partial class MainWindow : Window
 
         CounterText.Text = $"{idx + 1} / {_files.Count}";
         Title = $"{Path.GetFileName(path)} — {idx + 1}/{_files.Count} — ImgViewer";
+        ResetAdjustments(silent: true);
+        _showHistogram = false;
+        HistHost.Visibility = Visibility.Hidden;
         HintPanel.Visibility = Visibility.Collapsed;
         SetStatus("Wczytywanie…", error: false);
 
@@ -596,11 +603,14 @@ public partial class MainWindow : Window
 
     private void OnResetClick(object sender, RoutedEventArgs e) => ResetAdjustments();
 
-    private void ResetAdjustments()
+    private void ResetAdjustments(bool silent = false)
     {
         ShadowSlider.Value = 0;
         GammaSlider.Value = 1.0;
-        SetStatus("Korekty przywrócone do wartości domyślnych (Cienie 0, Gamma 1.00)", error: false);
+        if (!silent)
+        {
+            SetStatus("Korekty przywrócone do wartości domyślnych (Cienie 0, Gamma 1.00)", error: false);
+        }
     }
 
     private void OnAdjustSliderDown(object sender, MouseButtonEventArgs e)
