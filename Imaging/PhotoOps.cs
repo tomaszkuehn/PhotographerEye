@@ -11,6 +11,8 @@ public sealed class PhotoAdjustments
     public double Clarity;
     public double Sharpen;
     public double Highlights;
+    public double Whites;
+    public double Blacks;
     public double Dehaze;
     public double Denoise;
     public double ColorNoise;
@@ -23,20 +25,24 @@ public sealed class PhotoAdjustments
         Math.Abs(Clarity) < 0.0005 &&
         Math.Abs(Sharpen) < 0.0005 &&
         Math.Abs(Highlights) < 0.0005 &&
+        Math.Abs(Whites) < 0.0005 &&
+        Math.Abs(Blacks) < 0.0005 &&
         Math.Abs(Dehaze) < 0.0005 &&
         Math.Abs(Denoise) < 0.0005 &&
         Math.Abs(ColorNoise) < 0.0005;
 
-    public static PhotoAdjustments FromUi(double exposure, double contrast, double temperature, double saturation, double clarity, double sharpen, double highlights, double dehaze, double denoise, double colorNoise) =>
+    public static PhotoAdjustments FromUi(double exposure, double contrast, double temperature, double saturation, double clarity, double sharpen, double highlights, double whites, double blacks, double dehaze, double denoise, double colorNoise) =>
         new()
         {
             Exposure = exposure,
             Contrast = contrast / 100.0,
             Temperature = temperature / 100.0,
-            Saturation = saturation / 100.0,
+            Saturation = 1.0 + saturation / 100.0,
             Clarity = clarity / 100.0,
             Sharpen = sharpen / 100.0,
             Highlights = highlights / 100.0,
+            Whites = whites / 100.0,
+            Blacks = blacks / 100.0,
             Dehaze = dehaze / 100.0,
             Denoise = denoise / 100.0,
             ColorNoise = colorNoise / 100.0
@@ -45,60 +51,143 @@ public sealed class PhotoAdjustments
 
 public static class PhotoOps
 {
-    public static void BuildChannelLuts(PhotoAdjustments a, out byte[] lutR, out byte[] lutG, out byte[] lutB)
+    public static (double R, double G, double B) TempGains(double t)
     {
-        double gainR = 1.0 + 0.30 * a.Temperature;
-        double gainB = 1.0 - 0.30 * a.Temperature;
-        double gainG = 1.0;
-        if (a.Temperature < 0)
-        {
-            double k = -a.Temperature;
-            gainR = 1.0 - 0.10 * k;
-            gainB = 1.0 + 0.30 * k;
-            gainG = 1.0 + 0.02 * k;
-        }
-        double evGain = Math.Pow(2.0, a.Exposure);
-        double hazeA = 0.10 * Math.Clamp(a.Dehaze, 0.0, 1.0);
-
-        lutR = BuildChannelLut(gainR * evGain, hazeA, a.Contrast);
-        lutG = BuildChannelLut(gainG * evGain, hazeA, a.Contrast);
-        lutB = BuildChannelLut(gainB * evGain, hazeA, a.Contrast);
+        double g = 1.0 + 0.25 * t;
+        return (g, 1.0, 1.0 - 0.25 * t);
     }
 
-    private static byte[] BuildChannelLut(double gain, double hazeA, double contrast)
+    public static double ToneMap(double x, double gain, double dehaze, double contrast, double whites)
+    {
+        double v = x * gain;
+        if (dehaze > 0.0005)
+        {
+            double a = 0.25 * dehaze;
+            v = (v - a) / (1.0 - a);
+        }
+        else if (dehaze < -0.0005)
+        {
+            double a = 0.35 * -dehaze;
+            v = v * (1.0 - a) + a * 0.85;
+        }
+        if (contrast > 0.0001)
+        {
+            double k = 7.7 * contrast;
+            double kn = Math.Tanh(k / 2.0);
+            v = 0.5 + 0.5 * Math.Tanh(k * (v - 0.5)) / kn;
+        }
+        else if (contrast < -0.0001)
+        {
+            v = 0.5 + (v - 0.5) * (1.0 + 0.72 * contrast);
+        }
+        if (whites > 0.0005 || whites < -0.0005)
+        {
+            double m = WhRegion(v);
+            v = whites > 0 ? v * (1.0 + 0.28 * whites * m) : v * (1.0 - 0.25 * -whites * m);
+        }
+        return v < 0.0 ? 0.0 : v > 1.0 ? 1.0 : v;
+    }
+
+    public static double WhRegion(double v) => Smooth((v - 0.50) / 0.28);
+
+    private static double Smooth(double t)
+    {
+        if (t <= 0.0) return 0.0;
+        if (t >= 1.0) return 1.0;
+        return t * t * (3.0 - 2.0 * t);
+    }
+
+    public static float SatFactor(PhotoAdjustments a)
+    {
+        double d = Math.Clamp(a.Dehaze, -1.0, 1.0);
+        return (float)Math.Clamp(a.Saturation * (1.0 + 0.25 * d), 0.0, 2.5);
+    }
+
+    private static float Smooth01(float t)
+    {
+        if (t <= 0f) return 0f;
+        if (t >= 1f) return 1f;
+        return t * t * (3f - 2f * t);
+    }
+
+    public const float HighlightMaskLo = 0.78f;
+    public const float HighlightMaskRange = 0.16f;
+    public const float ShadowMaskLo = 0.78f;
+    public const float ShadowMaskRange = 0.38f;
+    public const float BlacksMaskLo = 0.28f;
+    public const float BlacksMaskRange = 0.23f;
+
+    public static float HighlightMask(float lum) => Smooth01((lum - HighlightMaskLo) / HighlightMaskRange);
+    public static float ShadowMask(float lum) => Smooth01((ShadowMaskLo - lum) / ShadowMaskRange);
+    public static float BlacksMask(float lum) => Smooth01((BlacksMaskLo - lum) / BlacksMaskRange);
+
+    public static float HighlightCurve(float v, float h) =>
+        h >= 0f ? v * (1f + 0.042f * h) : v * (1f - 0.078f * -h);
+
+    public static float ShadowCurve(float v, float s) =>
+        s >= 0f ? 1.0f - MathF.Pow(1.0f - v, 1.0f + 1.1f * s) : MathF.Pow(v, 1.0f + 0.83f * -s);
+
+    public static float BlacksCurve(float v, float b)
+    {
+        if (b >= 0f)
+        {
+            float l = 0.135f * b;
+            return l + (1f - l) * v;
+        }
+        float shift = 0.07f * -b * Smooth01((0.20f - v) / 0.20f);
+        float r = v - shift;
+        return r < 0f ? 0f : r;
+    }
+
+    public static float[] BuildRegionCurve(double strength, bool highlight)
+    {
+        var curve = new float[65536];
+        float k = (float)Math.Clamp(strength, -1.0, 1.0);
+        if (highlight)
+            for (int i = 0; i < 65536; i++) curve[i] = HighlightCurve(i / 65535.0f, k);
+        else
+            for (int i = 0; i < 65536; i++) curve[i] = ShadowCurve(i / 65535.0f, k);
+        return curve;
+    }
+
+    public static float[] BuildBlacksCurve(double blacks)
+    {
+        var curve = new float[65536];
+        float k = (float)Math.Clamp(blacks, -1.0, 1.0);
+        for (int i = 0; i < 65536; i++) curve[i] = BlacksCurve(i / 65535.0f, k);
+        return curve;
+    }
+
+    public static double WbTemperatureFromSample(double mR, double mG, double mB)
+    {
+        if (mR < 1.0 || mG < 1.0 || mB < 1.0) return 0.0;
+        double gR = mG / mR;
+        double gB = mG / mB;
+        double t = ((gR - 1.0) + (1.0 - gB)) / 0.5;
+        return Math.Clamp(t, -1.0, 1.0);
+    }
+
+    public static void BuildChannelLuts(PhotoAdjustments a, out byte[] lutR, out byte[] lutG, out byte[] lutB)
+    {
+        var (gR, gG, gB) = TempGains(a.Temperature);
+        double evGain = Math.Pow(2.0, a.Exposure);
+        lutR = BuildChannelLut(gR * evGain, a.Dehaze, a.Contrast, a.Whites);
+        lutG = BuildChannelLut(gG * evGain, a.Dehaze, a.Contrast, a.Whites);
+        lutB = BuildChannelLut(gB * evGain, a.Dehaze, a.Contrast, a.Whites);
+    }
+
+    private static byte[] BuildChannelLut(double gain, double dehaze, double contrast, double whites)
     {
         var lut = new byte[256];
-        bool posC = contrast > 0.0001;
-        bool negC = contrast < -0.0001;
-        double k = 1.0 + Math.Max(contrast, 0.0) * 7.0;
-        double kNorm = Math.Tanh(0.5 * k);
-        double flatten = 1.0 + Math.Min(contrast, 0.0) * 0.55;
-
         for (int i = 0; i < 256; i++)
-        {
-            double v = i / 255.0 * gain;
-            if (hazeA > 0.0) v = (v - hazeA) / (1.0 - hazeA);
-            if (posC)
-            {
-                v = 0.5 + 0.5 * (Math.Tanh((v - 0.5) * k) / kNorm);
-            }
-            else if (negC)
-            {
-                v = 0.5 + (v - 0.5) * flatten;
-            }
-            lut[i] = (byte)Math.Clamp(Math.Round(v * 255.0), 0, 255);
-        }
+            lut[i] = (byte)Math.Clamp(Math.Round(ToneMap(i / 255.0, gain, dehaze, contrast, whites) * 255.0), 0, 255);
         return lut;
     }
 
     public static unsafe void ApplyColorPoints(byte[] buffer, PhotoAdjustments a)
     {
         BuildChannelLuts(a, out byte[] lutR, out byte[] lutG, out byte[] lutB);
-
-        bool posC = a.Contrast > 0.0001;
-        bool negC = a.Contrast < -0.0001;
-        float dehazeBoost = (float)(Math.Clamp(a.Dehaze, 0.0, 1.0) * 0.30);
-        float sat = (float)Math.Clamp(a.Saturation * (1.0 + dehazeBoost), 0.0, 3.0);
+        float sat = SatFactor(a);
 
         fixed (byte* p = buffer)
         {
@@ -175,31 +264,6 @@ public static class PhotoOps
         }
     }
 
-    public static double WbTemperatureFromSample(double mR, double mG, double mB)
-    {
-        if (mR < 1.0 || mG < 1.0 || mB < 1.0) return 0.0;
-        double gR = mG / mR;
-        double gB = mG / mB;
-        double t;
-        if (gR >= 1.0 && gB <= 1.0)
-        {
-            double tR = (gR - 1.0) / 0.30;
-            double tB = (1.0 - gB) / 0.30;
-            t = (tR + tB) * 0.5;
-        }
-        else if (gR <= 1.0 && gB >= 1.0)
-        {
-            double kR = (1.0 - gR) / 0.10;
-            double kB = (gB - 1.0) / 0.30;
-            t = -((kR + kB) * 0.5);
-        }
-        else
-        {
-            t = (gR - gB) / 0.60;
-        }
-        return Math.Clamp(t, -1.0, 1.0);
-    }
-
     public static unsafe void ApplyDenoise(byte[] buffer, int w, int h, double denoise)
     {
         double n = Math.Clamp(denoise, 0.0, 1.0);
@@ -225,73 +289,60 @@ public static class PhotoOps
         }
     }
 
-    public static unsafe void ApplyHighlights(byte[] buffer, int w, int h, double highlights)
+    public static unsafe void ApplyRegionCurve(byte[] buffer, double strength, bool highlight)
     {
-        double v = Math.Clamp(highlights, -1.0, 1.0);
+        double v = Math.Clamp(strength, -1.0, 1.0);
         if (Math.Abs(v) <= 0.0005) return;
-        float exp = 1.0f + (float)(2.0 * Math.Abs(v));
 
-        const float threshold = 0.72f;
-        const float softness = 0.16f;
-        float lower = threshold - softness;
-        float upper = threshold + softness;
-        float denom = upper - lower;
-
-        var srgbLin = new float[256];
-        for (int i = 0; i < 256; i++)
-        {
-            double c = i / 255.0;
-            srgbLin[i] = (float)(c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4));
-        }
-
-        var linSrgb = new byte[1024];
-        for (int i = 0; i < 1024; i++)
-        {
-            double c = i / 1023.0;
-            double s = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.Pow(c, 1.0 / 2.4) - 0.055;
-            linSrgb[i] = (byte)Math.Clamp(Math.Round(s * 255.0), 0, 255);
-        }
-
-        var lift = new float[1024];
-        if (v > 0)
-        {
-            for (int i = 0; i < 1024; i++)
-                lift[i] = 1.0f - MathF.Pow(1.0f - i / 1023.0f, exp);
-        }
-        else
-        {
-            for (int i = 1; i < 1024; i++)
-                lift[i] = MathF.Pow(i / 1023.0f, exp);
-            lift[0] = 0.0f;
-        }
-
+        var curve = BuildRegionCurve(v, highlight);
         fixed (byte* p = buffer)
         {
             byte* end = p + buffer.Length;
             for (byte* q = p; q < end; q += 4)
             {
-                float lr = srgbLin[q[2]];
-                float lg = srgbLin[q[1]];
-                float lb = srgbLin[q[0]];
-
-                float lum = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
-                float ramp = (lum - lower) / denom;
-                if (ramp < 0.0f) ramp = 0.0f;
-                else if (ramp > 1.0f) ramp = 1.0f;
-                float mask = ramp * ramp;
+                float lr = q[2];
+                float lg = q[1];
+                float lb = q[0];
+                float lum = (0.2126f * lr + 0.7152f * lg + 0.0722f * lb) / 255.0f;
+                float mask = highlight ? HighlightMask(lum) : ShadowMask(lum);
                 if (mask <= 0.0f) continue;
-
                 float inv = 1.0f - mask;
-                q[2] = linSrgb[(int)((lr * inv + lift[LiftIndex(lr)] * mask) * 1023.0f + 0.5f)];
-                q[1] = linSrgb[(int)((lg * inv + lift[LiftIndex(lg)] * mask) * 1023.0f + 0.5f)];
-                q[0] = linSrgb[(int)((lb * inv + lift[LiftIndex(lb)] * mask) * 1023.0f + 0.5f)];
+                q[2] = ClampByte((lr / 255.0f * inv + curve[(int)(lr * 257.0f)] * mask) * 255.0f);
+                q[1] = ClampByte((lg / 255.0f * inv + curve[(int)(lg * 257.0f)] * mask) * 255.0f);
+                q[0] = ClampByte((lb / 255.0f * inv + curve[(int)(lb * 257.0f)] * mask) * 255.0f);
+            }
+        }
+    }
+
+    public static unsafe void ApplyBlacks(byte[] buffer, double blacks)
+    {
+        double v = Math.Clamp(blacks, -1.0, 1.0);
+        if (Math.Abs(v) <= 0.0005) return;
+
+        var curve = BuildBlacksCurve(v);
+        fixed (byte* p = buffer)
+        {
+            byte* end = p + buffer.Length;
+            for (byte* q = p; q < end; q += 4)
+            {
+                float lr = q[2];
+                float lg = q[1];
+                float lb = q[0];
+                float lum = (0.2126f * lr + 0.7152f * lg + 0.0722f * lb) / 255.0f;
+                bool lift = v > 0.0;
+                float mask = lift ? 1f : BlacksMask(lum);
+                if (mask <= 0.0f) continue;
+                float inv = 1.0f - mask;
+                q[2] = ClampByte((lr / 255.0f * inv + curve[(int)(lr * 257.0f)] * mask) * 255.0f);
+                q[1] = ClampByte((lg / 255.0f * inv + curve[(int)(lg * 257.0f)] * mask) * 255.0f);
+                q[0] = ClampByte((lb / 255.0f * inv + curve[(int)(lb * 257.0f)] * mask) * 255.0f);
             }
         }
     }
 
     public static unsafe void ApplySharpen(byte[] buffer, int w, int h, double sharpen)
     {
-        double amt = Math.Clamp(sharpen, 0.0, 1.0);
+        double amt = Math.Clamp(sharpen, 0.0, 1.5);
         if (amt <= 0.0005) return;
         int r = Math.Clamp((int)Math.Round(Math.Min(w, h) * 0.0005), 1, 3);
 
@@ -319,11 +370,8 @@ public static class PhotoOps
         }
     }
 
-    private static int LiftIndex(float lin)
-    {
-        int i = (int)(lin * 1023.0f + 0.5f);
-        return i < 0 ? 0 : (i > 1023 ? 1023 : i);
-    }
+    public static double ClarityRadius(int w, int h) =>
+        Math.Clamp((int)Math.Round(Math.Min(w, h) * 0.012), 3, 60);
 
     private static byte MixByte(int a, int b, float t)
     {
@@ -335,24 +383,16 @@ public static class PhotoOps
     {
         double amt = Math.Clamp(clarity, -1.0, 1.0);
         if (Math.Abs(amt) <= 0.0005) return;
-        int r = Math.Clamp((int)Math.Round(Math.Min(w, h) * 0.006), 2, 40);
+        int r = (int)ClarityRadius(w, h);
 
         var lum = new float[w * h];
-        fixed (byte* p = buffer)
-        fixed (float* lp = lum)
-        {
-            float* l = lp;
-            byte* srcEnd = p + buffer.Length;
-            for (byte* q = p; q < srcEnd; q += 4, l++)
-                *l = 0.2126f * q[2] + 0.7152f * q[1] + 0.0722f * q[0];
-        }
-
+        ComputeLuma(buffer, lum, w, h);
         var low = new float[w * h];
         var low2 = new float[w * h];
         BoxBlurFloatPass(lum, low, w, h, r, vertical: false);
         BoxBlurFloatPass(low, low2, w, h, r, vertical: true);
 
-        float a = (float)amt;
+        float a = (float)(1.5 * amt);
         fixed (byte* p = buffer)
         fixed (float* lp = lum, op = low2)
         {
@@ -361,7 +401,9 @@ public static class PhotoOps
             byte* end = p + buffer.Length;
             for (byte* q = p; q < end; q += 4, l++, o++)
             {
-                float delta = (*l - *o) * a;
+                float v = *l / 255.0f;
+                float mid = 1.0f - (2.0f * v - 1.0f) * (2.0f * v - 1.0f);
+                float delta = (*l - *o) * a * (0.25f + 0.75f * mid);
                 q[0] = ClampByte(q[0] + delta);
                 q[1] = ClampByte(q[1] + delta);
                 q[2] = ClampByte(q[2] + delta);
@@ -462,5 +504,5 @@ public static class PhotoOps
         }
     }
 
-    private static int ClampI(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
+    private static int ClampI(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
 }

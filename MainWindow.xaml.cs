@@ -76,11 +76,13 @@ public partial class MainWindow : Window
         ClaritySlider.ValueChanged += OnPanelSliderChanged;
         SharpenSlider.ValueChanged += OnPanelSliderChanged;
         HighlightsSlider.ValueChanged += OnPanelSliderChanged;
+        WhitesSlider.ValueChanged += OnPanelSliderChanged;
+        BlacksSlider.ValueChanged += OnPanelSliderChanged;
         PanelShadowSlider.ValueChanged += OnPanelSliderChanged;
         DehazeSlider.ValueChanged += OnPanelSliderChanged;
         DenoiseSlider.ValueChanged += OnPanelSliderChanged;
         ColorNoiseSlider.ValueChanged += OnPanelSliderChanged;
-        foreach (var s in new[] { ExpSlider, ContrastSlider, TempSlider, SatSlider, ClaritySlider, SharpenSlider, HighlightsSlider, PanelShadowSlider, DehazeSlider, DenoiseSlider, ColorNoiseSlider })
+        foreach (var s in new[] { ExpSlider, ContrastSlider, TempSlider, SatSlider, ClaritySlider, SharpenSlider, HighlightsSlider, WhitesSlider, BlacksSlider, PanelShadowSlider, DehazeSlider, DenoiseSlider, ColorNoiseSlider })
         {
             s.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         }
@@ -886,7 +888,7 @@ public partial class MainWindow : Window
     private void OnAdjustmentChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         _showHistogram = true;
-        ShadowValue.Text = $"{Math.Round(ShadowSlider.Value)} %";
+        ShadowValue.Text = $"{Math.Round(ShadowSlider.Value)}";
         GammaValue.Text = GammaSlider.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
         UpdateSaveState();
         if (_adjustTimer is not null)
@@ -922,6 +924,8 @@ public partial class MainWindow : Window
             ClaritySlider.Value,
             SharpenSlider.Value,
             HighlightsSlider.Value,
+            WhitesSlider.Value,
+            BlacksSlider.Value,
             DehazeSlider.Value,
             DenoiseSlider.Value,
             ColorNoiseSlider.Value);
@@ -940,6 +944,8 @@ public partial class MainWindow : Window
             Clarity = a.Clarity,
             Sharpen = a.Sharpen,
             Highlights = a.Highlights,
+            Whites = a.Whites,
+            Blacks = a.Blacks,
             Dehaze = a.Dehaze,
             Denoise = a.Denoise,
             ColorNoise = a.ColorNoise
@@ -955,7 +961,7 @@ public partial class MainWindow : Window
         try
         {
             PanelShadowSlider.Value = e.NewValue;
-            PanelShadowValue.Text = $"{Math.Round(e.NewValue)} %";
+            PanelShadowValue.Text = Math.Round(e.NewValue).ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
         {
@@ -1043,9 +1049,11 @@ public partial class MainWindow : Window
         ExpValue.Text = (ExpSlider.Value > 0 ? "+" : "") + ExpSlider.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
         ContrastValue.Text = ((int)ContrastSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         TempValue.Text = ((int)TempSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        SatValue.Text = $"{(int)SatSlider.Value} %";
-        PanelShadowValue.Text = $"{Math.Round(PanelShadowSlider.Value)} %";
+        SatValue.Text = ((int)SatSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        PanelShadowValue.Text = Math.Round(PanelShadowSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         HighlightsValue.Text = ((int)HighlightsSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        WhitesValue.Text = ((int)WhitesSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        BlacksValue.Text = ((int)BlacksSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         ClarityValue.Text = ((int)ClaritySlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         SharpenValue.Text = ((int)SharpenSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         DehazeValue.Text = ((int)DehazeSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -1093,9 +1101,11 @@ public partial class MainWindow : Window
             ExpSlider.Value = 0;
             ContrastSlider.Value = 0;
             TempSlider.Value = 0;
-            SatSlider.Value = 100;
+            SatSlider.Value = 0;
             PanelShadowSlider.Value = 0;
             HighlightsSlider.Value = 0;
+            WhitesSlider.Value = 0;
+            BlacksSlider.Value = 0;
             ClaritySlider.Value = 0;
             SharpenSlider.Value = 0;
             DehazeSlider.Value = 0;
@@ -1129,6 +1139,8 @@ public partial class MainWindow : Window
             Temperature = TempSlider.Value,
             Saturation = SatSlider.Value,
             Highlights = HighlightsSlider.Value,
+            Whites = WhitesSlider.Value,
+            Blacks = BlacksSlider.Value,
             Clarity = ClaritySlider.Value,
             Sharpen = SharpenSlider.Value,
             Dehaze = DehazeSlider.Value,
@@ -1156,8 +1168,11 @@ public partial class MainWindow : Window
         ExpSlider.Value = Math.Clamp(st.Exposure, ExpSlider.Minimum, ExpSlider.Maximum);
         ContrastSlider.Value = Math.Clamp(st.Contrast, ContrastSlider.Minimum, ContrastSlider.Maximum);
         TempSlider.Value = Math.Clamp(st.Temperature, TempSlider.Minimum, TempSlider.Maximum);
-        SatSlider.Value = Math.Clamp(st.Saturation, SatSlider.Minimum, SatSlider.Maximum);
+        double legacySatShift = st.Version == 1 ? 100.0 : 0.0;
+        SatSlider.Value = Math.Clamp(st.Saturation - legacySatShift, SatSlider.Minimum, SatSlider.Maximum);
         HighlightsSlider.Value = Math.Clamp(st.Highlights, HighlightsSlider.Minimum, HighlightsSlider.Maximum);
+        WhitesSlider.Value = Math.Clamp(st.Whites, WhitesSlider.Minimum, WhitesSlider.Maximum);
+        BlacksSlider.Value = Math.Clamp(st.Blacks, BlacksSlider.Minimum, BlacksSlider.Maximum);
         ClaritySlider.Value = Math.Clamp(st.Clarity, ClaritySlider.Minimum, ClaritySlider.Maximum);
         SharpenSlider.Value = Math.Clamp(st.Sharpen, SharpenSlider.Minimum, SharpenSlider.Maximum);
         DehazeSlider.Value = Math.Clamp(st.Dehaze, DehazeSlider.Minimum, DehazeSlider.Maximum);
@@ -1175,9 +1190,11 @@ public partial class MainWindow : Window
         else if (ReferenceEquals(sender, ExpSlider)) ExpSlider.Value = 0;
         else if (ReferenceEquals(sender, ContrastSlider)) ContrastSlider.Value = 0;
         else if (ReferenceEquals(sender, TempSlider)) TempSlider.Value = 0;
-        else if (ReferenceEquals(sender, SatSlider)) SatSlider.Value = 100;
+        else if (ReferenceEquals(sender, SatSlider)) SatSlider.Value = 0;
         else if (ReferenceEquals(sender, PanelShadowSlider)) PanelShadowSlider.Value = 0;
         else if (ReferenceEquals(sender, HighlightsSlider)) HighlightsSlider.Value = 0;
+        else if (ReferenceEquals(sender, WhitesSlider)) WhitesSlider.Value = 0;
+        else if (ReferenceEquals(sender, BlacksSlider)) BlacksSlider.Value = 0;
         else if (ReferenceEquals(sender, ClaritySlider)) ClaritySlider.Value = 0;
         else if (ReferenceEquals(sender, SharpenSlider)) SharpenSlider.Value = 0;
         else if (ReferenceEquals(sender, DehazeSlider)) DehazeSlider.Value = 0;

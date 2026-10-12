@@ -12,7 +12,7 @@ public static class LinearRender
     private const double MinEv = -1.5;
     private const double MaxEv = 2.5;
 
-    private const float ToeGamma = 0.40f;
+    private const float ToeGamma = 0.75f;
     private const float ShoulderStart = 0.60f;
     private const float ShoulderEnd = 0.92f;
     private const float HighlightDesatStart = 0.80f;
@@ -105,16 +105,7 @@ public static class LinearRender
     public static Raw16Image ApplyGain(Raw16Image src, double ev, double temperature, CancellationToken ct = default)
     {
         double evGain = Math.Pow(2.0, ev);
-        double gainR = 1.0 + 0.30 * temperature;
-        double gainB = 1.0 - 0.30 * temperature;
-        double gainG = 1.0;
-        if (temperature < 0)
-        {
-            double k = -temperature;
-            gainR = 1.0 - 0.10 * k;
-            gainB = 1.0 + 0.30 * k;
-            gainG = 1.0 + 0.02 * k;
-        }
+        var (gainR, gainG, gainB) = PhotoOps.TempGains(temperature);
 
         float gr = (float)(evGain * gainR);
         float gg = (float)(evGain * gainG);

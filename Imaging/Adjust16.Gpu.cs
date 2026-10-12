@@ -16,11 +16,8 @@ public static partial class Adjust16
     private static bool _gpuInit;
     private static GraphicsDevice? _gpu;
     private static string _gpuReason = "nie sprawdzono";
-    private static ReadOnlyBuffer<float>? _bSrgbLin;
-    private static ReadOnlyBuffer<int>? _bLinSrgb;
     private static ReadOnlyBuffer<int>? _bMonoDoc;
     private static ReadOnlyBuffer<int>? _bMonoTriX;
-    private static ReadWriteBuffer<float>? _bLift;
     private static int _bufN;
     private static GpuBufs? _bufs;
 
@@ -74,11 +71,8 @@ public static partial class Adjust16
                 if (best is not null && best.IsHardwareAccelerated)
                 {
                     _gpu = best;
-                    _bSrgbLin = best.AllocateReadOnlyBuffer(SrgbLinF16Lut.Value);
-                    _bLinSrgb = best.AllocateReadOnlyBuffer(ToIntLut(LinSrgbU16Lut.Value));
                     _bMonoDoc = best.AllocateReadOnlyBuffer(ToIntLut(MonoDocLut.Value));
                     _bMonoTriX = best.AllocateReadOnlyBuffer(ToIntLut(MonoTriXLut.Value));
-                    _bLift = best.AllocateReadWriteBuffer<float>(1024);
                     _gpuReason = "ok";
                 }
                 else
@@ -104,7 +98,7 @@ public static partial class Adjust16
         return dst;
     }
 
-    public static Raw16Image? TryApplyGpu(Raw16Image source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, bool autoStretch = true, MonoMode mono = MonoMode.None, int grainSeed = 0, PhotoAdjustments? extra = null, CancellationToken ct = default)
+    public static Raw16Image? TryApplyGpu(Raw16Image source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, MonoMode mono = MonoMode.None, int grainSeed = 0, PhotoAdjustments? extra = null, CancellationToken ct = default)
     {
         histogram = null;
         if (!GpuEnabled) return null;
@@ -124,7 +118,7 @@ public static partial class Adjust16
         {
             try
             {
-                return RunGpu(source, w, h, (int)n, shadowLift, gamma, manual, out histogram, autoStretch, mono, grainSeed, extra, ct);
+                return RunGpu(source, w, h, (int)n, shadowLift, gamma, manual, out histogram, mono, grainSeed, extra, ct);
             }
             catch (OperationCanceledException)
             {
@@ -139,7 +133,7 @@ public static partial class Adjust16
         }
     }
 
-    private static Raw16Image RunGpu(Raw16Image source, int w, int h, int n, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, bool autoStretch, MonoMode mono, int grainSeed, PhotoAdjustments? extra, CancellationToken ct)
+    private static Raw16Image RunGpu(Raw16Image source, int w, int h, int n, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, MonoMode mono, int grainSeed, PhotoAdjustments? extra, CancellationToken ct)
     {
         histogram = null;
         var d = _gpu!;
@@ -157,7 +151,12 @@ public static partial class Adjust16
             if (extra.Denoise > 0.0005) BlurMix(d, b, w, h, extra.Denoise, chroma: false, ct);
             if (extra.ColorNoise > 0.0005) BlurMix(d, b, w, h, extra.ColorNoise, chroma: true, ct);
             ColorPoints(d, b, w, h, extra, ct);
-            if (Math.Abs(extra.Highlights) > 0.0005) Lift(d, b, w, h, extra.Highlights, highlight: true, ct);
+            bool blLift = extra.Blacks > 0.0;
+            if (blLift)
+                CurvePass(d, b, w, h, PhotoOps.BuildBlacksCurve(extra.Blacks), -1f, 1e-6f, 0f, ct);
+            else
+                CurvePass(d, b, w, h, PhotoOps.BuildBlacksCurve(extra.Blacks), PhotoOps.BlacksMaskLo, PhotoOps.BlacksMaskRange, 1f, ct);
+            if (Math.Abs(extra.Highlights) > 0.0005) RegionCurve(d, b, w, h, extra.Highlights, highlight: true, ct);
             if (Math.Abs(extra.Clarity) > 0.0005) Detail(d, b, w, h, extra.Clarity, sharpen: false, ct);
             if (extra.Sharpen > 0.0005) Detail(d, b, w, h, extra.Sharpen, sharpen: true, ct);
         }
@@ -165,14 +164,7 @@ public static partial class Adjust16
         bool shadow = Math.Abs(shadowLift) > 0.0001;
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
 
-        ushort[]? stretch = shadow ? GetStretch(source, autoStretch) : null;
-        if (stretch is not null)
-        {
-            float k = (float)Math.Min(1.0, Math.Abs(shadowLift) / 0.5);
-            using var sl = d.AllocateReadOnlyBuffer(ToIntLut(BuildStretchLut(stretch, k)));
-            ApplyLut(d, b, w, h, sl, ct);
-        }
-        if (shadow) Lift(d, b, w, h, shadowLift, highlight: false, ct);
+        if (shadow) RegionCurve(d, b, w, h, shadowLift, highlight: false, ct);
         if (hasGamma)
         {
             var gl = GammaLutCache.GetOrAdd((long)Math.Round(gamma * 1000000.0), _ => BuildGammaLut16(gamma));
@@ -233,42 +225,44 @@ public static partial class Adjust16
         using var br = d.AllocateReadOnlyBuffer(ToIntLut(lutR));
         using var bg = d.AllocateReadOnlyBuffer(ToIntLut(lutG));
         using var bb = d.AllocateReadOnlyBuffer(ToIntLut(lutB));
-        float dehazeBoost = (float)(Math.Clamp(a.Dehaze, 0.0, 1.0) * 0.30);
-        float sat = (float)Math.Clamp(a.Saturation * (1.0 + dehazeBoost), 0.0, 3.0);
+        float sat = PhotoOps.SatFactor(a);
         ct.ThrowIfCancellationRequested();
         d.For(w, h, new ColorPointsKernel(b.R, b.G, b.B, br, bg, bb, sat, w, h));
     }
 
-    private static void Lift(GraphicsDevice d, GpuBufs b, int w, int h, double value, bool highlight, CancellationToken ct)
+    private static void RegionCurve(GraphicsDevice d, GpuBufs b, int w, int h, double value, bool highlight, CancellationToken ct)
     {
-        float threshold = highlight ? 0.72f : 0.25f;
-        float softness = highlight ? 0.16f : 0.15f;
-        float lower = threshold - softness;
-        float upper = threshold + softness;
-        float denom = upper - lower;
-        float aa = highlight ? 1f : -1f;
-        float bb = highlight ? -lower : upper;
-        var lift = BuildLift(value);
-        _bLift!.CopyFrom(lift);
+        CurvePass(d, b, w, h, PhotoOps.BuildRegionCurve(value, highlight),
+            highlight ? PhotoOps.HighlightMaskLo : PhotoOps.ShadowMaskLo,
+            highlight ? PhotoOps.HighlightMaskRange : PhotoOps.ShadowMaskRange,
+            highlight ? 0f : 1f, ct);
+    }
+
+    private static void CurvePass(GraphicsDevice d, GpuBufs b, int w, int h, float[] curve, float maskLo, float maskRange, float invert, CancellationToken ct)
+    {
+        using var cb = d.AllocateReadOnlyBuffer(curve);
         ct.ThrowIfCancellationRequested();
-        d.For(w, h, new ToneLiftKernel(b.R, b.G, b.B, _bSrgbLin!, _bLinSrgb!, _bLift!, aa, bb, denom, w, h));
+        d.For(w, h, new RegionCurveKernel(b.R, b.G, b.B, cb, maskLo, maskRange, invert, w, h));
     }
 
     private static void Detail(GraphicsDevice d, GpuBufs b, int w, int h, double amount, bool sharpen, CancellationToken ct)
     {
         int r;
         float a;
+        float weight;
         if (sharpen)
         {
-            double amt = Math.Clamp(amount, 0.0, 1.0);
+            double amt = Math.Clamp(amount, 0.0, 1.5);
             r = Math.Clamp((int)Math.Round(Math.Min(w, h) * 0.0005), 1, 3);
             a = (float)(amt * 1.15);
+            weight = 0f;
         }
         else
         {
             double amt = Math.Clamp(amount, -1.0, 1.0);
-            r = Math.Clamp((int)Math.Round(Math.Min(w, h) * 0.006), 2, 40);
-            a = (float)amt;
+            r = (int)PhotoOps.ClarityRadius(w, h);
+            a = (float)(1.5 * amt);
+            weight = 1f;
         }
         float wf = 2 * r + 1;
         d.For(w, h, new LumaKernel(b.R, b.G, b.B, b.Luma, w, h));
@@ -277,7 +271,7 @@ public static partial class Adjust16
         ct.ThrowIfCancellationRequested();
         d.For(w, h, new BlurVFloatKernel(b.Lo1, b.Lo2, w, h, r, wf));
         ct.ThrowIfCancellationRequested();
-        d.For(w, h, new DeltaKernel(b.R, b.G, b.B, b.Luma, b.Lo2, a, w, h));
+        d.For(w, h, new DeltaKernel(b.R, b.G, b.B, b.Luma, b.Lo2, a, weight, w, h));
     }
 
     private static void ApplyLut(GraphicsDevice d, GpuBufs b, int w, int h, ReadOnlyBuffer<int> lut, CancellationToken ct)
@@ -500,7 +494,7 @@ public readonly partial struct ColorPointsKernel(ReadWriteBuffer<int> pr, ReadWr
 
 [ThreadGroupSize(DefaultThreadGroupSizes.XY)]
 [GeneratedComputeShaderDescriptor]
-public readonly partial struct ToneLiftKernel(ReadWriteBuffer<int> pr, ReadWriteBuffer<int> pg, ReadWriteBuffer<int> pb, ReadOnlyBuffer<float> srgbLin, ReadOnlyBuffer<int> linSrgb, ReadWriteBuffer<float> lift, float aa, float bb, float denom, int w, int h) : IComputeShader
+public readonly partial struct RegionCurveKernel(ReadWriteBuffer<int> pr, ReadWriteBuffer<int> pg, ReadWriteBuffer<int> pb, ReadOnlyBuffer<float> curve, float maskLo, float maskRange, float invert, int w, int h) : IComputeShader
 {
     public void Execute()
     {
@@ -508,31 +502,28 @@ public readonly partial struct ToneLiftKernel(ReadWriteBuffer<int> pr, ReadWrite
         int y = ThreadIds.Y;
         if (x >= w || y >= h) return;
         int i = y * w + x;
-        float lr = srgbLin[pr[i]];
-        float lg = srgbLin[pg[i]];
-        float lb = srgbLin[pb[i]];
+        float lr = pr[i] / 65535f;
+        float lg = pg[i] / 65535f;
+        float lb = pb[i] / 65535f;
         float lum = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
-        float ramp = (aa * lum + bb) / denom;
-        if (ramp < 0f) ramp = 0f;
-        else if (ramp > 1f) ramp = 1f;
-        float mask = ramp * ramp;
+        float t = invert > 0f ? (maskLo - lum) / maskRange : (lum - maskLo) / maskRange;
+        if (t < 0f) t = 0f;
+        else if (t > 1f) t = 1f;
+        float mask = t * t * (3f - 2f * t);
         if (mask <= 0f) return;
         float inv = 1f - mask;
-        int li = (int)(lr * 1023f + 0.5f);
-        if (li < 0) li = 0; else if (li > 1023) li = 1023;
-        int ri = (int)((lr * inv + lift[li] * mask) * 65535f + 0.5f);
-        if (ri < 0) ri = 0; else if (ri > 65535) ri = 65535;
-        pr[i] = linSrgb[ri];
-        li = (int)(lg * 1023f + 0.5f);
-        if (li < 0) li = 0; else if (li > 1023) li = 1023;
-        int gi = (int)((lg * inv + lift[li] * mask) * 65535f + 0.5f);
-        if (gi < 0) gi = 0; else if (gi > 65535) gi = 65535;
-        pg[i] = linSrgb[gi];
-        li = (int)(lb * 1023f + 0.5f);
-        if (li < 0) li = 0; else if (li > 1023) li = 1023;
-        int bi = (int)((lb * inv + lift[li] * mask) * 65535f + 0.5f);
-        if (bi < 0) bi = 0; else if (bi > 65535) bi = 65535;
-        pb[i] = linSrgb[bi];
+        int vi = pr[i];
+        float r = lr * inv + curve[vi] * mask;
+        int ri = (int)(r * 65535f + 0.5f);
+        pr[i] = ri < 0 ? 0 : ri > 65535 ? 65535 : ri;
+        vi = pg[i];
+        float g = lg * inv + curve[vi] * mask;
+        int gi = (int)(g * 65535f + 0.5f);
+        pg[i] = gi < 0 ? 0 : gi > 65535 ? 65535 : gi;
+        vi = pb[i];
+        float bl = lb * inv + curve[vi] * mask;
+        int bi = (int)(bl * 65535f + 0.5f);
+        pb[i] = bi < 0 ? 0 : bi > 65535 ? 65535 : bi;
     }
 }
 
@@ -595,7 +586,7 @@ public readonly partial struct BlurVFloatKernel(ReadWriteBuffer<float> src, Read
 
 [ThreadGroupSize(DefaultThreadGroupSizes.XY)]
 [GeneratedComputeShaderDescriptor]
-public readonly partial struct DeltaKernel(ReadWriteBuffer<int> pr, ReadWriteBuffer<int> pg, ReadWriteBuffer<int> pb, ReadWriteBuffer<float> lum, ReadWriteBuffer<float> low2, float a, int w, int h) : IComputeShader
+public readonly partial struct DeltaKernel(ReadWriteBuffer<int> pr, ReadWriteBuffer<int> pg, ReadWriteBuffer<int> pb, ReadWriteBuffer<float> lum, ReadWriteBuffer<float> low2, float a, float weight, int w, int h) : IComputeShader
 {
     public void Execute()
     {
@@ -603,7 +594,14 @@ public readonly partial struct DeltaKernel(ReadWriteBuffer<int> pr, ReadWriteBuf
         int y = ThreadIds.Y;
         if (x >= w || y >= h) return;
         int i = y * w + x;
-        float delta = (lum[i] - low2[i]) * a;
+        float aa = a;
+        if (weight > 0f)
+        {
+            float v = lum[i] / 65535f;
+            float mid = 1f - (2f * v - 1f) * (2f * v - 1f);
+            aa *= 0.25f + 0.75f * mid;
+        }
+        float delta = (lum[i] - low2[i]) * aa;
         int r = (int)(pr[i] + delta + 0.5f);
         pr[i] = r < 0 ? 0 : r > 65535 ? 65535 : r;
         int g = (int)(pg[i] + delta + 0.5f);

@@ -6,7 +6,7 @@ namespace ImgViewer.Services;
 
 public sealed record EyeState
 {
-    public int Version { get; init; } = 1;
+    public int Version { get; init; } = 2;
     public double ShadowLift { get; init; }
     public double Gamma { get; init; } = 1.0;
     public double[][]? Stretch { get; init; }
@@ -14,8 +14,10 @@ public sealed record EyeState
     public double Exposure { get; init; }
     public double Contrast { get; init; }
     public double Temperature { get; init; }
-    public double Saturation { get; init; } = 100;
+    public double Saturation { get; init; }
     public double Highlights { get; init; }
+    public double Whites { get; init; }
+    public double Blacks { get; init; }
     public double Clarity { get; init; }
     public double Sharpen { get; init; }
     public double Dehaze { get; init; }
@@ -43,7 +45,7 @@ public static class EyeFile
         try
         {
             var loaded = JsonSerializer.Deserialize<EyeState>(File.ReadAllText(SidecarPath(imagePath)), JsonOptions);
-            if (loaded is not { Version: 1 }) return false;
+            if (loaded is not { Version: 1 or 2 }) return false;
             state = loaded;
             return true;
         }

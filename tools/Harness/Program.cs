@@ -87,6 +87,7 @@ internal static class Program
         TestRaw16();
         TestGpu();
         TestSliders();
+        TestLightroom();
         TestPhotoExtras();
         TestExifRotation();
         TestEyeFile();
@@ -206,23 +207,24 @@ internal static class Program
     private static void TestShadows()
     {
         var src = MakeFlat(255, 240, 240, 240, 120, 120, 120, 10, 10, 10);
-        var out1 = AdjustmentsProcessor.Apply(src, 0.5, 1.0, autoStretch: false);
+        var out1 = AdjustmentsProcessor.Apply(src, 1.0, 1.0);
         var out0 = AdjustmentsProcessor.Apply(src, 0.0, 1.0);
         Check(out1 is not null && out0 is not null, "shadows apply");
 
         var p = ReadPixels(out1!);
         var q0 = ReadPixels(out0!);
         Check(diff(p.dark, q0.dark) >= 6, $"dark lifted from near-black ({p.dark.g} vs {q0.dark.g})");
-        Check(diff(p.mid, q0.mid) >= 10 && diff(p.mid, q0.mid) <= 45, $"mid lifted moderately ({p.mid.g} vs {q0.mid.g})");
-        Check(diff(p.bright, q0.bright) <= 3, $"bright untouched ({p.bright.g} vs {q0.bright.g})");
-        Check(p.bright.g - p.bright.b <= 2, "highlight hue preserved");
+        Check(p.mid.g - q0.mid.g > 8 && p.mid.g - q0.mid.g < 80, $"shadow lift raises midtones, not gamma ({p.mid.g} -> {p.mid.g})");
+        Check(Math.Abs(p.bright.g - q0.bright.g) <= 2, $"bright untouched ({p.bright.g} vs {q0.bright.g})");
+        Check(p.dark.r == p.dark.g && p.dark.g == p.dark.b, "shadow lift keeps grays neutral");
 
-        var outN = AdjustmentsProcessor.Apply(src, -0.5, 1.0, autoStretch: false);
+        var outN = AdjustmentsProcessor.Apply(src, -1.0, 1.0);
         var pN = ReadPixels(outN!);
-        Check(pN.bright.g <= q0.bright.g, "darkened bright not above base");
+        Check(pN.bright.g == q0.bright.g, "darkened bright not above base");
         Check(diff(pN.dark, q0.dark) > 8, $"dark darkened heavily ({pN.dark.g} vs {q0.dark.g})");
-        Check(Math.Abs(pN.mid.g - q0.mid.g) >= 8 && Math.Abs(pN.mid.g - q0.mid.g) <= 40, $"mid darkened moderately ({pN.mid.g} vs {q0.mid.g})");
-        Check(diff(pN.bright, q0.bright) <= 3, "bright untouched on darken");
+        Check(pN.mid.g < q0.mid.g && pN.mid.g > q0.mid.g / 2, "shadow darken lowers midtones, no global gamma");
+        Check(Math.Abs(pN.bright.g - q0.bright.g) <= 2, "bright untouched on darken");
+        Check(p.mid.g - q0.mid.g < p.dark.g - q0.dark.g + 200, "shadow lift stronger on shadows than mids");
     }
 
     private static void TestGamma()
@@ -265,24 +267,6 @@ internal static class Program
         Check(st is not null && st.Length == 2 && st[0] == 64 && st[1] == 190,
               $"auto-stretch bounds lo=64 hi=190 (got {Fmt(st)})");
 
-        var outS = AdjustmentsProcessor.Apply(ramp, 0.5, 1.0);
-        var p = ReadRow(outS!, 0);
-        var m = ReadRow(outS!, 1);
-        var b = ReadRow(outS!, 2);
-        Check(p.g <= 1, $"stretched dark anchored at 0 ({p.g})");
-        Check(b.g >= 252, $"stretched bright near 255 ({b.g})");
-        Check(m.g is >= 120 and <= 160, $"stretched mid lifted moderately ({m.g})");
-
-        var tiny = AdjustmentsProcessor.Apply(ramp, 0.01, 1.0);
-        int t0 = Math.Abs(ReadRow(tiny!, 0).g - 64);
-        int t1 = Math.Abs(ReadRow(tiny!, 1).g - 128);
-        int t2 = Math.Abs(ReadRow(tiny!, 2).g - 191);
-        Check(t0 <= 6 && t1 <= 6 && t2 <= 6, $"tiny nudge +-1% stays subtle ({t0},{t1},{t2})");
-
-        var half = AdjustmentsProcessor.Apply(ramp, 0.25, 1.0);
-        int h0 = ReadRow(half!, 0).g;
-        Check(h0 > 0 && h0 < 64, $"stretch scales with slider (25%: 64->{h0})");
-
         var full = MakeFlat(255, 255, 255, 255, 120, 120, 120, 0, 0, 0);
         Check(AdjustmentsProcessor.ComputeAutoStretch(full) is null, "full range -> no stretch");
 
@@ -291,6 +275,13 @@ internal static class Program
 
         var wb = MakeWbSource();
         Check(AdjustmentsProcessor.ComputeAutoStretch(wb) is not null, "wb fixture triggers stretch");
+
+        var lifted = AdjustmentsProcessor.Apply(ramp, 0.5, 1.0);
+        var l0 = ReadRow(lifted!, 0);
+        var l2 = ReadRow(lifted!, 2);
+        Check(Math.Abs(l0.g - 64) <= 40, $"shadow lift raises tone, no full global stretch ({l0.g})");
+        Check(Math.Abs(l2.g - 191) <= 2, $"shadow lift leaves bright rows intact ({l2.g})");
+
         var wbOut = AdjustmentsProcessor.Apply(wb, 0.45, 1.0);
         int Spread(int row, int col)
         {
@@ -298,7 +289,7 @@ internal static class Program
             return Math.Max(Math.Abs(px.r - px.g), Math.Max(Math.Abs(px.g - px.b), Math.Abs(px.r - px.b)));
         }
         Check(Spread(0, 25) <= 1 && Spread(0, 50) <= 1 && Spread(0, 75) <= 1 && Spread(1, 50) <= 1,
-              $"neutral grays stay neutral under stretch+shadows ({Spread(0, 25)},{Spread(0, 50)},{Spread(0, 75)},{Spread(1, 50)})");
+              $"neutral grays stay neutral under shadows ({Spread(0, 25)},{Spread(0, 50)},{Spread(0, 75)},{Spread(1, 50)})");
     }
 
     private static void TestManualStretch()
@@ -326,9 +317,9 @@ internal static class Program
         Check(monotonic, "manual map monotonic");
 
         var src = MakeRampSource();
-        var plain = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false);
+        var plain = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _);
         Check(plain is not null, "apply with null manual");
-        var stretched = AdjustmentsProcessor.Apply(src, 0.0, 1.0, map, out _, autoStretch: false);
+        var stretched = AdjustmentsProcessor.Apply(src, 0.0, 1.0, map, out _);
         Check(stretched is not null, "apply with manual map");
         var r0 = ReadRow(stretched!, 0);
         var r1 = ReadRow(stretched!, 1);
@@ -350,8 +341,8 @@ internal static class Program
 
         var neutral = new ManualStretchMap();
         Check(SamePixels(
-            AdjustmentsProcessor.Apply(src, 0.0, 1.0, neutral, out _, autoStretch: false)!,
-            AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false)!),
+            AdjustmentsProcessor.Apply(src, 0.0, 1.0, neutral, out _)!,
+            AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _)!),
               "empty manual map applies as identity");
     }
 
@@ -373,9 +364,9 @@ internal static class Program
     private static void TestTriX()
     {
         var src = MakeFlat(255, 255, 255, 255, 128, 128, 128, 0, 0, 0);
-        var a1 = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.TriX, 777);
-        var a2 = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.TriX, 777);
-        var b = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.TriX, 911);
+        var a1 = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, MonoMode.TriX, 777);
+        var a2 = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, MonoMode.TriX, 777);
+        var b = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, MonoMode.TriX, 911);
         Check(a1 is not null && SamePixels(a1, a2), "trix grain deterministic (same seed)");
         Check(!SamePixels(a1, b), "trix grain differs (different seed)");
 
@@ -384,13 +375,13 @@ internal static class Program
         Check(m.dark.g <= 8 && m.dark.g >= 1, "trix black toe deep");
         Check(m.bright.g >= 250, "trix white shoulder holds");
 
-        var doc = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.Documentary, 777);
+        var doc = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, MonoMode.Documentary, 777);
         float trixMid = RowMean(a1!, 1);
         float docMid = RowMean(doc!, 1);
         Check(trixMid > docMid + 3.0f, $"trix midtone punchier (trix {trixMid:0.##} vs doc {docMid:0.##})");
 
         var ramp = MakeRampSource();
-        var rm = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0, null, out _, autoStretch: false, MonoMode.TriX, 5);
+        var rm = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0, null, out _, MonoMode.TriX, 5);
         int r0 = ReadRow(rm!, 0).g, r1 = ReadRow(rm!, 1).g, r2 = ReadRow(rm!, 2).g;
         Check(r0 < r1 && r1 < r2, "trix monotonic on ramp");
 
@@ -432,7 +423,7 @@ internal static class Program
             Check(bMean > 5 && gMean > 5 && rMean > 5 && bMean < 250, $"raw midrow channels sane ({f}) B={bMean:0.#} G={gMean:0.#} R={rMean:0.#}");
             Check(bMean != gMean || gMean != rMean, $"raw color not collapsed ({f})");
 
-            var processed = AdjustmentsProcessor.Apply(half, -10.0, 1.2, null, out _, autoStretch: false, MonoMode.None, 1);
+            var processed = AdjustmentsProcessor.Apply(half, -10.0, 1.2, null, out _, MonoMode.None, 1);
             Check(processed is not null, $"raw adjustments pipeline ({f})");
 
             Debug.Log($"RAW TEST {f}: info={info.Width}x{info.Height} full={half.PixelWidth}x{half.PixelHeight}");
@@ -500,7 +491,7 @@ internal static class Program
         Check(mean < 8.0, $"gpu vs cpu mean abs diff ({mean:0.##}, max {max})");
         Console.WriteLine($"gpu: cpu={swCpu.ElapsedMilliseconds}ms gpu={swGpu.ElapsedMilliseconds}ms meanDiff={mean:0.###} maxDiff={max}");
 
-        var gpuNoop = Adjust16.TryApplyGpu(base16, 0.0, 1.0, null, out _, autoStretch: false, extra: new PhotoAdjustments());
+        var gpuNoop = Adjust16.TryApplyGpu(base16, 0.0, 1.0, null, out _, extra: new PhotoAdjustments());
         Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obsługuje CPU)");
 
         bool prevEnabled = Adjust16.GpuEnabled;
@@ -509,6 +500,86 @@ internal static class Program
         Adjust16.GpuEnabled = prevEnabled;
         Check(disabled is null, "gpu wyłączony -> fallback CPU");
         Console.WriteLine($"gpu status: {Adjust16.GpuStatus}");
+    }
+
+    private static void TestLightroom()
+    {
+        Check(PhotoOps.HighlightMask(0.50f) == 0f, "LR: maska swiatel 0 ponizej regionu 70-90%");
+        Check(Math.Abs(PhotoOps.HighlightMask(0.95f) - 1.0f) < 1e-6, "LR: maska swiatel 1 powyzej 90%");
+        Check(PhotoOps.ShadowMask(0.10f) == 1f, "LR: maska cieni 1 w regionie 10-30%");
+        Check(PhotoOps.ShadowMask(0.60f) > 0.2f && PhotoOps.ShadowMask(0.60f) < 0.7f, "LR: maska cieni ogon siega poltonow (pomiar LR -84)");
+        Check(PhotoOps.HighlightMask(0.72f) == 0f, "LR: maska swiatel 0 ponizej 78%");
+        Check(PhotoOps.HighlightMask(0.83f) > 0f && PhotoOps.HighlightMask(0.83f) < 1f, "LR: maska swiatel miekka na krawedzi regionu");
+
+        Check(PhotoOps.HighlightCurve(0.9f, -1f) < 0.85f, "LR: swiatla -100 sciskaja (0.9 -> ~0.83)");
+        Check(PhotoOps.HighlightCurve(0.9f, 1f) > 0.9f, "LR: swiatla +100 rozjasniaja");
+        Check(PhotoOps.ShadowCurve(0.05f, 1f) > 0.08f, "LR: cienie +100 podnosza glebokie cienie");
+        Check(PhotoOps.ShadowCurve(0.05f, -1f) < 0.02f, "LR: cienie -100 przyciemniaja");
+
+        Check(Math.Abs(PhotoOps.ToneMap(0.5, 1.0, 0, 1.0, 0) - 0.5) < 1e-9, "LR: kontrast os w 0.5");
+        Check(PhotoOps.ToneMap(0.0, 1.0, 0, 1.0, 0) == 0.0 && PhotoOps.ToneMap(1.0, 1.0, 0, 1.0, 0) == 1.0,
+              "LR: kontrast nie rusza punktow czerni/bieli (Whites/Blacks wlasnie to robia)");
+        Check(PhotoOps.ToneMap(0.75, 1.0, 0, 1.0, 0) > 0.75, "LR: kontrast +100 podnosi jasne srednie tony");
+        Check(PhotoOps.ToneMap(0.75, 1.0, 0, -1.0, 0) < 0.75 && PhotoOps.ToneMap(0.75, 1.0, 0, -1.0, 0) > 0.25,
+              "LR: kontrast -100 splaszcza ale nie odwracaja");
+
+        Check(PhotoOps.ToneMap(0.9, 1.0, 0, 0, 1.0) == 1.0, "LR: biel +100 ustawia punkt bieli na klip");
+        Check(PhotoOps.ToneMap(0.9, 1.0, 0, 0, -1.0) < 0.7, "LR: biel -100 chroni swiatla");
+        Check(PhotoOps.BlacksCurve(0.05f, 1f) > 0.10f, "LR: czern +100 podnosi punkt czerni (matte, PV2012)");
+        Check(PhotoOps.BlacksCurve(0.05f, -1f) == 0f, "LR: czern -100 przycina czerń do zera");
+        Check(PhotoOps.BlacksMask(0.50f) == 0f, "LR: czern nie wpływa na poltony");
+        Check(PhotoOps.BlacksMask(0.05f) == 1f, "LR: czern pelny efekt w strefie 0-10%");
+
+        Check(Math.Abs(PhotoOps.ToneMap(1.0, 1.0, 1.0, 0, 0) - 1.0) < 1e-9, "LR: dehaze +100 zachowuje biel");
+        Check(PhotoOps.ToneMap(0.5, 1.0, 1.0, 0, 0) < 0.4, "LR: dehaze +100 usuwa zaslone z poltonow");
+        Check(PhotoOps.ToneMap(0.3, 1.0, -1.0, 0, 0) > 0.3, "LR: dehaze ujemny dodaje zaslone (PV5)");
+
+        var a = PhotoAdjustments.FromUi(0.0, 100, 0, -100, 0, 150, -100, 100, -100, -100, 0, 0);
+        Check(Math.Abs(a.Contrast - 1.0) < 1e-9 && Math.Abs(a.Saturation - 0.0) < 1e-9 &&
+              Math.Abs(a.Sharpen - 1.5) < 1e-9 && Math.Abs(a.Highlights - (-1.0)) < 1e-9 &&
+              Math.Abs(a.Whites - 1.0) < 1e-9 && Math.Abs(a.Blacks - (-1.0)) < 1e-9 &&
+              Math.Abs(a.Dehaze - (-1.0)) < 1e-9, "LR: FromUi mapuje zakresy -100..100/0..150 jak Lightroom");
+        Check(a.IsDefault == false, "LR: FromUi niedomyslne ustawienia");
+
+        var satUi = PhotoAdjustments.FromUi(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        Check(satUi.IsDefault, "LR: wszystkie suwaki na 0 => neutralne (jak domyslne LR)");
+
+        var (gR, gG, gB) = PhotoOps.TempGains(1.0);
+        Check(Math.Abs(gR - 1.25) < 1e-9 && Math.Abs(gB - 0.75) < 1e-9 && Math.Abs(gG - 1.0) < 1e-9, "LR: temp symetrycznie R/B");
+        var (cR, cG, cB) = PhotoOps.TempGains(-1.0);
+        Check(Math.Abs(cR - 0.75) < 1e-9 && Math.Abs(cB - 1.25) < 1e-9, "LR: temp ujemne symetrycznie");
+
+        var flat = MakeFlat(255, 240, 240, 240, 120, 120, 120, 10, 10, 10);
+        var lifted = ReadPixels(AdjustmentsProcessor.Apply(flat, 1.0, 1.0)!);
+        var baseP = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0)!);
+        Check(lifted.dark.g - baseP.dark.g >= 6, $"LR: cienie +100 podnosza najciemniejszy obszar ({baseP.dark.g} -> {lifted.dark.g})");
+        Check(lifted.mid.g - baseP.mid.g > 8 && lifted.mid.g - baseP.mid.g < 80, $"LR: cienie +100 podnosza poltony (mocniej niz gamma) ({baseP.mid.g} -> {lifted.mid.g})");
+        Check(lifted.bright.g == baseP.bright.g, "LR: cienie +100 nie ruszaja swiatel");
+
+        var matte = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
+            extra: new PhotoAdjustments { Blacks = 100.0 })!);
+        Check(matte.dark.g - baseP.dark.g >= 15, $"LR: czern +100 podnosi czerń/matte ({baseP.dark.g} -> {matte.dark.g})");
+        Check(matte.mid.g - baseP.mid.g > 8, $"LR: czern +100 to lift calego zakresu, podnosi poltony ({baseP.mid.g} -> {matte.mid.g})");
+        Check(Math.Abs(matte.bright.g - baseP.bright.g) < 5, $"LR: czern +100 ledwo rusza swiatla ({baseP.bright.g} -> {matte.bright.g})");
+
+        var crushed = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
+            extra: new PhotoAdjustments { Blacks = -100.0 })!);
+        Check(crushed.dark.g < baseP.dark.g - 3, $"LR: czern -100 przycina czerń ({baseP.dark.g} -> {crushed.dark.g})");
+        Check(crushed.mid.g == baseP.mid.g, "LR: czern -100 oszczedza poltony");
+
+        var hazeAdd = AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
+            extra: new PhotoAdjustments { Dehaze = -1.0 });
+        Check(LumMean(hazeAdd!) > LumMean(AdjustmentsProcessor.Apply(flat, 0.0, 1.0)!),
+              "LR: dehaze -100 dodaje mgulke zaslone");
+
+        var hlRec = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
+            extra: new PhotoAdjustments { Highlights = -1.0 })!);
+        Check(Math.Abs(hlRec.mid.g - baseP.mid.g) <= 2, "LR: swiatla -100 oszczedzaja poltony");
+        Check(hlRec.bright.g < baseP.bright.g - 5, $"LR: swiatla -100 odzyskaja swiatla ({baseP.bright.g} -> {hlRec.bright.g})");
+        var hlBoost = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
+            extra: new PhotoAdjustments { Highlights = 1.0 })!);
+        Check(hlBoost.bright.g > baseP.bright.g + 2, $"LR: swiatla +100 rozjasniaja swiatla ({baseP.bright.g} -> {hlBoost.bright.g})");
+        Check(hlBoost.mid.g == baseP.mid.g, "LR: swiatla +100 oszczedzaja poltony");
     }
 
     private static void TestSliders()
@@ -611,7 +682,7 @@ internal static class Program
         }
         Check(seen.Count >= 1000, $"raw16 real precision above 8-bit (distinct G values: {seen.Count})");
 
-        var correctedNeutral = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false);
+        var correctedNeutral = Adjust16.Apply(b16half, 0.0, 1.0, null, out _);
         bool neutralKept = true;
         for (int k = 0; k < 1024; k++)
         {
@@ -623,14 +694,14 @@ internal static class Program
         double meanG = 0;
         for (int i = 0; i < b16half.G.Length; i += 997) meanG += b16half.G[i];
         meanG /= (b16half.G.Length / 997 + 1);
-        var exposed = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false,
+        var exposed = Adjust16.Apply(b16half, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Exposure = 0.5 });
         double meanG2 = 0;
         for (int i = 0; i < exposed.G.Length; i += 997) meanG2 += exposed.G[i];
         meanG2 /= (exposed.G.Length / 997 + 1);
         Check(meanG2 > meanG + 2000, $"raw16 exposure brightens 16-bit ({meanG:0.#} -> {meanG2:0.#})");
 
-        var mono = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary);
+        var mono = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, mono: MonoMode.Documentary);
         bool monoEqual = true;
         for (int k = 0; k < 1024; k++)
         {
@@ -639,9 +710,9 @@ internal static class Program
         }
         Check(monoEqual, "raw16 mono sets R=G=B");
 
-        var grainA = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.TriX, grainSeed: 777);
-        var grainB = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.TriX, grainSeed: 777);
-        var grainC = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.TriX, grainSeed: 911);
+        var grainA = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, mono: MonoMode.TriX, grainSeed: 777);
+        var grainB = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, mono: MonoMode.TriX, grainSeed: 777);
+        var grainC = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, mono: MonoMode.TriX, grainSeed: 911);
         bool seedStable = true;
         bool seedVaries = false;
         for (int k = 0; k < 4096; k++)
@@ -653,10 +724,16 @@ internal static class Program
         Check(seedStable, "raw16 grain deterministic per seed");
         Check(seedVaries, "raw16 grain varies across seeds");
 
-        var lifted = Adjust16.Apply(b16half, 0.5, 1.0, null, out _, autoStretch: true);
-        float before = PlaneMean(b16half.G);
-        float after = PlaneMean(lifted.G);
-        Check(Math.Abs(after - before) > 100, $"raw16 shadow lift + autostretch affects image ({before:0.#} -> {after:0.#})");
+        var dark16 = new Raw16Image(64, 48);
+        for (int i = 0; i < dark16.G.Length; i++)
+        {
+            dark16.R[i] = dark16.G[i] = dark16.B[i] = 8192;
+        }
+        var liftedDark = Adjust16.Apply(dark16, 0.5, 1.0, null, out _);
+        float before = PlaneMean(dark16.G);
+        float after = PlaneMean(liftedDark.G);
+        Check(after - before > 1000, $"raw16 shadow lift affects dark pixels ({before:0.#} -> {after:0.#})");
+        Check(after - before < 20000, $"raw16 shadow lift stays region-bounded, no global stretch ({before:0.#} -> {after:0.#})");
 
         var b16full = RawDecoder.Decode16(src, halfSize: false);
         Check(b16full.W == b16half.W * 2 && b16full.H == b16half.H * 2, $"raw16 full res decode ({b16full.W}x{b16full.H} vs half {b16half.W}x{b16half.H})");
@@ -731,15 +808,15 @@ internal static class Program
     {
         var src = MakeFlat(255, 255, 255, 255, 128, 128, 128, 0, 0, 0);
 
-        var neutral = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, extra: new PhotoAdjustments());
+        var neutral = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, extra: new PhotoAdjustments());
         Check(neutral is not null, "photo extras neutral apply");
 
-        var exposed = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+        var exposed = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Exposure = 2.0 });
         Check(exposed is not null && LumMean(exposed) > LumMean(src) + 40,
               $"exposure brightens ({LumMean(src):0.#} -> {LumMean(exposed ?? src):0.#})");
 
-        var desat = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+        var desat = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Saturation = 0.0 });
         var d = desat;
         if (d is not null)
@@ -748,34 +825,34 @@ internal static class Program
             Check(px.dark.r == px.dark.g && px.dark.g == px.dark.b, "saturation 0 grays out");
         }
 
-        var contrasted = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+        var contrasted = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Contrast = 1.0 });
         Check(contrasted is not null, "contrast +100 applies");
         var tempSrc = MakeFlat(255, 255, 255, 255, 128, 128, 128, 60, 60, 60);
-        var cooled = AdjustmentsProcessor.Apply(tempSrc, 0.0, 1.0, null, out _, autoStretch: false,
+        var cooled = AdjustmentsProcessor.Apply(tempSrc, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Temperature = -1.0 });
         var cool = ReadPixels(cooled!);
         Check(cool.dark.b > cool.dark.r, $"cool temp raises blue over red (B={cool.dark.b} R={cool.dark.r})");
 
-        var warmed = AdjustmentsProcessor.Apply(tempSrc, 0.0, 1.0, null, out _, autoStretch: false,
+        var warmed = AdjustmentsProcessor.Apply(tempSrc, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Temperature = 1.0 });
         var warm = ReadPixels(warmed!);
         Check(warm.dark.r > warm.dark.b, $"warm temp raises red over blue (R={warm.dark.r} B={warm.dark.b})");
 
-        var dehazed = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+        var dehazed = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Dehaze = 1.0 });
         Check(dehazed is not null && LumMean(dehazed) < LumMean(src), "dehaze darkens flat");
 
         var noisy = MakeNoisySource(160, 120, seed: 7);
-        var denoised = AdjustmentsProcessor.Apply(noisy, 0.0, 1.0, null, out _, autoStretch: false,
+        var denoised = AdjustmentsProcessor.Apply(noisy, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Denoise = 1.0 });
         Check(denoised is not null && StddevRegion(denoised!, 40, 30, 60, 40) < StddevRegion(noisy, 40, 30, 60, 40),
               $"denoise lowers local stddev ({StddevRegion(noisy, 40, 30, 60, 40):0.##} -> {StddevRegion(denoised ?? noisy, 40, 30, 60, 40):0.##})");
 
         var blocky = MakeBlocksSource(200, 140);
-        var crisp = AdjustmentsProcessor.Apply(blocky, 0.0, 1.0, null, out _, autoStretch: false,
+        var crisp = AdjustmentsProcessor.Apply(blocky, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Clarity = 1.0 });
-        var soft = AdjustmentsProcessor.Apply(blocky, 0.0, 1.0, null, out _, autoStretch: false,
+        var soft = AdjustmentsProcessor.Apply(blocky, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Clarity = -1.0 });
         float baseStd = StddevRegion(blocky, 20, 20, 160, 100);
         float crispStd = StddevRegion(crisp!, 20, 20, 160, 100);
@@ -783,7 +860,7 @@ internal static class Program
         Check(Math.Abs(crispStd - baseStd) > 1 || Math.Abs(softStd - baseStd) > 1,
               $"clarity changes local contrast (base={baseStd:0.##} crisp={crispStd:0.##} soft={softStd:0.##})");
 
-        var combo = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false,
+        var combo = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Exposure = 0.5, Contrast = 0.3, Temperature = 0.2, Saturation = 1.2, Clarity = 0.2, Dehaze = 0.3, Denoise = 0.4 });
         Check(combo is not null, "photo extras combined apply");
 
@@ -811,8 +888,10 @@ internal static class Program
                 Exposure = 0.75,
                 Contrast = -30,
                 Temperature = 40,
-                Saturation = 85,
+                Saturation = -15,
                 Highlights = -25,
+                Whites = 20,
+                Blacks = -10,
                 Clarity = 41,
                 Sharpen = 30,
                 Dehaze = 12,
@@ -823,10 +902,11 @@ internal static class Program
             Check(File.Exists(side), "eye sidecar created");
             Check(Path.GetFileName(side) == "sidecar_source.eye", "eye sidecar name next to source");
 
-            bool ok = EyeFile.TryLoad(img, out var st2) && st2.Version == 1 &&
+            bool ok = EyeFile.TryLoad(img, out var st2) && st2.Version == 2 &&
                       st2.ShadowLift == 25 && st2.Gamma == 1.4 && st2.Mono == 2 &&
                       st2.Exposure == 0.75 && st2.Contrast == -30 && st2.Temperature == 40 &&
-                      st2.Saturation == 85 && st2.Highlights == -25 && st2.Clarity == 41 &&
+                      st2.Saturation == -15 && st2.Highlights == -25 && st2.Whites == 20 && st2.Blacks == -10 &&
+                      st2.Clarity == 41 &&
                       st2.Sharpen == 30 && st2.Dehaze == 12 && st2.Denoise == 18 && st2.ColorNoise == 24 &&
                       st2.Stretch is { Length: 2 } &&
                       Math.Abs(st2.Stretch[0][0] - 0.25) < 1e-9 && Math.Abs(st2.Stretch[0][1] - 0.45) < 1e-9 &&
@@ -873,7 +953,7 @@ internal static class Program
     private static void TestPhotoExtras2()
     {
         var split = MakeHighlightSource();
-        var rec = AdjustmentsProcessor.Apply(split, 0.0, 1.0, null, out _, autoStretch: false,
+        var rec = AdjustmentsProcessor.Apply(split, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Highlights = -0.8 });
         float brightBefore = LumMeanRegion(split, 0, 0, 90, 100);
         float brightAfter = LumMeanRegion(rec!, 0, 0, 90, 100);
@@ -883,14 +963,14 @@ internal static class Program
         Check(Math.Abs(darkAfter - darkBefore) < 2, $"highlights spares dark region ({darkBefore:0.#} -> {darkAfter:0.#})");
 
         var blocks = MakeBlocksSource(200, 140);
-        var sharp = AdjustmentsProcessor.Apply(blocks, 0.0, 1.0, null, out _, autoStretch: false,
+        var sharp = AdjustmentsProcessor.Apply(blocks, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Sharpen = 1.0 });
         float baseStd = StddevRegion(blocks, 80, 20, 40, 100);
         float sharpStd = StddevRegion(sharp!, 80, 20, 40, 100);
         Check(sharpStd > baseStd, $"sharpen increases edge stddev ({baseStd:0.##} -> {sharpStd:0.##})");
 
         var chroma = MakeChromaNoiseSource(160, 120, seed: 11);
-        var cnr = AdjustmentsProcessor.Apply(chroma, 0.0, 1.0, null, out _, autoStretch: false,
+        var cnr = AdjustmentsProcessor.Apply(chroma, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { ColorNoise = 1.0 });
         Check(cnr is not null && ChromaStddev(cnr!) < ChromaStddev(chroma),
               $"chroma NR reduces color noise ({ChromaStddev(chroma):0.###} -> {ChromaStddev(cnr ?? chroma):0.###})");
@@ -1048,13 +1128,13 @@ internal static class Program
     private static void TestMono()
     {
         var src = MakeFlat(255, 255, 255, 255, 128, 128, 128, 0, 0, 0);
-        var mono = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary);
+        var mono = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, mono: MonoMode.Documentary);
         Check(mono is not null, "mono apply");
         var m = ReadPixels(mono!);
         Check(m.bright.b == m.bright.g && m.bright.g == m.bright.r && m.dark.b == m.dark.g && m.dark.g == m.dark.r,
               "mono collapses channels");
 
-        var color = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.None);
+        var color = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, mono: MonoMode.None);
         var c = ReadPixels(color!);
         Check(c.bright.b == 255, "no-mono keeps color");
 
@@ -1064,14 +1144,14 @@ internal static class Program
 
         var warm = MakeFlat(255, 240, 60, 10, 240, 60, 10, 240, 60, 10);
         var cool = MakeFlat(255, 10, 60, 240, 10, 60, 240, 10, 60, 240);
-        var mw = ReadPixels(AdjustmentsProcessor.Apply(warm, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary)!);
-        var mc = ReadPixels(AdjustmentsProcessor.Apply(cool, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary)!);
+        var mw = ReadPixels(AdjustmentsProcessor.Apply(warm, 0.0, 1.0, null, out _, mono: MonoMode.Documentary)!);
+        var mc = ReadPixels(AdjustmentsProcessor.Apply(cool, 0.0, 1.0, null, out _, mono: MonoMode.Documentary)!);
         Check(mw.bright.g - mc.bright.g > 40, $"red-light documentary tone (warm {mw.bright.g} vs cool {mc.bright.g})");
 
         bool monoIn = false, monoOut = false;
         var ramp = MakeRampSource();
-        var rm = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary);
-        var rc = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.None);
+        var rm = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0, null, out _, mono: MonoMode.Documentary);
+        var rc = AdjustmentsProcessor.Apply(ramp, 0.0, 1.0, null, out _, mono: MonoMode.None);
         int a0 = ReadRow(rm!, 0).g, a1 = ReadRow(rm!, 1).g, a2 = ReadRow(rm!, 2).g;
         int b0 = ReadRow(rc!, 0).g, b1 = ReadRow(rc!, 1).g, b2 = ReadRow(rc!, 2).g;
         monoIn = a0 < a1 && a1 < a2;
@@ -1293,7 +1373,7 @@ internal static class Program
         var raw = RawDecoder.Decode16(path, false);
         double ev = RawDecoder.GetBaseEv(path);
         var render = LinearRender.ApplyGain(raw, ev + extraEv, 0.0);
-        var adjusted = Adjust16.Apply(render, 0.0, 1.0, null, out _, autoStretch: false);
+        var adjusted = Adjust16.Apply(render, 0.0, 1.0, null, out _);
         var disp = adjusted.ToDisplay(dither: false);
         var enc = new JpegBitmapEncoder { QualityLevel = 90 };
         enc.Frames.Add(BitmapFrame.Create(disp));

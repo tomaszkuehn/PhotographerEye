@@ -8,13 +8,6 @@ namespace ImgViewer.Imaging;
 
 public static partial class Adjust16
 {
-    private static readonly ConditionalWeakTable<Raw16Image, StretchEntry16> StretchCache = new();
-
-    private sealed class StretchEntry16
-    {
-        public ushort[]? Value;
-    }
-
     private static readonly float[] MonoDocX = { 0.00f, 0.05f, 0.15f, 0.30f, 0.50f, 0.70f, 0.85f, 0.95f, 1.00f };
     private static readonly float[] MonoDocY = { 0.013f, 0.045f, 0.105f, 0.275f, 0.520f, 0.765f, 0.905f, 0.978f, 1.000f };
     private static readonly float[] MonoTriXx = { 0.00f, 0.03f, 0.12f, 0.30f, 0.50f, 0.70f, 0.85f, 0.94f, 1.00f };
@@ -22,15 +15,13 @@ public static partial class Adjust16
 
     private static readonly int Parts = Math.Max(1, Environment.ProcessorCount);
 
-    private static readonly Lazy<float[]> SrgbLinF16Lut = new(BuildSrgbLinF16);
-    private static readonly Lazy<ushort[]> LinSrgbU16Lut = new(BuildLinSrgbU16);
     private static readonly Lazy<ushort[]> MonoDocLut = new(() => BuildMonoLut(MonoDocX, MonoDocY));
     private static readonly Lazy<ushort[]> MonoTriXLut = new(() => BuildMonoLut(MonoTriXx, MonoTriXy));
 
-    private static readonly ConcurrentDictionary<(long, long, long), ushort[]> ChannelLutCache = new();
+    private static readonly ConcurrentDictionary<(long, long, long, long), ushort[]> ChannelLutCache = new();
     private static readonly ConcurrentDictionary<long, ushort[]> GammaLutCache = new();
 
-    public static Raw16Image Apply(Raw16Image source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, bool autoStretch = true, MonoMode mono = MonoMode.None, int grainSeed = 0, PhotoAdjustments? extra = null, CancellationToken ct = default)
+    public static Raw16Image Apply(Raw16Image source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, MonoMode mono = MonoMode.None, int grainSeed = 0, PhotoAdjustments? extra = null, CancellationToken ct = default)
     {
         int w = source.W;
         int h = source.H;
@@ -49,7 +40,8 @@ public static partial class Adjust16
             if (extra.Denoise > 0.0005) ApplyDenoise16(img, w, h, extra.Denoise, opts);
             if (extra.ColorNoise > 0.0005) ApplyChromaDenoise16(img, w, h, extra.ColorNoise, opts);
             ApplyColorPoints16(img, extra, opts);
-            if (Math.Abs(extra.Highlights) > 0.0005) ApplyHighlights16(img, w, h, extra.Highlights, opts);
+            if (Math.Abs(extra.Blacks) > 0.0005) ApplyBlacks16(img, extra.Blacks, opts);
+            if (Math.Abs(extra.Highlights) > 0.0005) ApplyRegionCurve16(img, extra.Highlights, highlight: true, opts);
             if (Math.Abs(extra.Clarity) > 0.0005) ApplyClarity16(img, w, h, extra.Clarity, opts);
             if (extra.Sharpen > 0.0005) ApplySharpen16(img, w, h, extra.Sharpen, opts);
         }
@@ -57,14 +49,7 @@ public static partial class Adjust16
         bool shadow = Math.Abs(shadowLift) > 0.0001;
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
 
-        ushort[]? stretch = shadow ? GetStretch(source, autoStretch) : null;
-        if (stretch is not null)
-        {
-            float k = (float)Math.Min(1.0, Math.Abs(shadowLift) / 0.5);
-            ApplyStretch(img, stretch, k, opts);
-        }
-
-        if (shadow) ApplyShadow16(img, shadowLift, opts);
+        if (shadow) ApplyRegionCurve16(img, shadowLift, highlight: false, opts);
         if (hasGamma) ApplyGamma16(img, gamma, opts);
         if (manual is not null && manual.HasEffect) ApplyManual16(img, manual, opts);
         switch (mono)
@@ -163,107 +148,6 @@ public static partial class Adjust16
 
     private static int Clamp16(int v) => v < 0 ? 0 : v > 65535 ? 65535 : v;
 
-    private static ushort[]? ComputeStretch16(Raw16Image img)
-    {
-        int n = img.R.Length;
-        int parts = Math.Min(Parts, Math.Max(1, n));
-        var hists = new int[parts][];
-        int chunk = (n + parts - 1) / parts;
-        var pr = img.R;
-        var pg = img.G;
-        var pb = img.B;
-        Parallel.For(0, parts, p =>
-        {
-            int s = p * chunk;
-            int e = Math.Min(n, s + chunk);
-            var hl = new int[65536];
-            for (int i = s; i < e; i++)
-            {
-                int li = (int)(0.2126f * pr[i] + 0.7152f * pg[i] + 0.0722f * pb[i] + 0.5f);
-                hl[Clamp16(li)]++;
-            }
-            hists[p] = hl;
-        });
-
-        var hist = hists[0];
-        for (int p = 1; p < parts; p++)
-        {
-            var hp = hists[p];
-            if (hp is null) continue;
-            for (int v = 0; v < 65536; v++) hist[v] += hp[v];
-        }
-
-        long loT = (long)(n * 0.005);
-        if (loT < 1) loT = 1;
-        long hiT = n - loT;
-
-        long cum = 0;
-        int loV = 0;
-        for (int v = 0; v < 65536; v++)
-        {
-            cum += hist[v];
-            if (cum >= loT)
-            {
-                loV = v;
-                break;
-            }
-        }
-        cum = 0;
-        int hiV = 65535;
-        for (int v = 0; v < 65536; v++)
-        {
-            cum += hist[v];
-            if (cum > hiT)
-            {
-                hiV = v - 1;
-                break;
-            }
-        }
-
-        if (!(hiV > loV && hiV - loV >= 16 * 257 && (loV > 0 || 65535.0f / (hiV - loV) > 1.01f)))
-            return null;
-        return new ushort[] { (ushort)loV, (ushort)hiV };
-    }
-
-    private static ushort[]? GetStretch(Raw16Image source, bool autoStretch)
-    {
-        if (!autoStretch) return null;
-        var entry = StretchCache.GetOrCreateValue(source);
-        var stretch = entry.Value;
-        if (stretch is null)
-        {
-            stretch = ComputeStretch16(source);
-            entry.Value = stretch;
-        }
-        return stretch;
-    }
-
-    private static ushort[] BuildStretchLut(ushort[] st, float k)
-    {
-        float lo = st[0];
-        float scale = 65535.0f / Math.Max(1, st[1] - st[0]);
-        float ik = 1.0f - k;
-        var lut = new ushort[65536];
-        for (int i = 0; i < 65536; i++)
-        {
-            float x = i;
-            float s = (x - lo) * scale;
-            if (s < 0.0f) s = 0.0f;
-            else if (s > 65535.0f) s = 65535.0f;
-            int o = (int)(x * ik + s * k + 0.5f);
-            lut[i] = (ushort)(o < 0 ? 0 : o > 65535 ? 65535 : o);
-        }
-        return lut;
-    }
-
-    private static void ApplyStretch(Raw16Image img, ushort[] st, float k, ParallelOptions opts)
-    {
-        var lut = BuildStretchLut(st, k);
-        ApplyChannelLut16(img.R, lut, opts);
-        ApplyChannelLut16(img.G, lut, opts);
-        ApplyChannelLut16(img.B, lut, opts);
-    }
-
     private static void ApplyChannelLut16(ushort[] plane, ushort[] lut, ParallelOptions opts)
     {
         ForRange(plane.Length, opts, (s, e) =>
@@ -274,47 +158,12 @@ public static partial class Adjust16
         });
     }
 
-    private static float[] BuildSrgbLinF16()
+    private static void ApplyRegionCurve16(Raw16Image img, double strength, bool highlight, ParallelOptions opts)
     {
-        var lut = new float[65536];
-        for (int i = 0; i < 65536; i++)
-        {
-            double c = i / 65535.0;
-            lut[i] = (float)(c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4));
-        }
-        return lut;
-    }
+        double v = Math.Clamp(strength, -1.0, 1.0);
+        if (Math.Abs(v) <= 0.0005) return;
 
-    private static ushort[] BuildLinSrgbU16()
-    {
-        var lut = new ushort[65536];
-        for (int i = 0; i < 65536; i++)
-        {
-            double c = i / 65535.0;
-            double s = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.Pow(c, 1.0 / 2.4) - 0.055;
-            lut[i] = (ushort)Math.Clamp(Math.Round(s * 65535.0), 0, 65535);
-        }
-        return lut;
-    }
-
-    private static int LiftIndex(float lin)
-    {
-        int i = (int)(lin * 1023.0f + 0.5f);
-        return i < 0 ? 0 : (i > 1023 ? 1023 : i);
-    }
-
-    private static void ApplyShadow16(Raw16Image img, double strength, ParallelOptions opts)
-    {
-        var lift = BuildLift(strength);
-
-        const float threshold = 0.25f;
-        const float softness = 0.15f;
-        float lower = threshold - softness;
-        float upper = threshold + softness;
-        float denom = upper - lower;
-
-        var srgbLin = SrgbLinF16Lut.Value;
-        var linSrgb = LinSrgbU16Lut.Value;
+        var curve = PhotoOps.BuildRegionCurve(v, highlight);
 
         var pr = img.R;
         var pg = img.G;
@@ -323,21 +172,45 @@ public static partial class Adjust16
         {
             for (int i = s; i < e; i++)
             {
-                float lr = srgbLin[pr[i]];
-                float lg = srgbLin[pg[i]];
-                float lb = srgbLin[pb[i]];
-
-                float lum = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
-                float ramp = (upper - lum) / denom;
-                if (ramp < 0.0f) ramp = 0.0f;
-                else if (ramp > 1.0f) ramp = 1.0f;
-                float mask = ramp * ramp;
+                float lr = pr[i];
+                float lg = pg[i];
+                float lb = pb[i];
+                float lum = (0.2126f * lr + 0.7152f * lg + 0.0722f * lb) / 65535.0f;
+                float mask = highlight ? PhotoOps.HighlightMask(lum) : PhotoOps.ShadowMask(lum);
                 if (mask <= 0.0f) continue;
-
                 float inv = 1.0f - mask;
-                pr[i] = linSrgb[Clamp16((int)((lr * inv + lift[LiftIndex(lr)] * mask) * 65535.0f + 0.5f))];
-                pg[i] = linSrgb[Clamp16((int)((lg * inv + lift[LiftIndex(lg)] * mask) * 65535.0f + 0.5f))];
-                pb[i] = linSrgb[Clamp16((int)((lb * inv + lift[LiftIndex(lb)] * mask) * 65535.0f + 0.5f))];
+                pr[i] = ClampU(lr * inv + curve[Clamp16((int)lr)] * mask * 65535.0f);
+                pg[i] = ClampU(lg * inv + curve[Clamp16((int)lg)] * mask * 65535.0f);
+                pb[i] = ClampU(lb * inv + curve[Clamp16((int)lb)] * mask * 65535.0f);
+            }
+        });
+    }
+
+    private static void ApplyBlacks16(Raw16Image img, double blacks, ParallelOptions opts)
+    {
+        double v = Math.Clamp(blacks, -1.0, 1.0);
+        if (Math.Abs(v) <= 0.0005) return;
+
+        var curve = PhotoOps.BuildBlacksCurve(v);
+
+        var pr = img.R;
+        var pg = img.G;
+        var pb = img.B;
+        bool lift = v > 0.0;
+        ForRange(pr.Length, opts, (s, e) =>
+        {
+            for (int i = s; i < e; i++)
+            {
+                float lr = pr[i];
+                float lg = pg[i];
+                float lb = pb[i];
+                float lum = (0.2126f * lr + 0.7152f * lg + 0.0722f * lb) / 65535.0f;
+                float mask = lift ? 1f : PhotoOps.BlacksMask(lum);
+                if (mask <= 0.0f) continue;
+                float inv = 1.0f - mask;
+                pr[i] = ClampU(lr * inv + curve[Clamp16((int)lr)] * mask * 65535.0f);
+                pg[i] = ClampU(lg * inv + curve[Clamp16((int)lg)] * mask * 65535.0f);
+                pb[i] = ClampU(lb * inv + curve[Clamp16((int)lb)] * mask * 65535.0f);
             }
         });
     }
@@ -371,30 +244,6 @@ public static partial class Adjust16
             lut[i] = (ushort)Math.Clamp(Math.Round(v * 65535.0), 0, 65535);
         }
         return lut;
-    }
-
-    private static float[] BuildLift(double value)
-    {
-        float exp = 1.0f + (float)(2.0 * Math.Abs(value));
-        var lift = new float[1024];
-        lift[0] = 0.0f;
-        if (value >= 0)
-        {
-            for (int i = 1; i < 1024; i++)
-            {
-                float x = i / 1023.0f;
-                lift[i] = 1.0f - MathF.Pow(1.0f - x, exp);
-            }
-        }
-        else
-        {
-            for (int i = 1; i < 1024; i++)
-            {
-                float x = i / 1023.0f;
-                lift[i] = MathF.Pow(x, exp);
-            }
-        }
-        return lift;
     }
 
     private static void ApplyManual16(Raw16Image img, ManualStretchMap manual, ParallelOptions opts)
@@ -607,65 +456,35 @@ public static partial class Adjust16
 
     private static void BuildChannelLuts16(PhotoAdjustments a, out ushort[] lutR, out ushort[] lutG, out ushort[] lutB)
     {
-        double gainR = 1.0 + 0.30 * a.Temperature;
-        double gainB = 1.0 - 0.30 * a.Temperature;
-        double gainG = 1.0;
-        if (a.Temperature < 0)
-        {
-            double k = -a.Temperature;
-            gainR = 1.0 - 0.10 * k;
-            gainB = 1.0 + 0.30 * k;
-            gainG = 1.0 + 0.02 * k;
-        }
+        var (gR, gG, gB) = PhotoOps.TempGains(a.Temperature);
         double evGain = Math.Pow(2.0, a.Exposure);
-        double hazeA = 0.10 * Math.Clamp(a.Dehaze, 0.0, 1.0);
-
-        lutR = GetChannelLut(gainR * evGain, hazeA, a.Contrast);
-        lutG = GetChannelLut(gainG * evGain, hazeA, a.Contrast);
-        lutB = GetChannelLut(gainB * evGain, hazeA, a.Contrast);
+        lutR = GetChannelLut(gR * evGain, a.Dehaze, a.Contrast, a.Whites);
+        lutG = GetChannelLut(gG * evGain, a.Dehaze, a.Contrast, a.Whites);
+        lutB = GetChannelLut(gB * evGain, a.Dehaze, a.Contrast, a.Whites);
     }
 
-    private static ushort[] GetChannelLut(double gain, double hazeA, double contrast)
+    private static ushort[] GetChannelLut(double gain, double dehaze, double contrast, double whites)
     {
         var key = (
             (long)Math.Round(gain * 1000000.0),
-            (long)Math.Round(hazeA * 1000000.0),
-            (long)Math.Round(contrast * 1000000.0));
-        return ChannelLutCache.GetOrAdd(key, _ => BuildChannelLut16(gain, hazeA, contrast));
+            (long)Math.Round(dehaze * 1000000.0),
+            (long)Math.Round(contrast * 1000000.0),
+            (long)Math.Round(whites * 1000000.0));
+        return ChannelLutCache.GetOrAdd(key, _ => BuildChannelLut16(gain, dehaze, contrast, whites));
     }
 
-    private static ushort[] BuildChannelLut16(double gain, double hazeA, double contrast)
+    private static ushort[] BuildChannelLut16(double gain, double dehaze, double contrast, double whites)
     {
         var lut = new ushort[65536];
-        bool posC = contrast > 0.0001;
-        bool negC = contrast < -0.0001;
-        double k = 1.0 + Math.Max(contrast, 0.0) * 7.0;
-        double kNorm = Math.Tanh(0.5 * k);
-        double flatten = 1.0 + Math.Min(contrast, 0.0) * 0.55;
-
         for (int i = 0; i < 65536; i++)
-        {
-            double v = i / 65535.0 * gain;
-            if (hazeA > 0.0) v = (v - hazeA) / (1.0 - hazeA);
-            if (posC)
-            {
-                v = 0.5 + 0.5 * (Math.Tanh((v - 0.5) * k) / kNorm);
-            }
-            else if (negC)
-            {
-                v = 0.5 + (v - 0.5) * flatten;
-            }
-            lut[i] = (ushort)Math.Clamp(Math.Round(v * 65535.0), 0, 65535);
-        }
+            lut[i] = (ushort)Math.Clamp(Math.Round(PhotoOps.ToneMap(i / 65535.0, gain, dehaze, contrast, whites) * 65535.0), 0, 65535);
         return lut;
     }
 
     private static void ApplyColorPoints16(Raw16Image img, PhotoAdjustments a, ParallelOptions opts)
     {
         BuildChannelLuts16(a, out ushort[] lutR, out ushort[] lutG, out ushort[] lutB);
-
-        float dehazeBoost = (float)(Math.Clamp(a.Dehaze, 0.0, 1.0) * 0.30);
-        float sat = (float)Math.Clamp(a.Saturation * (1.0 + dehazeBoost), 0.0, 3.0);
+        float sat = PhotoOps.SatFactor(a);
 
         var pr = img.R;
         var pg = img.G;
@@ -691,51 +510,9 @@ public static partial class Adjust16
         });
     }
 
-    private static void ApplyHighlights16(Raw16Image img, int w, int h, double highlights, ParallelOptions opts)
-    {
-        double v = Math.Clamp(highlights, -1.0, 1.0);
-        if (Math.Abs(v) <= 0.0005) return;
-
-        const float threshold = 0.72f;
-        const float softness = 0.16f;
-        float lower = threshold - softness;
-        float upper = threshold + softness;
-        float denom = upper - lower;
-
-        var srgbLin = SrgbLinF16Lut.Value;
-        var linSrgb = LinSrgbU16Lut.Value;
-
-        var lift = BuildLift(v);
-
-        var pr = img.R;
-        var pg = img.G;
-        var pb = img.B;
-        ForRange(pr.Length, opts, (s, e) =>
-        {
-            for (int i = s; i < e; i++)
-            {
-                float lr = srgbLin[pr[i]];
-                float lg = srgbLin[pg[i]];
-                float lb = srgbLin[pb[i]];
-
-                float lum = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
-                float ramp = (lum - lower) / denom;
-                if (ramp < 0.0f) ramp = 0.0f;
-                else if (ramp > 1.0f) ramp = 1.0f;
-                float mask = ramp * ramp;
-                if (mask <= 0.0f) continue;
-
-                float inv = 1.0f - mask;
-                pr[i] = linSrgb[Clamp16((int)((lr * inv + lift[LiftIndex(lr)] * mask) * 65535.0f + 0.5f))];
-                pg[i] = linSrgb[Clamp16((int)((lg * inv + lift[LiftIndex(lg)] * mask) * 65535.0f + 0.5f))];
-                pb[i] = linSrgb[Clamp16((int)((lb * inv + lift[LiftIndex(lb)] * mask) * 65535.0f + 0.5f))];
-            }
-        });
-    }
-
     private static void ApplySharpen16(Raw16Image img, int w, int h, double sharpen, ParallelOptions opts)
     {
-        double amt = Math.Clamp(sharpen, 0.0, 1.0);
+        double amt = Math.Clamp(sharpen, 0.0, 1.5);
         if (amt <= 0.0005) return;
         int r = Math.Clamp((int)Math.Round(Math.Min(w, h) * 0.0005), 1, 3);
 
@@ -766,7 +543,7 @@ public static partial class Adjust16
     {
         double amt = Math.Clamp(clarity, -1.0, 1.0);
         if (Math.Abs(amt) <= 0.0005) return;
-        int r = Math.Clamp((int)Math.Round(Math.Min(w, h) * 0.006), 2, 40);
+        int r = (int)PhotoOps.ClarityRadius(w, h);
 
         var pr = img.R;
         var pg = img.G;
@@ -778,12 +555,14 @@ public static partial class Adjust16
         BoxBlurFloatPass(lum, low, w, h, r, vertical: false, opts);
         BoxBlurFloatPass(low, low2, w, h, r, vertical: true, opts);
 
-        float a = (float)amt;
+        float a = (float)(1.5 * amt);
         ForRange(pr.Length, opts, (s, e) =>
         {
             for (int i = s; i < e; i++)
             {
-                float delta = (lum[i] - low2[i]) * a;
+                float v = lum[i] / 65535.0f;
+                float mid = 1.0f - (2.0f * v - 1.0f) * (2.0f * v - 1.0f);
+                float delta = (lum[i] - low2[i]) * a * (0.25f + 0.75f * mid);
                 pr[i] = ClampU(pr[i] + delta);
                 pg[i] = ClampU(pg[i] + delta);
                 pb[i] = ClampU(pb[i] + delta);

@@ -107,7 +107,7 @@ public static class RawDecoder
         int w = img.Width;
         int h = img.Height;
         var raw16 = Raw16Image.FromInterleaved(img.AsSpan<ushort>().ToArray(), w, h);
-        double ev = LinearRender.ComputeBaseEv(raw16);
+        double ev = 0.0;
         var normalized = LinearRender.ApplyGain(raw16, ev, 0.0);
         var display = normalized.ToDisplay(dither: true);
         Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp hl=2 baseEv={ev:0.00}");

@@ -196,17 +196,12 @@ public sealed class HistogramOverlay : FrameworkElement
 
         if (_lum is null || _r is null || _g is null || _b is null) return;
 
-        int max = 1;
-        foreach (var arr in new[] { _lum, _r, _g, _b })
-        {
-            foreach (var v in arr)
-                if (v > max) max = v;
-        }
-
         double pl = Pad, pt = 7, pb = 7, pr = Pad;
         double plotW = w - pl - pr;
         double plotH = h - pt - pb;
         double yb = h - pb;
+
+        double max = MaxScale(_lum, _r, _g, _b);
 
         DrawFill(dc, _b, max, pl, plotW, plotH, yb, BlueFill);
         DrawFill(dc, _g, max, pl, plotW, plotH, yb, GreenFill);
@@ -220,23 +215,45 @@ public sealed class HistogramOverlay : FrameworkElement
         }
     }
 
-    private static void DrawFill(DrawingContext dc, int[] data, int max, double x0, double plotW, double plotH, double yb, Brush brush)
+    private static double MaxScale(params int[][] arrays)
+    {
+        double best = 1;
+        foreach (var a in arrays)
+        {
+            var sorted = (int[])a.Clone();
+            Array.Sort(sorted);
+            int idx = (int)Math.Floor(0.99 * (sorted.Length - 1));
+            int cap = Math.Max(sorted[idx], 1);
+            if (cap > best) best = cap;
+        }
+        return best;
+    }
+
+    private static void DrawFill(DrawingContext dc, int[] data, double max, double x0, double plotW, double plotH, double yb, Brush brush)
     {
         dc.DrawGeometry(brush, null, Poly(data, max, x0, plotW, plotH, yb, closed: true));
     }
 
-    private static StreamGeometry Poly(int[] data, int max, double x0, double plotW, double plotH, double yb, bool closed)
+    private static StreamGeometry Poly(int[] data, double max, double x0, double plotW, double plotH, double yb, bool closed)
     {
         var geo = new StreamGeometry();
         using (var ctx = geo.Open())
         {
-            double step = plotW / (data.Length - 1);
-            ctx.BeginFigure(new Point(x0, yb), closed, closed);
-            for (int i = 0; i < data.Length; i++)
+            int n = data.Length;
+            double step = plotW / (n - 1);
+            double Y(int v) => yb - Math.Min(1.0, v / max) * plotH;
+            if (closed)
             {
-                double v = Math.Sqrt(data[i] / (double)max);
-                double y = yb - v * plotH;
-                ctx.LineTo(new Point(x0 + i * step, y), true, false);
+                ctx.BeginFigure(new Point(x0, yb), true, true);
+                for (int i = 0; i < n; i++)
+                    ctx.LineTo(new Point(x0 + i * step, Y(data[i])), true, false);
+                ctx.LineTo(new Point(x0 + plotW, yb), true, false);
+            }
+            else
+            {
+                ctx.BeginFigure(new Point(x0, Y(data[0])), false, false);
+                for (int i = 1; i < n; i++)
+                    ctx.LineTo(new Point(x0 + i * step, Y(data[i])), true, false);
             }
         }
         geo.Freeze();
