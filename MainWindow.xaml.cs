@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private string? _currentPath;
 
     private readonly ConcurrentDictionary<string, BitmapSource> _previewCache = new();
+    private readonly ConcurrentDictionary<string, EyeState> _session = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _cacheOrder = new();
     private readonly object _cacheOrderLock = new();
 
@@ -187,6 +188,7 @@ public partial class MainWindow : Window
 
         _index = idx;
         string path = _files[idx];
+        if (_currentPath is not null) _session[_currentPath] = CaptureEyeState();
         _currentPath = path;
         _monoSeed = MonoSeed(path);
         _baseBitmap = null;
@@ -199,7 +201,8 @@ public partial class MainWindow : Window
         CounterText.Text = $"{idx + 1} / {_files.Count}";
         Title = $"{Path.GetFileName(path)} — {idx + 1}/{_files.Count} — PhotographerEye";
         ResetAdjustments(silent: true);
-        ApplyEyeFile(path);
+        if (_session.TryGetValue(path, out var remembered)) ApplyEyeState(remembered);
+        else ApplyEyeFile(path);
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
         HintPanel.Visibility = Visibility.Collapsed;
@@ -1152,6 +1155,11 @@ public partial class MainWindow : Window
     private void ApplyEyeFile(string path)
     {
         if (!EyeFile.TryLoad(path, out var st)) return;
+        ApplyEyeState(st);
+    }
+
+    private void ApplyEyeState(EyeState st)
+    {
         ShadowSlider.Value = Math.Clamp(st.ShadowLift, ShadowSlider.Minimum, ShadowSlider.Maximum);
         PanelShadowSlider.Value = Math.Clamp(st.ShadowLift, PanelShadowSlider.Minimum, PanelShadowSlider.Maximum);
         GammaSlider.Value = Math.Clamp(st.Gamma, GammaSlider.Minimum, GammaSlider.Maximum);

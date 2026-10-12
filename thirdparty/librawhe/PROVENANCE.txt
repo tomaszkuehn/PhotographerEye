@@ -1,0 +1,33 @@
+LibRaw build with the Nikon HE (NEF High Efficiency, aka TicoRAW / JPEG-XS-like
+"NEF compression = 13/14") decoder.
+
+Source: community decoder from LibRaw PR #826 (yogthos/LibRaw branch
+"nikon-he-decoder", head commit 499bfd4 = "Merge pull request #1 from
+y-g-jiang/nikon-he-production", based on LibRaw master).
+
+Additional fixes applied (documented in LibRaw PR #826 comments by RdWing,
+11 Sep 2026):
+  - src/decoders/nikon_he/nikon_he_bayer.cpp: bottom-edge reconstruction fix
+    (use the already computed intermediate prediction instead of the clamped
+    next-row prediction in the last tile row; three spots: lh_next_predicted,
+    carry_next_pred, next_predict).
+  - src/decoders/nikon_he/nikon_he_iqx_iqp_lut_data.h: keep loop bound k < 254
+    to avoid the out-of-bounds read of kIqxIqpBreakpoints[256].
+  (Not applied: exact PIH-vendor transfer function from PIH extension bytes,
+    raw-GCLI packet mode - approximate LUT remains, max ~1 raw step error.)
+
+Build: mingw-w64 gcc 7.2.0, statically linked (-static
+-DLIBRAW_NOTHREADS), library + sample from the fork tree:
+  g++ -DLIBRAW_NOTHREADS -O3 -I. -w -static -o dcraw_emu.exe
+    samples/dcraw_emu.cpp -L./lib -lraw -lm -lws2_32
+Zlib/JPEG/RawSpeed/DNG-SDK support disabled (Makefile.dist flags edited).
+
+The app invokes it as:
+  dcraw_emu.exe -w -H 2 -W -6 [-h] "<file>"   (PPM output, 16-bit)
+
+Only "HE" (Bp regime 4/5) is decoded; "HE*" (Bp in {1,2,3}) is refused by
+the decoder at the first-precinct-header check.
+
+LibRaw is dual licensed (LGPL-2.1 / CDDL-1.0) - see LICENSE.LGPL and
+LICENSE.CDDL. This decoder reverse-engineers a format for which intoPIX
+claims patents (TicoRAW / JPEG XS); it is provided as is, no patent license.

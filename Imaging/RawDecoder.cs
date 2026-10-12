@@ -88,6 +88,62 @@ public static class RawDecoder
 
     private static (Raw16Image Raw, BitmapSource Display, double Ev) DecodePair(string path, bool halfSize)
     {
+        if (IsJpegXsRaw(path))
+        {
+            var he = DecodeViaLibRaw22(path, halfSize, heTool: true);
+            if (he is not null) return he.Value;
+            Debug.Log("RAW HE: dekodowanie TicoRAW nie powiodło się (brak fallbacku lub HE*)");
+            throw HeNotSupported();
+        }
+        try
+        {
+            var (raw, disp, ev) = DecodePairSdcb(path, halfSize);
+            if (IsLikelyGarbageDecode(raw))
+            {
+                Debug.Log("RAW SDCB: wynik wygląda na śmieci (derror); próba fallbacku libraw22");
+                var fb = DecodeViaLibRaw22(path, halfSize, heTool: false);
+                if (fb is not null) return fb.Value;
+            }
+            return (raw, disp, ev);
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"RAW SDCB FAIL: [{ex.GetType().Name}] {ex.Message}; próba fallbacku libraw22");
+            var fb = DecodeViaLibRaw22(path, halfSize, heTool: false);
+            if (fb is not null) return fb.Value;
+            throw;
+        }
+    }
+
+    private static InvalidOperationException HeNotSupported()
+    {
+        return new InvalidOperationException(
+            "Nikon NEF High Efficiency (HE/HE*): nie udało się zdekodować. Wariant HE jest zwykle obsługiwany (dekoder TicoRAW z forka LibRaw); " +
+            "wariant HE* (wyższa jakość) nie jest obsługiwany. Zmień w aparacie kompresję NEF na bezstratną (Lossless compressed) " +
+            "lub konwertuj pliki do DNG (Adobe DNG Converter).");
+    }
+
+    private static bool IsLikelyGarbageDecode(Raw16Image img)
+    {
+        double sR = 0, sG = 0, sB = 0, sRR = 0, sGG = 0, sBB = 0, sRG = 0, sGB = 0;
+        long n = 0;
+        for (int i = 0; i < img.R.Length; i += 197)
+        {
+            double r = img.R[i], g = img.G[i], b = img.B[i];
+            sR += r; sG += g; sB += b;
+            sRR += r * r; sGG += g * g; sBB += b * b;
+            sRG += r * g; sGB += g * b;
+            n++;
+        }
+        if (n < 100) return false;
+        double n2 = n;
+        double cRG = (sRG - sR * sG / n2) / Math.Sqrt(Math.Max(1.0, (sRR - sR * sR / n2)) * (sGG - sG * sG / n2));
+        double cGB = (sGB - sG * sB / n2) / Math.Sqrt(Math.Max(1.0, (sGG - sG * sG / n2)) * (sBB - sB * sB / n2));
+        return Math.Abs(cRG) < 0.3 || Math.Abs(cGB) < 0.3;
+    }
+
+    private static (Raw16Image Raw, BitmapSource Display, double Ev) DecodePairSdcb(string path, bool halfSize)
+    {
         using var r = RawContext.OpenFile(path);
         r.Unpack();
         r.DcrawProcess(p =>
@@ -112,6 +168,144 @@ public static class RawDecoder
         var display = normalized.ToDisplay(dither: true);
         Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp hl=2 baseEv={ev:0.00}");
         return (raw16, display, ev);
+    }
+
+    public static (Raw16Image Raw, BitmapSource Display, double Ev)? DecodeViaLibRaw22(string path, bool halfSize, bool heTool)
+    {
+        string exe = Path.Combine(AppContext.BaseDirectory, "thirdparty", heTool ? "librawhe" : "libraw22", "dcraw_emu.exe");
+        if (!File.Exists(exe)) return null;
+
+        string work = Path.Combine(Path.GetTempPath(), heTool ? "photographereye-lrhe" : "photographereye-lr22");
+        Directory.CreateDirectory(work);
+        string tin = Path.Combine(work, $"dec-{Guid.NewGuid():N}{Path.GetExtension(path)}");
+        string tout = tin + ".ppm";
+        try
+        {
+            File.Copy(path, tin, true);
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exe,
+                Arguments = $"-w -H 2 -W -6{(halfSize ? " -h" : "")} \"{tin}\"",
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            using var proc = System.Diagnostics.Process.Start(psi)!;
+            string err = proc.StandardError.ReadToEnd();
+            if (!proc.WaitForExit(180_000)) { try { proc.Kill(); } catch (Exception) { } }
+            if (proc.ExitCode != 0) return null;
+            if (err.Contains("Cannot unpack", StringComparison.Ordinal) ||
+                err.Contains("Cannot open", StringComparison.Ordinal) ||
+                err.Contains("data corrupted", StringComparison.Ordinal)) return null;
+            if (!File.Exists(tout)) return null;
+
+            var packed = ParseP6Rgb16(tout, out int w, out int h);
+            if (packed is null) return null;
+            var raw16 = Raw16Image.FromInterleaved(packed, w, h);
+            double ev = 0.0;
+            var normalized = LinearRender.ApplyGain(raw16, ev, 0.0);
+            var display = normalized.ToDisplay(dither: true);
+            Debug.Log($"RAW DECODE{(heTool ? "HE" : "22")}: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp hl=2 baseEv={ev:0.00}");
+            return (raw16, display, ev);
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"RAW22 FAIL: [{ex.GetType().Name}] {ex.Message}");
+            return null;
+        }
+        finally
+        {
+            try { File.Delete(tin); } catch (Exception) { }
+            try { File.Delete(tout); } catch (Exception) { }
+        }
+    }
+
+    private static ushort[]? ParseP6Rgb16(string path, out int w, out int h)
+    {
+        w = h = 0;
+        try
+        {
+            using var fs = File.OpenRead(path);
+            var header = new byte[256];
+            int hdrLen = fs.Read(header, 0, header.Length);
+            string head = System.Text.Encoding.ASCII.GetString(header, 0, hdrLen);
+            if (!head.StartsWith("P6", StringComparison.Ordinal)) return null;
+            int p = 2;
+            int field = 0;
+            int wv = 0, hv = 0, maxv = 0;
+            while (field < 3)
+            {
+                while (p < head.Length && (head[p] == ' ' || head[p] == '\r' || head[p] == '\n' || head[p] == '\t'))
+                    p++;
+                if (p < head.Length && head[p] == '#')
+                {
+                    while (p < head.Length && head[p] != '\n') p++;
+                    continue;
+                }
+                int start = p;
+                while (p < head.Length && head[p] >= '0' && head[p] <= '9')
+                    p++;
+                if (p == start) return null;
+                if (head[p] != ' ' && head[p] != '\r' && head[p] != '\n' && head[p] != '\t') return null;
+                int v = int.Parse(head.Substring(start, p - start), System.Globalization.CultureInfo.InvariantCulture);
+                if (field == 0) wv = v;
+                else if (field == 1) hv = v;
+                else maxv = v;
+                field++;
+            }
+            if (maxv != 65535 || wv <= 0 || hv <= 0 || (long)wv * hv > int.MaxValue / 6) return null;
+            w = wv;
+            h = hv;
+            long dataStart = fs.Position - (hdrLen - p) + 1;
+            fs.Seek(dataStart, SeekOrigin.Begin);
+
+            const int readChunk = 1024 * 1024;
+            var raw = new byte[(long)w * h * 6];
+            int total = 0;
+            var buf = new byte[readChunk];
+            while (total < raw.Length)
+            {
+                int n = fs.Read(buf, 0, Math.Min(readChunk, raw.Length - total));
+                if (n <= 0) return null;
+                System.Buffer.BlockCopy(buf, 0, raw, total, n);
+                total += n;
+            }
+            var packed = new ushort[w * h * 3];
+            for (int i = 0; i < packed.Length; i++)
+            {
+                int o = i * 2;
+                packed[i] = (ushort)((raw[o] << 8) | raw[o + 1]);
+            }
+            return packed;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsJpegXsRaw(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            var buf = new byte[4096];
+            long total = fs.Length;
+            long probe = 0;
+            while (probe < total && probe < 64L * 1024 * 1024)
+            {
+                int n = fs.Read(buf, 0, buf.Length);
+                if (n <= 0) break;
+                for (int i = 0; i + 3 < n; i++)
+                    if (buf[i] == 0xFF && buf[i + 1] == 0x10 && buf[i + 2] == 0xFF && buf[i + 3] == 0x50)
+                        return true;
+                if (n < buf.Length && probe + n >= total) break;
+                probe += n - 3;
+                fs.Seek(probe, SeekOrigin.Begin);
+            }
+        }
+        catch (Exception) { }
+        return false;
     }
 
     public static ImageInfo GetInfo(string path)

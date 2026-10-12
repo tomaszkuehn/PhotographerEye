@@ -14,4 +14,9 @@
     <ProjectReference Include="..\..\ImgViewer.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\..\thirdparty\libraw22\**" LinkBase="thirdparty\libraw22" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\thirdparty\librawhe\**" LinkBase="thirdparty\librawhe" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

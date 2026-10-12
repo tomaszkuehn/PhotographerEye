@@ -17,6 +17,11 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--sdcb-corr")
+        {
+            SdcbCorr(args[1]);
+            return;
+        }
         if (args.Length > 0 && args[0] == "--probe")
         {
             ProbeDecode(args[1]);
@@ -30,6 +35,25 @@ internal static class Program
         if (args.Length > 0 && args[0] == "--lin-probe")
         {
             LinearProbe(args[1]);
+            return;
+        }
+        if (args.Length > 0 && (args[0] == "--raw22" || args[0] == "--rawhe"))
+        {
+            bool he = args[0] == "--rawhe";
+            var fb = RawDecoder.DecodeViaLibRaw22(args[1], halfSize: args.Length > 2 && args[2] == "half", heTool: he);
+            if (fb is null) { Console.WriteLine($"{args[0]} FAIL"); Environment.ExitCode = 1; return; }
+            var norm = LinearRender.ApplyGain(fb.Value.Raw, fb.Value.Ev, 0.0);
+            var disp = norm.ToDisplay(dither: false);
+            var enc = new JpegBitmapEncoder { QualityLevel = 90 };
+            enc.Frames.Add(BitmapFrame.Create(disp));
+            using (var fs = File.Create(args.Length > 3 ? args[3] : Path.ChangeExtension(args[1], ".fallback.jpg")))
+            {
+                enc.Save(fs);
+            }
+            double mean = 0;
+            for (int i = 0; i < fb.Value.Raw.R.Length; i++) mean += fb.Value.Raw.R[i] + fb.Value.Raw.G[i] + fb.Value.Raw.B[i];
+            mean /= 3.0 * fb.Value.Raw.R.Length;
+            Console.WriteLine($"{args[0]} OK {fb.Value.Raw.W}x{fb.Value.Raw.H} mean={mean:0.0}");
             return;
         }
         if (args.Length > 0 && args[0] == "--dump")
@@ -1379,6 +1403,34 @@ internal static class Program
         enc.Frames.Add(BitmapFrame.Create(disp));
         using (var fs = File.Create(outPath)) enc.Save(fs);
         Console.WriteLine($"dumped {Path.GetFileName(path)} baseEv={ev:0.00} extraEv={extraEv:0.0} -> {outPath}");
+    }
+
+    private static void SdcbCorr(string path)
+    {
+        try
+        {
+            using var r = RawContext.OpenFile(path);
+            r.Unpack();
+            r.DcrawProcess(p => { p.UseCameraWb = true; p.OutputBps = 16; p.OutputTiff = false; p.HighlightMode = 2; p.NoAutoBright = true; });
+            using var img = r.MakeDcrawMemoryImage();
+            int w = img.Width, h = img.Height;
+            var raw16 = Raw16Image.FromInterleaved(img.AsSpan<ushort>().ToArray(), w, h);
+            Console.WriteLine($"Sdcb {w}x{h}");
+            double sR = 0, sG = 0, sB = 0, sRR = 0, sGG = 0, sBB = 0, sRG = 0, sGB = 0; long n = 0;
+            for (int i = 0; i < raw16.R.Length; i += 197)
+            {
+                double rr = raw16.R[i], g = raw16.G[i], b = raw16.B[i];
+                sR += rr; sG += g; sB += b; sRR += rr * rr; sGG += g * g; sBB += b * b; sRG += rr * g; sGB += g * b; n++;
+            }
+            double n2 = n;
+            double cRG = (sRG - sR * sG / n2) / Math.Sqrt(Math.Max(1.0, sRR - sR * sR / n2) * (sGG - sG * sG / n2));
+            double cGB = (sGB - sG * sB / n2) / Math.Sqrt(Math.Max(1.0, sGG - sG * sG / n2) * (sBB - sB * sB / n2));
+            Console.WriteLine($"corr RG={cRG:0.000} GB={cGB:0.000} garbage={(Math.Abs(cRG) < 0.3 || Math.Abs(cGB) < 0.3)}");
+            double mr = 0, mg = 0, mb = 0; long m = 0;
+            for (int i = 0; i < raw16.R.Length; i += 197) { mr += raw16.R[i]; mg += raw16.G[i]; mb += raw16.B[i]; m++; }
+            Console.WriteLine($"meanR={mr / m:0} G={mg / m:0} B={mb / m:0}");
+        }
+        catch (Exception ex) { Console.WriteLine($"Sdcb EX [{ex.GetType().Name}] {ex.Message}"); }
     }
 
     private static void LinearProbe(string path)

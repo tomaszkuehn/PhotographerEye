@@ -12,7 +12,7 @@
     <AssemblyTitle>PhotographerEye</AssemblyTitle>
     <Product>PhotographerEye</Product>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
-    <Version>0.97</Version>
+    <Version>0.98</Version>
     <NeutralLanguage>pl-PL</NeutralLanguage>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -26,6 +26,13 @@
   <ItemGroup>
     <Compile Remove="tools\**" />
     <Resource Include="Assets\icon.ico" />
+    <None Include="thirdparty\libraw22\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="thirdparty\librawhe\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="CopyLibRaw22ToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="thirdparty\libraw22\dcraw_emu.exe;thirdparty\libraw22\libraw.dll" DestinationFolder="$(PublishDir)thirdparty\libraw22" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="thirdparty\librawhe\dcraw_emu.exe" DestinationFolder="$(PublishDir)thirdparty\librawhe" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>
