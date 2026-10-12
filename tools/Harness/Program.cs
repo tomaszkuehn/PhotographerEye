@@ -469,6 +469,38 @@ internal static class Program
         Check(combo is not null, "photo extras combined apply");
 
         TestPhotoExtras2();
+        TestSaveEncoders();
+    }
+
+    private static void TestSaveEncoders()
+    {
+        var blocks = MakeBlocksSource(120, 80);
+        string tmp = Path.Combine(Path.GetTempPath(), "imgviewer_harness");
+        Directory.CreateDirectory(tmp);
+
+        string tif = Path.Combine(tmp, "save_eye.tif");
+        MainWindow.SaveEncoded(blocks, tif, tiff16: true);
+        using (var fs = File.OpenRead(tif))
+        {
+            var head = new byte[4];
+            fs.ReadExactly(head, 0, 4);
+            Check(head[0] == head[1] && (head[0] == 0x49 || head[0] == 0x4D), "TIFF magic header");
+        }
+        var dec = BitmapDecoder.Create(new MemoryStream(File.ReadAllBytes(tif)), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        var tframe = dec.Frames[0];
+        Check(tframe.Format == PixelFormats.Rgb48, $"TIFF decoded as Rgb48 ({tframe.Format})");
+        var back = new byte[tframe.PixelWidth * tframe.PixelHeight * 6];
+        tframe.CopyPixels(back, tframe.PixelWidth * 6, 0);
+        ushort r0 = BitConverter.ToUInt16(back, 0);
+        ushort g0 = BitConverter.ToUInt16(back, 2);
+        ushort p2 = BitConverter.ToUInt16(back, 40 * 6);
+        Check(r0 == 90 * 257 && g0 == 90 * 257 && p2 == 180 * 257,
+              $"TIFF 16-bit roundtrip values (R={r0:X4}, G={g0:X4}, px40={p2:X4})");
+
+        string jpg = Path.Combine(tmp, "save_eye.jpg");
+        MainWindow.SaveEncoded(blocks, jpg, tiff16: false);
+        var jd = BitmapDecoder.Create(new MemoryStream(File.ReadAllBytes(jpg)), BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+        Check(jd.Frames[0].PixelWidth == 120, "JPG 90% roundtrip decode");
     }
 
     private static void TestPhotoExtras2()

@@ -627,6 +627,24 @@ public partial class MainWindow : Window
         string? path = _currentPath;
         if (path is null || _files.Count == 0 || _saving) return;
 
+        string dir = Path.GetDirectoryName(path)!;
+        string baseName = Path.GetFileNameWithoutExtension(path);
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            InitialDirectory = dir,
+            FileName = $"{baseName}_eye",
+            DefaultExt = "jpg",
+            Filter = "JPG (jakość 90%)|*.jpg|TIFF 16-bit|*.tif",
+            Title = "Zapisz zdjęcie"
+        };
+        Debug.Log("SAVE-DIALOG: opening");
+        var ok = dialog.ShowDialog(this);
+        Debug.Log($"SAVE-DIALOG: result={ok} file={dialog.FileName}");
+        if (ok != true) return;
+
+        bool tiff = dialog.FilterIndex == 2;
+        string dest = dialog.FileName;
+
         _saving = true;
         BtnSave.IsEnabled = false;
         Mouse.OverrideCursor = Cursors.Wait;
@@ -644,12 +662,11 @@ public partial class MainWindow : Window
                 var full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
                 var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
                 if (processed is null) throw new InvalidOperationException("Nie udało się przetworzyć obrazu");
-                string dest = UniqueEditedPath(path);
-                SaveEncoded(processed, path, dest);
-                Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight} manual={manual} mono={_monoMode:D}");
+                SaveEncoded(processed, dest, tiff);
+                Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight} manual={manual} mono={_monoMode:D} tiff16={tiff}");
                 Dispatcher.BeginInvoke(() =>
                 {
-                    if (IsCurrent(path)) SetStatus($"Zapisano: {Path.GetFileName(dest)}", error: false);
+                    if (IsCurrent(path)) SetStatus($"Zapisano: {Path.GetFileName(dest)} ({(tiff ? "TIFF 16-bit" : "JPG 90%")})", error: false);
                     Mouse.OverrideCursor = null;
                 });
             }
@@ -670,30 +687,98 @@ public partial class MainWindow : Window
         });
     }
 
-    private static string UniqueEditedPath(string path)
+    public static void SaveEncoded(BitmapSource image, string destPath, bool tiff16)
     {
-        string dir = Path.GetDirectoryName(path)!;
-        string name = Path.GetFileNameWithoutExtension(path);
-        bool raw = ImageLoader.IsRaw(path);
-        string ext = Path.GetExtension(path).ToLowerInvariant() is ".jpg" or ".jpeg" || raw ? ".jpg" : ".png";
-        string candidate = Path.Combine(dir, $"{name}_edited{ext}");
-        int n = 2;
-        while (File.Exists(candidate))
+        if (!tiff16)
         {
-            candidate = Path.Combine(dir, $"{name}_edited{n}{ext}");
-            n++;
+            var jpg = new JpegBitmapEncoder { QualityLevel = 90 };
+            jpg.Frames.Add(BitmapFrame.Create(image));
+            using var fs = File.Create(destPath);
+            jpg.Save(fs);
+            return;
         }
-        return candidate;
+
+        int w = image.PixelWidth;
+        int h = image.PixelHeight;
+        var src = new byte[w * h * 4];
+        image.CopyPixels(src, w * 4, 0);
+        var dst = new ushort[w * h * 3];
+        for (int i = 0, o = 0; i < src.Length; i += 4, o += 3)
+        {
+            dst[o] = (ushort)(src[i + 2] * 257);
+            dst[o + 1] = (ushort)(src[i + 1] * 257);
+            dst[o + 2] = (ushort)(src[i] * 257);
+        }
+        WriteTiff16(destPath, dst, w, h);
     }
 
-    private static void SaveEncoded(BitmapSource image, string sourcePath, string destPath)
+    private static void WriteTiff16(string destPath, ushort[] pixels, int w, int h)
     {
-        BitmapEncoder encoder = Path.GetExtension(sourcePath).ToLowerInvariant() is ".jpg" or ".jpeg" || ImageLoader.IsRaw(sourcePath)
-            ? new JpegBitmapEncoder { QualityLevel = 92 }
-            : new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(image));
-        using var fs = File.Create(destPath);
-        encoder.Save(fs);
+        int payload = pixels.Length * 2;
+        const int ifdTags = 13;
+        const int dataStart = 170;
+        const int stripStart = 198;
+        byte[] data = new byte[stripStart + payload];
+        data[0] = (byte)'I';
+        data[1] = (byte)'I';
+        data[2] = 42;
+        data[3] = 0;
+        data[4] = 8;
+
+        void U16(int at, int v)
+        {
+            data[at] = (byte)v;
+            data[at + 1] = (byte)(v >> 8);
+        }
+        void U32(int at, int v)
+        {
+            data[at] = (byte)v;
+            data[at + 1] = (byte)(v >> 8);
+            data[at + 2] = (byte)(v >> 16);
+            data[at + 3] = (byte)(v >> 24);
+        }
+        void Tag(int i, int id, int type, int count, int value)
+        {
+            int at = 10 + i * 12;
+            U16(at, id);
+            U16(at + 2, type);
+            U32(at + 4, count);
+            U32(at + 8, value);
+        }
+
+        data[8] = (byte)ifdTags;
+        Tag(0, 256, 3, 1, w);
+        Tag(1, 257, 3, 1, h);
+        Tag(2, 258, 3, 3, dataStart);
+        Tag(3, 259, 3, 1, 1);
+        Tag(4, 262, 3, 1, 2);
+        Tag(5, 273, 4, 1, stripStart);
+        Tag(6, 277, 3, 1, 3);
+        Tag(7, 278, 3, 1, h);
+        Tag(8, 279, 4, 1, payload);
+        Tag(9, 282, 5, 1, dataStart + 8);
+        Tag(10, 283, 5, 1, dataStart + 16);
+        Tag(11, 296, 3, 1, 2);
+        Tag(12, 339, 3, 3, 192);
+
+        U32(10 + 13 * 12, 0);
+        U16(dataStart, 16);
+        U16(dataStart + 2, 16);
+        U16(dataStart + 4, 16);
+        U32(dataStart + 8, 96);
+        U32(dataStart + 12, 1);
+        U32(dataStart + 16, 96);
+        U32(dataStart + 20, 1);
+        U16(192, 1);
+        U16(194, 1);
+        U16(196, 1);
+
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            U16(stripStart + i * 2, pixels[i]);
+        }
+
+        File.WriteAllBytes(destPath, data);
     }
 
     private void OnWinMinimizeClick(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);

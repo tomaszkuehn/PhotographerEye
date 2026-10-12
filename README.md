@@ -10,7 +10,7 @@ Portable przeglądarka zdjęć JPG/JPEG/PNG oraz RAW dla Windows (WPF, .NET 8, p
 - Korekcja cieni −50%…+70% (podnoszenie i przyciemnianie; pipeline liniowy sRGB, miękka maska luminancji — styl Photoshop) i gamma 0.50–2.00 (LUT środkowych tonów)
 - Przy regulacji cieni automatyczne rozciąganie histogramu narastające proporcjonalnie z siłą regulacji (pełne od ±50%): auto-contrast z percentyli 0.5% histogramu luminancji, jedna skala dla wszystkich kanałów — balans bieli nietknięty, czernie zakotwiczone, pomijane gdy zakres już pełny lub obraz płaski
 - Porównanie z oryginałem: przytrzymaj przycisk „Porównaj" lub spację (podgląd bez korekt; puszczenie wraca)
-- Podgląd plików RAW: RW2 (Panasonic), NEF/NRW (Nikon), ARW/SRF/SR2 (Sony), CR2/CR3/CRW (Canon), ORF (Olympus), RAF (Fuji), PEF (Pentax), DNG i inne — wbudowany LibRaw: demosaikacja, balans bieli z aparatu, auto-flip orientacji; dekodowanie w cache (podgląd 1/4 skali, pełna rozdzielczość przy przybliżeniu); zapis edycji jako `_edited.jpg`
+- Podgląd plików RAW: RW2 (Panasonic), NEF/NRW (Nikon), ARW/SRF/SR2 (Sony), CR2/CR3/CRW (Canon), ORF (Olympus), RAF (Fuji), PEF (Pentax), DNG i inne — wbudowany LibRaw: demosaikacja, balans bieli z aparatu, auto-flip orientacji; dekodowanie w cache (podgląd 1/4 skali, pełna rozdzielczość przy przybliżeniu); zapis edycji przez dialog (JPG 90% / TIFF 16-bit)
 - Panel korekt (pionowy pasek po prawej, przycisk suwaków lub klawisz `E`): **ekspozycja** (±2 EV, mnożenie liniowe z hard-clippingiem świateł), **kontrast** (±100: tanh S-krzywa / spłaszczenie), **balans bieli** (temperatura: wzmocnienie R/B, ±100) z **pipetą punktu bieli** (ikona palety przy suwaku — kliknij neutralny obszar zdjęcia, temperatura obliczana ze średniej 9×9 px, `Esc` anuluj), **nasycenie** (0–200 %, interpolacja do luminancji), **cienie** (zsynchronizowane z suwakiem Cienie na pasku głównym), **światła** (−100…+100: odzyskiwanie/przypalanie świateł maską luminancji nad progiem miękkim), **clarity** (±100: unsharp-mask na low-pass luminancji), **wyostrzenie** (0–100: unsharp-mask o małym promieniu po odszumianiu), **odszumianie** (0–100, mieszanina z rozmyciem dwuprzebiegowym), **redukcja szumu kolorów** (0–100: rozmycie chrominancji z zachowaniem luminancji); reset przy zmianie obrazu i przyciskiem ♻ w panelu; histogram pokazuje wynik; zapis uwzględnia panel w pełnej rozdzielczości
 - Overlay histogramu (luminancja + nakładki R/G/B) liczony z finalnego podglądu; pojawia się przy ruchu suwaków korekt lub chwytaniu histogramu, chowany przy zmianie obrazu i krzyżykiem
 - Ręczne rozciąganie histogramu: przeciągnij punkt na histogramie — część po jednej stronie punktu ściska się, po drugiej rozciąga (mapa odcinkowo-liniowa, końce 0 i 1 zakotwiczone, punkty zachowują monotoniczność); dodawanie kolejnych punktów kolejnymi chwytami; punkty usuwa: podwójny klik na histogramie, przycisk resetu (♻) przy krzyżyku overlayu, `R`/Reset
@@ -21,7 +21,7 @@ Portable przeglądarka zdjęć JPG/JPEG/PNG oraz RAW dla Windows (WPF, .NET 8, p
 - Strzałki przesuwania obrazów na lewym/prawym brzegu okna
 - Symbol ustawień (⚙) w prawym górnym rogu → „O aplikacji…" (autor, e-mail, GitHub, licencja)
 - Reset korekt automatycznie przy przełączeniu obrazu oraz ręcznie: `R`, przycisk „Reset", podwójny klik na suwak (lub na histogram — czyści punkty rozciągania)
-- Zapis zmodyfikowanego zdjęcia (Ctrl+S lub przycisk zapisu na pasku) w rozdzielczości oryginału — JPG (jakość 92) lub PNG (RAW → JPG), plik obok oryginału z przyrostkiem `_edited`; przycisk aktywny tylko gdy któraś korekta (cienie, gamma, punkty rozciągania, tryb czarno-biały, panel korekt) jest aktywna
+- Zapis zmodyfikowanego zdjęcia (Ctrl+S lub przycisk zapisu na pasku) przez dialog **Zapisz zdjęcie** — wybór lokalizacji i nazwy (podpowiedź `<obecna nazwa>_eye`, wybrany format dodaje rozszerzenie) oraz formatu: **JPG (jakość 90%)** lub **TIFF 16-bit** (bezstratny 48 bpp RGB, wartości 8-bit × 257, bez kompresji — czytniki: WIC/Photoshop/GIMP); zapis w rozdzielczości oryginału z włączonymi korektami (cienie, gamma, punkty rozciągania, tryb czarno-biały, panel korekt; RAW → JPG/TIFF); przycisk aktywny tylko gdy któraś korekta jest aktywna
 - Drag & drop pliku, otwieranie przez argument CLI, `Ctrl+O`
 - Ustawienia zapisywane w `%AppData%\PhotographerEye\settings.json`
 
@@ -73,8 +73,9 @@ E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
 - `MainWindow.xaml(.cs)` — toolbar, pasek tytułowy, nawigacja, zapis, odświeżanie widoku, ustawienia
 - `Controls/ImageViewer.cs` — zoom/pan/fit (renderowanie layoutowe, bez transformacji macierzowej)
 - `Controls/HistogramOverlay.cs` — histogram w prawym górnym rogu + interaktywne punkty rozciągania
-- `Services/ImageLoader.cs` — dekodowanie, DPI 96, orientacja EXIF; delegacja RAW do `Imaging/RawDecoder.cs` (LibRaw: dekodowanie, cache podglądów, zapis `_edited.jpg`)
-- `Services/AdjustmentsProcessor.cs` — cienie (pipeline liniowy) + gamma + auto-stretch + ręczna mapa rozciągania + histogram
+- `Services/ImageLoader.cs` — dekodowanie, DPI 96, orientacja EXIF; delegacja RAW do `Imaging/RawDecoder.cs` (LibRaw: dekodowanie, cache podglądów)
+- `Services/AdjustmentsProcessor.cs` — cienie (pipeline liniowy) + gamma + auto-stretch + ręczna mapa rozciągania + histogram + operacje panelu korekt
+- `Imaging/PhotoOps.cs` — LUT balansu bieli/ekspozycji/kontrastu/dehaze, saturacja, clarity/wyostrzenie (unsharp), odszumianie i szum kolorów, cienie/światła, pomiar temperatury z próbki
 - `Imaging/ManualStretch.cs` — mapa odcinkowo-liniowa punktów rozciągania
 - `Services/ImageFolder.cs`, `Services/SettingsStore.cs` — lista plików, ustawienia
 - `tools/Harness/` — testy logiki
