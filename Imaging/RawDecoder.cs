@@ -18,6 +18,8 @@ public static class RawDecoder
         ".orf", ".raf", ".pef", ".ptx", ".dng", ".srw", ".x3f", ".3fr", ".fff", ".iiq", ".mos", ".erf", ".kdc", ".dcr", ".mef", ".rwl"
     };
 
+    private const int MaxCacheEntries = 3;
+
     private static readonly object DecodeLock = new();
     private static readonly ConcurrentDictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -28,54 +30,81 @@ public static class RawDecoder
     {
         lock (DecodeLock)
         {
-            var entry = Cache.GetOrAdd(path, _ => new CacheEntry());
-            entry.Touch();
-
-            var cached = halfSize ? entry.Half : entry.Full;
-            if (cached is not null) return cached;
-
-            using var r = RawContext.OpenFile(path);
-            r.Unpack();
-            r.DcrawProcess(p =>
-            {
-                p.HalfSize = halfSize;
-                p.UseCameraWb = true;
-                p.OutputBps = 8;
-                p.OutputTiff = false;
-            });
-            using var img = r.MakeDcrawMemoryImage();
-
-            if (img.ImageType != ProcessedImageType.Bitmap || img.Bits != 8 || img.Channels != 3)
-                throw new InvalidOperationException($"LibRaw: nieoczekiwany format wyjściowy ({img.ImageType}, {img.Bits} bit, {img.Channels} kanal.)");
-
-            int w = img.Width;
-            int h = img.Height;
-            var src = img.AsSpan<byte>();
-            var bgra = new byte[(long)w * h * 4];
-            int si = 0, di = 0;
-            while (di < bgra.Length)
-            {
-                bgra[di] = src[si + 2];
-                bgra[di + 1] = src[si + 1];
-                bgra[di + 2] = src[si];
-                bgra[di + 3] = 255;
-                si += 3;
-                di += 4;
-            }
-
-            var bmp = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, bgra, w * 4);
-            bmp.Freeze();
-            if (halfSize) entry.Half = bmp; else entry.Full = bmp;
-            Evict(path);
-            Debug.Log($"RAW DECODE: {Path.GetFileName(path)} half={halfSize} {w}x{h}");
-            return bmp;
+            var entry = Fill(path, halfSize);
+            return halfSize ? entry.Half! : entry.Full!;
         }
+    }
+
+    public static Raw16Image Decode16(string path, bool halfSize)
+    {
+        lock (DecodeLock)
+        {
+            var entry = Fill(path, halfSize);
+            return halfSize ? entry.Half16! : entry.Full16!;
+        }
+    }
+
+    public static Raw16Image? GetCached16(string path, bool full)
+    {
+        lock (DecodeLock)
+        {
+            return Cache.TryGetValue(path, out var e) ? (full ? e.Full16 : e.Half16) : null;
+        }
+    }
+
+    private static CacheEntry Fill(string path, bool halfSize)
+    {
+        var entry = Cache.GetOrAdd(path, _ => new CacheEntry());
+        entry.Touch();
+
+        bool ready = halfSize
+            ? entry.Half16 is not null && entry.Half is not null
+            : entry.Full16 is not null && entry.Full is not null;
+        if (ready) return entry;
+
+        var (raw16, display) = DecodePair(path, halfSize);
+        if (halfSize)
+        {
+            entry.Half16 = raw16;
+            entry.Half = display;
+        }
+        else
+        {
+            entry.Full16 = raw16;
+            entry.Full = display;
+        }
+        Evict(path);
+        return entry;
+    }
+
+    private static (Raw16Image Raw, BitmapSource Display) DecodePair(string path, bool halfSize)
+    {
+        using var r = RawContext.OpenFile(path);
+        r.Unpack();
+        r.DcrawProcess(p =>
+        {
+            p.HalfSize = halfSize;
+            p.UseCameraWb = true;
+            p.OutputBps = 16;
+            p.OutputTiff = false;
+        });
+        using var img = r.MakeDcrawMemoryImage();
+
+        if (img.ImageType != ProcessedImageType.Bitmap || img.Bits != 16 || img.Channels != 3)
+            throw new InvalidOperationException($"LibRaw: nieoczekiwany format wyjściowy ({img.ImageType}, {img.Bits} bit, {img.Channels} kanal.)");
+
+        int w = img.Width;
+        int h = img.Height;
+        var raw16 = Raw16Image.FromInterleaved(img.AsSpan<ushort>().ToArray(), w, h);
+        var display = raw16.ToDisplay(dither: true);
+        Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp");
+        return (raw16, display);
     }
 
     public static ImageInfo GetInfo(string path)
     {
-        var half = Decode(path, halfSize: true);
-        return new ImageInfo(half.PixelWidth, half.PixelHeight, 1);
+        var full = Decode16(path, halfSize: false);
+        return new ImageInfo(full.W, full.H, 1);
     }
 
     public static BitmapSource LoadScaled(string path, ImageInfo info, int maxWidth, int maxHeight)
@@ -86,13 +115,10 @@ public static class RawDecoder
         int dw = Math.Min(info.Width, Math.Max(1, (int)Math.Round(info.Width * scale)));
         int dh = Math.Min(info.Height, Math.Max(1, (int)Math.Round(info.Height * scale)));
 
-        bool halfSize = !HasFull(path) && dw < info.Width * 0.55;
-        var source = Decode(path, halfSize);
+        var source = Decode(path, halfSize: false);
         if (source.PixelWidth == dw && source.PixelHeight == dh) return source;
         return Resize(source, dw, dh);
     }
-
-    private static bool HasFull(string path) => Cache.TryGetValue(path, out var e) && e.Full is not null;
 
     private static BitmapSource Resize(BitmapSource source, int dw, int dh)
     {
@@ -112,8 +138,8 @@ public static class RawDecoder
     private static void Evict(string keepPath)
     {
         var entries = Cache.ToList();
-        if (entries.Count <= 6) return;
-        foreach (var e in entries.OrderBy(p => p.Value.LastUse).Take(entries.Count - 6))
+        if (entries.Count <= MaxCacheEntries) return;
+        foreach (var e in entries.OrderBy(p => p.Value.LastUse).Take(entries.Count - MaxCacheEntries))
         {
             if (!string.Equals(e.Key, keepPath, StringComparison.OrdinalIgnoreCase))
                 Cache.TryRemove(e.Key, out _);
@@ -122,6 +148,8 @@ public static class RawDecoder
 
     private sealed class CacheEntry
     {
+        public Raw16Image? Half16;
+        public Raw16Image? Full16;
         public BitmapSource? Half;
         public BitmapSource? Full;
         public long LastUse;

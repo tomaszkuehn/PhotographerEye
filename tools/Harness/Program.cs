@@ -42,8 +42,10 @@ internal static class Program
         TestTriX();
         TestCrossImageSwitch();
         TestRaw();
+        TestRaw16();
         TestPhotoExtras();
         TestExifRotation();
+        TestEyeFile();
 
         Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
         Environment.ExitCode = _fails;
@@ -393,6 +395,163 @@ internal static class Program
         }
     }
 
+    private static void TestRaw16()
+    {
+        string tif = Path.Combine(Path.GetTempPath(), "imgviewer_harness", "raw16_probe.tif");
+        string jpg = Path.Combine(Path.GetTempPath(), "imgviewer_harness", "raw16_probe.jpg");
+        Directory.CreateDirectory(Path.GetDirectoryName(tif)!);
+
+        var synth = MakeRaw16(96, 64);
+        MainWindow.SaveEncoded(synth, tif, tiff16: true);
+        long size = new FileInfo(tif).Length;
+        Check(size == (long)96 * 64 * 6 + 198, $"raw16 TIFF payload size ({size})");
+        var dec = BitmapDecoder.Create(new MemoryStream(File.ReadAllBytes(tif)), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        var frame = dec.Frames[0];
+        Check(frame.Format == PixelFormats.Rgb48, $"raw16 TIFF decodes as Rgb48 ({frame.Format})");
+        var back = new byte[frame.PixelWidth * frame.PixelHeight * 6];
+        frame.CopyPixels(back, frame.PixelWidth * 6, 0);
+        int idx = (10 * 96 + 12) * 6;
+        Check(BitConverter.ToUInt16(back, idx) == synth.R[10 * 96 + 12]
+              && BitConverter.ToUInt16(back, idx + 2) == synth.G[10 * 96 + 12]
+              && BitConverter.ToUInt16(back, idx + 4) == synth.B[10 * 96 + 12],
+              $"raw16 TIFF exact value roundtrip (px(12,10))");
+        idx = 0;
+        Check(BitConverter.ToUInt16(back, idx) == 65535 && BitConverter.ToUInt16(back, idx + 2) == 54321 && BitConverter.ToUInt16(back, idx + 4) == 12345,
+              "raw16 TIFF px(0,0) exact");
+        ushort lo = BitConverter.ToUInt16(back, 5 * 6 + 4);
+        Check(lo == 525, "raw16 TIFF keeps sub-8-bit values (px(5,0).B=525 not quantized)");
+
+        MainWindow.SaveEncoded(synth, jpg, tiff16: false);
+        var jdec = BitmapDecoder.Create(new MemoryStream(File.ReadAllBytes(jpg)), BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+        Check(jdec.Frames[0].PixelWidth == 96 && jdec.Frames[0].PixelHeight == 64, "raw16 JPG quantized export decodes");
+
+        var dispD = synth.ToDisplay(dither: true);
+        var dispN = synth.ToDisplay(dither: false);
+        Check(dispD.Format == PixelFormats.Bgra32 && dispD.PixelWidth == 96 && dispD.PixelHeight == 64, "raw16 display format/dims");
+        var dD = new byte[96 * 4];
+        dispD.CopyPixels(new Int32Rect(0, 0, 96, 1), dD, 96 * 4, 0);
+        Check(dD[3] == 255, "raw16 display alpha opaque");
+
+        string src = Path.Combine(Path.GetTempPath(), "opencode", "rawsamples", "sample1.rw2");
+        if (!File.Exists(src))
+        {
+            Check(false, "raw16 sample present: sample1.rw2");
+            return;
+        }
+
+        var b16half = RawDecoder.Decode16(src, halfSize: true);
+        Check(b16half.W > 0 && b16half.H > 0 && b16half.R.Length == b16half.W * b16half.H, $"raw16 decode dims ({b16half.W}x{b16half.H})");
+
+        var seen = new HashSet<int>();
+        var rnd = new Random(7);
+        for (int k = 0; k < 400000; k++)
+        {
+            int i = rnd.Next(b16half.G.Length);
+            seen.Add(b16half.G[i]);
+        }
+        Check(seen.Count >= 1000, $"raw16 real precision above 8-bit (distinct G values: {seen.Count})");
+
+        var correctedNeutral = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false);
+        bool neutralKept = true;
+        for (int k = 0; k < 1024; k++)
+        {
+            int i = rnd.Next(b16half.G.Length);
+            if (correctedNeutral.R[i] != b16half.R[i] || correctedNeutral.G[i] != b16half.G[i] || correctedNeutral.B[i] != b16half.B[i]) { neutralKept = false; break; }
+        }
+        Check(neutralKept, "raw16 neutral pipeline preserves values");
+
+        double meanG = 0;
+        for (int i = 0; i < b16half.G.Length; i += 997) meanG += b16half.G[i];
+        meanG /= (b16half.G.Length / 997 + 1);
+        var exposed = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false,
+            extra: new PhotoAdjustments { Exposure = 0.5 });
+        double meanG2 = 0;
+        for (int i = 0; i < exposed.G.Length; i += 997) meanG2 += exposed.G[i];
+        meanG2 /= (exposed.G.Length / 997 + 1);
+        Check(meanG2 > meanG + 2000, $"raw16 exposure brightens 16-bit ({meanG:0.#} -> {meanG2:0.#})");
+
+        var mono = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.Documentary);
+        bool monoEqual = true;
+        for (int k = 0; k < 1024; k++)
+        {
+            int i = rnd.Next(mono.G.Length);
+            if (mono.R[i] != mono.G[i] || mono.G[i] != mono.B[i]) { monoEqual = false; break; }
+        }
+        Check(monoEqual, "raw16 mono sets R=G=B");
+
+        var grainA = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.TriX, grainSeed: 777);
+        var grainB = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.TriX, grainSeed: 777);
+        var grainC = Adjust16.Apply(b16half, 0.0, 1.0, null, out _, autoStretch: false, mono: MonoMode.TriX, grainSeed: 911);
+        bool seedStable = true;
+        bool seedVaries = false;
+        for (int k = 0; k < 4096; k++)
+        {
+            int i = rnd.Next(grainA.G.Length);
+            if (grainA.R[i] != grainB.R[i]) { seedStable = false; }
+            if (grainA.R[i] != grainC.R[i]) seedVaries = true;
+        }
+        Check(seedStable, "raw16 grain deterministic per seed");
+        Check(seedVaries, "raw16 grain varies across seeds");
+
+        var lifted = Adjust16.Apply(b16half, 0.5, 1.0, null, out _, autoStretch: true);
+        float before = PlaneMean(b16half.G);
+        float after = PlaneMean(lifted.G);
+        Check(Math.Abs(after - before) > 100, $"raw16 shadow lift + autostretch affects image ({before:0.#} -> {after:0.#})");
+
+        var b16full = RawDecoder.Decode16(src, halfSize: false);
+        Check(b16full.W == b16half.W * 2 && b16full.H == b16half.H * 2, $"raw16 full res decode ({b16full.W}x{b16full.H} vs half {b16half.W}x{b16half.H})");
+
+        string tifReal = Path.Combine(Path.GetTempPath(), "imgviewer_harness", "raw16_full.tif");
+        var smallFull = new Raw16Image(64, 48);
+        var rr = new Random(42);
+        for (int i = 0; i < smallFull.R.Length; i++)
+        {
+            smallFull.R[i] = (ushort)rr.Next(0, 65536);
+            smallFull.G[i] = (ushort)rr.Next(0, 65536);
+            smallFull.B[i] = (ushort)rr.Next(0, 65536);
+        }
+        MainWindow.SaveEncoded(smallFull, tifReal, tiff16: true);
+        var decReal = BitmapDecoder.Create(new MemoryStream(File.ReadAllBytes(tifReal)), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        var fr = decReal.Frames[0];
+        var bfr = new byte[fr.PixelWidth * fr.PixelHeight * 6];
+        fr.CopyPixels(bfr, fr.PixelWidth * 6, 0);
+        bool exact = true;
+        for (int i = 0; i < smallFull.R.Length; i += 37)
+        {
+            if (BitConverter.ToUInt16(bfr, i * 6) != smallFull.R[i]
+                || BitConverter.ToUInt16(bfr, i * 6 + 2) != smallFull.G[i]
+                || BitConverter.ToUInt16(bfr, i * 6 + 4) != smallFull.B[i]) { exact = false; break; }
+        }
+        Check(exact, "raw16 TIFF export stores true 16-bit values (no x257)");
+
+        Debug.Log($"RAW16 TEST: half={b16half.W}x{b16half.H} full={b16full.W}x{b16full.H} distinctG={seen.Count}");
+    }
+
+    private static float PlaneMean(ushort[] plane)
+    {
+        double s = 0;
+        for (int i = 0; i < plane.Length; i += 997) s += plane[i];
+        return (float)(s / (plane.Length / 997 + 1));
+    }
+
+    private static Raw16Image MakeRaw16(int w, int h)
+    {
+        var img = new Raw16Image(w, h);
+        var rnd = new Random(1234);
+        for (int i = 0; i < img.R.Length; i++)
+        {
+            img.R[i] = (ushort)rnd.Next(0, 65536);
+            img.G[i] = (ushort)rnd.Next(0, 65536);
+            img.B[i] = (ushort)rnd.Next(0, 65536);
+        }
+        img.R[0] = 65535; img.G[0] = 54321; img.B[0] = 12345;
+        img.R[1] = 0;
+        img.G[2] = 0;
+        img.B[3] = 0;
+        img.B[5] = 525;
+        return img;
+    }
+
     private static float LumMean(BitmapSource img)
     {
         var buf = new byte[img.PixelWidth * 4];
@@ -470,6 +629,54 @@ internal static class Program
 
         TestPhotoExtras2();
         TestSaveEncoders();
+    }
+
+    private static void TestEyeFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "imgviewer_harness");
+        Directory.CreateDirectory(dir);
+        string img = Path.Combine(dir, "sidecar_source.raw");
+        string side = EyeFile.SidecarPath(img);
+        try
+        {
+            Check(!EyeFile.TryLoad(img, out _), "eye missing -> load false");
+            Check(!File.Exists(side), "eye no sidecar without state");
+
+            var st = new EyeState
+            {
+                ShadowLift = 25,
+                Gamma = 1.4,
+                Stretch = new[] { new double[] { 0.25, 0.45 }, new double[] { 0.7, 0.66 } },
+                Mono = 2,
+                Exposure = 0.75,
+                Contrast = -30,
+                Temperature = 40,
+                Saturation = 85,
+                Highlights = -25,
+                Clarity = 41,
+                Sharpen = 30,
+                Dehaze = 12,
+                Denoise = 18,
+                ColorNoise = 24
+            };
+            EyeFile.Save(img, st);
+            Check(File.Exists(side), "eye sidecar created");
+            Check(Path.GetFileName(side) == "sidecar_source.eye", "eye sidecar name next to source");
+
+            bool ok = EyeFile.TryLoad(img, out var st2) && st2.Version == 1 &&
+                      st2.ShadowLift == 25 && st2.Gamma == 1.4 && st2.Mono == 2 &&
+                      st2.Exposure == 0.75 && st2.Contrast == -30 && st2.Temperature == 40 &&
+                      st2.Saturation == 85 && st2.Highlights == -25 && st2.Clarity == 41 &&
+                      st2.Sharpen == 30 && st2.Dehaze == 12 && st2.Denoise == 18 && st2.ColorNoise == 24 &&
+                      st2.Stretch is { Length: 2 } &&
+                      Math.Abs(st2.Stretch[0][0] - 0.25) < 1e-9 && Math.Abs(st2.Stretch[0][1] - 0.45) < 1e-9 &&
+                      Math.Abs(st2.Stretch[1][0] - 0.7) < 1e-9 && Math.Abs(st2.Stretch[1][1] - 0.66) < 1e-9;
+            Check(ok, "eye roundtrip all parameters");
+        }
+        finally
+        {
+            if (File.Exists(side)) File.Delete(side);
+        }
     }
 
     private static void TestSaveEncoders()

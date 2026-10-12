@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _applyCts;
 
     private BitmapSource? _baseBitmap;
+    private Raw16Image? _baseRaw16;
     private ImageInfo? _baseInfo;
     private bool _baseIsFull;
     private bool _saving;
@@ -185,6 +186,7 @@ public partial class MainWindow : Window
         _currentPath = path;
         _monoSeed = MonoSeed(path);
         _baseBitmap = null;
+        _baseRaw16 = null;
         _baseInfo = null;
         _fullDecodeBox = default;
         _redecodeSeq++;
@@ -193,68 +195,49 @@ public partial class MainWindow : Window
         CounterText.Text = $"{idx + 1} / {_files.Count}";
         Title = $"{Path.GetFileName(path)} — {idx + 1}/{_files.Count} — PhotographerEye";
         ResetAdjustments(silent: true);
+        ApplyEyeFile(path);
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
         HintPanel.Visibility = Visibility.Collapsed;
         SetStatus("Wczytywanie…", error: false);
 
-        Size previewBox = GetViewportBox(1);
-        Size fullBox = GetViewportBox(FullMultiplier());
-        _ = Task.Run(() => LoadWorkerAsync(path, ct, previewBox, fullBox));
+        _ = Task.Run(() => LoadWorkerAsync(path, ct));
     }
 
-    private async Task LoadWorkerAsync(string path, CancellationToken ct, Size previewBox, Size fullBox)
+    private async Task LoadWorkerAsync(string path, CancellationToken ct)
     {
-        string key = path;
         try
         {
             await _decodeGate.WaitAsync(ct);
             try
             {
                 var info = ImageLoader.GetInfo(path);
-                await Dispatcher.BeginInvoke(() =>
-                {
-                    if (!IsCurrent(path)) return;
-                    if (_previewCache.TryGetValue(key, out var cachedPreview))
-                    {
-                        SetBase(path, info, cachedPreview, false, previewBox);
-                    }
-                });
+                ct.ThrowIfCancellationRequested();
 
-                if (!_previewCache.ContainsKey(key))
+                bool raw = RawDecoder.IsRaw(path);
+                BitmapSource full;
+                if (!raw && _previewCache.TryGetValue(path, out var cached))
                 {
-                    var preview = ImageLoader.LoadScaled(path, info,
-                        Math.Max(1, (int)previewBox.Width), Math.Max(1, (int)previewBox.Height));
-                    _previewCache[key] = preview;
-                    TouchCache(key);
-                    EvictCache(key);
-                    bool posted = false;
-                    await Dispatcher.BeginInvoke(() =>
+                    full = cached;
+                }
+                else
+                {
+                    full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
+                    if (!raw)
                     {
-                        if (IsCurrent(path))
-                        {
-                            SetBase(path, info, preview, false, previewBox);
-                            SetStatus("Podgląd — wczytywanie pełnej rozdzielczości…", error: false);
-                            posted = true;
-                        }
-                    });
-                    if (!posted) return;
+                        _previewCache[path] = full;
+                        TouchCache(path);
+                        EvictCache(path);
+                    }
                 }
 
                 ct.ThrowIfCancellationRequested();
 
-                var full = ImageLoader.LoadScaled(path, info,
-                    Math.Max(1, (int)fullBox.Width), Math.Max(1, (int)fullBox.Height));
-
-                ct.ThrowIfCancellationRequested();
-
+                var nativeSize = new Size(info.Width, info.Height);
                 await Dispatcher.BeginInvoke(() =>
                 {
-                    if (!IsCurrent(path)) return;
-                    SetBase(path, info, full, true, fullBox);
+                    if (IsCurrent(path)) SetBase(path, info, full, true, nativeSize);
                 });
-
-                PrefetchNeighbors(path, previewBox);
             }
             finally
             {
@@ -281,6 +264,7 @@ public partial class MainWindow : Window
         _baseBitmap = raw;
         _baseInfo = info;
         _baseIsFull = isFull;
+        _baseRaw16 = RawDecoder.IsRaw(path) ? RawDecoder.GetCached16(path, isFull) : null;
 
         if (isFull)
         {
@@ -357,6 +341,7 @@ public partial class MainWindow : Window
     private void ReapplyAdjustments(string path, ImageInfo info)
     {
         var raw = _baseBitmap;
+        var raw16 = _baseRaw16;
         if (raw is null) return;
 
         _lastApplyTicks = Environment.TickCount64;
@@ -382,10 +367,28 @@ public partial class MainWindow : Window
         {
             try
             {
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                var processed = AdjustmentsProcessor.Apply(raw, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
-                sw.Stop();
-                Debug.Log($"APPLY: {sw.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual} mono={_monoMode:D} extra={extra is not null}");
+                if (raw16 is not null)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    var corrected = Adjust16.Apply(raw16, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
+                    sw.Stop();
+                    Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms size={raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} manual={manual} mono={_monoMode:D} extra={extra is not null}");
+                    if (ct.IsCancellationRequested) return;
+                    var disp = corrected.ToDisplay(dither: true);
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (!IsCurrent(path) || !ReferenceEquals(_baseRaw16, raw16)) return;
+                        if (_compareOn) return;
+                        Viewer.SetSource(disp, info.DisplaySize);
+                        if (hist is not null) ApplyHistogram(path, hist);
+                    });
+                    return;
+                }
+
+                var sw8 = System.Diagnostics.Stopwatch.StartNew();
+                var processed = AdjustmentsProcessor.Apply(raw, s, g, manual, out var hist8, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
+                sw8.Stop();
+                Debug.Log($"APPLY: {sw8.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual} mono={_monoMode:D} extra={extra is not null}");
                 if (processed is null || ct.IsCancellationRequested) return;
                 Dispatcher.BeginInvoke(() =>
                 {
@@ -395,7 +398,7 @@ public partial class MainWindow : Window
                         return;
                     }
                     Viewer.SetSource(processed, info.DisplaySize);
-                    if (hist is not null) ApplyHistogram(path, hist);
+                    if (hist8 is not null) ApplyHistogram(path, hist8);
                 });
             }
             catch (Exception)
@@ -506,32 +509,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void PrefetchNeighbors(string path, Size previewBox)
-    {
-        if (_dir is null) return;
-        int baseIdx = _files.FindIndex(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
-        if (baseIdx < 0) return;
-
-        foreach (var off in new[] { -1, 1 })
-        {
-            int n = ((baseIdx + off) % _files.Count + _files.Count) % _files.Count;
-            string np = _files[n];
-            if (_previewCache.ContainsKey(np)) continue;
-            try
-            {
-                var info = ImageLoader.GetInfo(np);
-                var preview = ImageLoader.LoadScaled(np, info,
-                    Math.Max(1, (int)previewBox.Width), Math.Max(1, (int)previewBox.Height));
-                _previewCache[np] = preview;
-                TouchCache(np);
-                EvictCache(np);
-            }
-            catch (Exception)
-            {
-            }
-        }
-    }
-
     private bool IsCurrent(string path) =>
         string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase) && _index >= 0;
 
@@ -575,12 +552,12 @@ public partial class MainWindow : Window
     {
         lock (_cacheOrderLock)
         {
-            while (_cacheOrder.Count > 6)
+            while (_cacheOrder.Count > 3)
             {
                 string oldest = _cacheOrder[0];
                 if (oldest == currentKey)
                 {
-                    if (_cacheOrder.Count < 7) break;
+                    if (_cacheOrder.Count < 4) break;
                     oldest = _cacheOrder[1];
                     _cacheOrder.RemoveAt(1);
                 }
@@ -644,6 +621,8 @@ public partial class MainWindow : Window
 
         bool tiff = dialog.FilterIndex == 2;
         string dest = dialog.FileName;
+        var eyeState = CaptureEyeState();
+        bool rawFile = RawDecoder.IsRaw(path);
 
         _saving = true;
         BtnSave.IsEnabled = false;
@@ -658,12 +637,30 @@ public partial class MainWindow : Window
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var info = ImageLoader.GetInfo(path);
-                var full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
-                var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
-                if (processed is null) throw new InvalidOperationException("Nie udało się przetworzyć obrazu");
-                SaveEncoded(processed, dest, tiff);
-                Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight} manual={manual} mono={_monoMode:D} tiff16={tiff}");
+                if (rawFile)
+                {
+                    var base16 = RawDecoder.Decode16(path, halfSize: false);
+                    var corrected = Adjust16.Apply(base16, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
+                    SaveEncoded(corrected, dest, tiff);
+                    Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={corrected.W}x{corrected.H} raw16 tiff16={tiff}");
+                }
+                else
+                {
+                    var info = ImageLoader.GetInfo(path);
+                    var full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
+                    var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
+                    if (processed is null) throw new InvalidOperationException("Nie udało się przetworzyć obrazu");
+                    SaveEncoded(processed, dest, tiff);
+                    Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight} manual={manual} mono={_monoMode:D} tiff16={tiff}");
+                }
+                try
+                {
+                    EyeFile.Save(path, eyeState);
+                }
+                catch (Exception eyeEx)
+                {
+                    Debug.Log($"EYE ERROR: {Path.GetFileName(path)} [{eyeEx.GetType().Name}] {eyeEx.Message}");
+                }
                 Dispatcher.BeginInvoke(() =>
                 {
                     if (IsCurrent(path)) SetStatus($"Zapisano: {Path.GetFileName(dest)} ({(tiff ? "TIFF 16-bit" : "JPG 90%")})", error: false);
@@ -685,6 +682,16 @@ public partial class MainWindow : Window
                 Dispatcher.BeginInvoke(UpdateSaveState);
             }
         });
+    }
+
+    public static void SaveEncoded(Raw16Image image, string destPath, bool tiff16)
+    {
+        if (tiff16)
+        {
+            WriteTiff16(destPath, image.ToInterleaved(), image.W, image.H);
+            return;
+        }
+        SaveEncoded(image.ToDisplay(dither: false), destPath, false);
     }
 
     public static void SaveEncoded(BitmapSource image, string destPath, bool tiff16)
@@ -712,7 +719,7 @@ public partial class MainWindow : Window
         WriteTiff16(destPath, dst, w, h);
     }
 
-    private static void WriteTiff16(string destPath, ushort[] pixels, int w, int h)
+    public static void WriteTiff16(string destPath, ushort[] pixels, int w, int h)
     {
         int payload = pixels.Length * 2;
         const int ifdTags = 13;
@@ -1074,6 +1081,61 @@ public partial class MainWindow : Window
             SetStatus("Korekty przywrócone do wartości domyślnych", error: false);
             ReapplyAdjustments();
         }
+    }
+
+    private EyeState CaptureEyeState()
+    {
+        var knots = HistogramPanel.Snapshot().Knots;
+        var stretch = new double[knots.Count][];
+        for (int i = 0; i < knots.Count; i++)
+            stretch[i] = new[] { knots[i].In, knots[i].Out };
+        return new EyeState
+        {
+            ShadowLift = ShadowSlider.Value,
+            Gamma = GammaSlider.Value,
+            Stretch = stretch,
+            Mono = (int)_monoMode,
+            Exposure = ExpSlider.Value,
+            Contrast = ContrastSlider.Value,
+            Temperature = TempSlider.Value,
+            Saturation = SatSlider.Value,
+            Highlights = HighlightsSlider.Value,
+            Clarity = ClaritySlider.Value,
+            Sharpen = SharpenSlider.Value,
+            Dehaze = DehazeSlider.Value,
+            Denoise = DenoiseSlider.Value,
+            ColorNoise = ColorNoiseSlider.Value
+        };
+    }
+
+    private void ApplyEyeFile(string path)
+    {
+        if (!EyeFile.TryLoad(path, out var st)) return;
+        ShadowSlider.Value = Math.Clamp(st.ShadowLift, ShadowSlider.Minimum, ShadowSlider.Maximum);
+        PanelShadowSlider.Value = Math.Clamp(st.ShadowLift, PanelShadowSlider.Minimum, PanelShadowSlider.Maximum);
+        GammaSlider.Value = Math.Clamp(st.Gamma, GammaSlider.Minimum, GammaSlider.Maximum);
+        _monoMode = (MonoMode)Math.Clamp(st.Mono, 0, (int)MonoMode.TriX);
+        UpdateMonoButton();
+        if (st.Stretch is { Length: > 0 })
+        {
+            var knots = new List<StretchKnot>(st.Stretch.Length);
+            foreach (var p in st.Stretch)
+                if (p is { Length: 2 })
+                    knots.Add(new StretchKnot(Math.Clamp(p[0], 0.0, 1.0), Math.Clamp(p[1], 0.0, 1.0)));
+            HistogramPanel.RestoreManualStretch(knots);
+        }
+        ExpSlider.Value = Math.Clamp(st.Exposure, ExpSlider.Minimum, ExpSlider.Maximum);
+        ContrastSlider.Value = Math.Clamp(st.Contrast, ContrastSlider.Minimum, ContrastSlider.Maximum);
+        TempSlider.Value = Math.Clamp(st.Temperature, TempSlider.Minimum, TempSlider.Maximum);
+        SatSlider.Value = Math.Clamp(st.Saturation, SatSlider.Minimum, SatSlider.Maximum);
+        HighlightsSlider.Value = Math.Clamp(st.Highlights, HighlightsSlider.Minimum, HighlightsSlider.Maximum);
+        ClaritySlider.Value = Math.Clamp(st.Clarity, ClaritySlider.Minimum, ClaritySlider.Maximum);
+        SharpenSlider.Value = Math.Clamp(st.Sharpen, SharpenSlider.Minimum, SharpenSlider.Maximum);
+        DehazeSlider.Value = Math.Clamp(st.Dehaze, DehazeSlider.Minimum, DehazeSlider.Maximum);
+        DenoiseSlider.Value = Math.Clamp(st.Denoise, DenoiseSlider.Minimum, DenoiseSlider.Maximum);
+        ColorNoiseSlider.Value = Math.Clamp(st.ColorNoise, ColorNoiseSlider.Minimum, ColorNoiseSlider.Maximum);
+        UpdatePanelLabels();
+        ReapplyAdjustments();
     }
 
     private void OnAdjustSliderDown(object sender, MouseButtonEventArgs e)

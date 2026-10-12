@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -43,6 +44,14 @@ public sealed class HistogramOverlay : FrameworkElement
     {
         if (_manual.Count == 0) return;
         _manual.Clear();
+        InvalidateVisual();
+    }
+
+    public void RestoreManualStretch(IEnumerable<StretchKnot> knots)
+    {
+        _manual.Clear();
+        foreach (var k in knots)
+            _manual.Upsert(k.In, k.Out);
         InvalidateVisual();
     }
 
