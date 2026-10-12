@@ -7,6 +7,7 @@ using ImgViewer.Controls;
 using ImgViewer.Imaging;
 using ImgViewer.Services;
 using ImgViewer;
+using Sdcb.LibRaw;
 
 internal static class Program
 {
@@ -18,6 +19,46 @@ internal static class Program
         if (args.Length > 0 && args[0] == "--probe")
         {
             ProbeDecode(args[1]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--hl-probe")
+        {
+            HighlightProbe(args[1]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--lin-probe")
+        {
+            LinearProbe(args[1]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--dump")
+        {
+            DumpPreview(args[1], args[2], args.Length > 3 ? double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture) : 0.0);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--meta")
+        {
+            MetaProbe(args[1]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--region")
+        {
+            RegionProbe(args[1], double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture), double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture), double.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture), double.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture));
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--magenta")
+        {
+            MagentaProbe(args[1]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--modescan")
+        {
+            ModeScan(args[1]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--dumpmode")
+        {
+            DumpMode(args[1], args[2], int.Parse(args[3]), args.Length > 4 ? float.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture) : 0.75f);
             return;
         }
         if (args.Length > 0 && args[0] == "--exif6")
@@ -1000,6 +1041,297 @@ internal static class Program
         catch (Exception ex)
         {
             Console.WriteLine($"{Path.GetFileName(path)}: GetInfo FAIL [{ex.GetType().Name}] {ex.Message}");
+        }
+    }
+
+    private static void MagentaProbe(string path)
+    {
+        var raw = RawDecoder.Decode16(path, false);
+        int n = raw.R.Length;
+        long over2k = 0, over4k = 0, over8k = 0;
+        double mr = 0, mg = 0, mb = 0;
+        long mn = 0;
+        for (int i = 0; i < n; i++)
+        {
+            int r = raw.R[i], g = raw.G[i], b = raw.B[i];
+            int score = Math.Min(r, b) - g;
+            if (score > 2000) over2k++;
+            if (score > 4000) { over4k++; mr += r; mg += g; mb += b; mn++; }
+            if (score > 8000) over8k++;
+        }
+        Console.WriteLine($"== magenta {Path.GetFileName(path)} n={n} ==");
+        Console.WriteLine($"  score>2000: {over2k} ({100.0 * over2k / n:0.00}%)  >4000: {over4k}  >8000: {over8k}");
+        if (mn > 0) Console.WriteLine($"  mean of >4000: R={mr / mn:0} G={mg / mn:0} B={mb / mn:0}");
+    }
+
+    private static void ModeScan(string path)
+    {
+        Console.WriteLine($"== modescan {Path.GetFileName(path)} ==");
+        foreach (int mode in new[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 })
+        {
+            ushort[]? data = null;
+            int w = 0, h = 0;
+            try
+            {
+                using var r = RawContext.OpenFile(path);
+                r.Unpack();
+                r.DcrawProcess(p =>
+                {
+                    p.HalfSize = false;
+                    p.UseCameraWb = true;
+                    p.OutputBps = 16;
+                    p.OutputTiff = false;
+                    p.HighlightMode = mode;
+                    p.NoAutoBright = true;
+                });
+                using var img = r.MakeDcrawMemoryImage();
+                data = img.AsSpan<ushort>().ToArray();
+                w = img.Width;
+                h = img.Height;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  mode {mode}: ERROR {ex.GetType().Name}");
+                continue;
+            }
+            var raw = Raw16Image.FromInterleaved(data, w, h);
+            long over4k = 0, over2k = 0;
+            int n = raw.R.Length;
+            for (int i = 0; i < n; i++)
+            {
+                int score = Math.Min(raw.R[i], raw.B[i]) - raw.G[i];
+                if (score > 2000) over2k++;
+                if (score > 4000) over4k++;
+            }
+            Console.WriteLine($"  mode {mode}: magenta>2000={100.0 * over2k / n:0.00}%  >4000={100.0 * over4k / n:0.00}%");
+        }
+    }
+
+    private static void RegionProbe(string path, double x0f, double y0f, double x1f, double y1f)
+    {        var raw = RawDecoder.Decode16(path, false);
+        int x0 = (int)(raw.W * x0f), x1 = (int)(raw.W * x1f);
+        int y0 = (int)(raw.H * y0f), y1 = (int)(raw.H * y1f);
+        double sR = 0, sG = 0, sB = 0, lR = 0, lG = 0, lB = 0;
+        long n = 0, cR = 0, cG = 0, cB = 0;
+        for (int y = y0; y < y1; y++)
+        {
+            int row = y * raw.W;
+            for (int x = x0; x < x1; x++)
+            {
+                ushort r = raw.R[row + x], g = raw.G[row + x], b = raw.B[row + x];
+                sR += r; sG += g; sB += b;
+                if (r >= 65535) cR++;
+                if (g >= 65535) cG++;
+                if (b >= 65535) cB++;
+                lR += r / 65535.0; lG += g / 65535.0; lB += b / 65535.0;
+                n++;
+            }
+        }
+        Console.WriteLine($"== region {Path.GetFileName(path)} x[{x0f},{x1f}] y[{y0f},{y1f}] n={n} ==");
+        Console.WriteLine($"  mean enc R={sR / n:0} G={sG / n:0} B={sB / n:0}");
+        Console.WriteLine($"  clipped R={100.0 * cR / n:0.0}% G={100.0 * cG / n:0.0}% B={100.0 * cB / n:0.0}%");
+    }
+
+    private static void MetaProbe(string path)
+    {
+        using var r = RawContext.OpenFile(path);
+        r.Unpack();
+        Console.WriteLine($"== meta {Path.GetFileName(path)} ==");
+        Console.WriteLine($"  colorMaximum={r.ColorMaximum} adjustMaxThr={r.AdjustMaximumThreshold} gamma={r.Gamma} outColor={r.OutputColorSpace}");
+        Console.WriteLine($"  cameraMul=[{string.Join(", ", r.CameraMultipler)}]");
+        Console.WriteLine($"  preMul=[{string.Join(", ", r.PreMultipler)}]");
+        Console.WriteLine($"  userMul=[{string.Join(", ", r.UserMultiplier)}]");
+        Console.WriteLine($"  raw={r.RawWidth}x{r.RawHeight} out={r.Width}x{r.Height}");
+    }
+
+    private static void DumpMode(string path, string outPath, int mode, float adjustMaxThr)
+    {
+        using var r = RawContext.OpenFile(path);
+        r.Unpack();
+        r.AdjustMaximumThreshold = adjustMaxThr;
+        r.DcrawProcess(p =>
+        {
+            p.HalfSize = false;
+            p.UseCameraWb = true;
+            p.OutputBps = 16;
+            p.OutputTiff = false;
+            p.HighlightMode = mode;
+            p.NoAutoBright = true;
+        });
+        using var img = r.MakeDcrawMemoryImage();
+        var raw16 = Raw16Image.FromInterleaved(img.AsSpan<ushort>().ToArray(), img.Width, img.Height);
+        double ev = LinearRender.ComputeBaseEv(raw16);
+        var render = LinearRender.ApplyGain(raw16, ev, 0.0);
+        var disp = render.ToDisplay(dither: false);
+        var enc = new JpegBitmapEncoder { QualityLevel = 90 };
+        enc.Frames.Add(BitmapFrame.Create(disp));
+        using (var fs = File.Create(outPath)) enc.Save(fs);
+        Console.WriteLine($"dumped mode={mode} thr={adjustMaxThr} baseEv={ev:0.00} -> {outPath}");
+    }
+
+    private static void DumpPreview(string path, string outPath, double extraEv)
+    {
+        var raw = RawDecoder.Decode16(path, false);
+        double ev = RawDecoder.GetBaseEv(path);
+        var render = LinearRender.ApplyGain(raw, ev + extraEv, 0.0);
+        var adjusted = Adjust16.Apply(render, 0.0, 1.0, null, out _, autoStretch: false);
+        var disp = adjusted.ToDisplay(dither: false);
+        var enc = new JpegBitmapEncoder { QualityLevel = 90 };
+        enc.Frames.Add(BitmapFrame.Create(disp));
+        using (var fs = File.Create(outPath)) enc.Save(fs);
+        Console.WriteLine($"dumped {Path.GetFileName(path)} baseEv={ev:0.00} extraEv={extraEv:0.0} -> {outPath}");
+    }
+
+    private static void LinearProbe(string path)
+    {
+        var raw = RawDecoder.Decode16(path, false);
+        double ev = RawDecoder.GetBaseEv(path);
+        Console.WriteLine($"== linear probe: {Path.GetFileName(path)} baseEv={ev:0.00} ==");
+
+        var def = LinearRender.ApplyGain(raw, ev, 0.0);
+        int n = def.R.Length;
+        long baseClip = 0;
+        for (int i = 0; i < n; i++)
+            if (def.R[i] >= 65535 || def.G[i] >= 65535 || def.B[i] >= 65535) baseClip++;
+        Console.WriteLine($"  default: clipped(any)={baseClip} of {n} ({100.0 * baseClip / n:0.00}%)");
+
+        foreach (double u in new[] { 0.0, -0.5, -1.0, -1.5, -2.0 })
+        {
+            var r = LinearRender.ApplyGain(raw, ev + u, 0.0);
+            long clip = 0;
+            double encSum = 0;
+            for (int i = 0; i < n; i++)
+            {
+                encSum += r.R[i] + r.G[i] + r.B[i];
+                if (r.R[i] >= 65535 || r.G[i] >= 65535 || r.B[i] >= 65535) clip++;
+            }
+            Console.WriteLine($"    userEv={u,4:0.0}  clipAny={clip,8}  encMean/px={encSum / (3.0 * n):0.0}");
+        }
+
+        var low = LinearRender.ApplyGain(raw, ev - 2.0, 0.0);
+        var histR = new long[65536];
+        long cnt = 0;
+        for (int i = 0; i < n; i++)
+            if (def.R[i] >= 65535) { histR[low.R[i]]++; cnt++; }
+        int distinct = 0;
+        for (int v = 0; v < 65536; v++) if (histR[v] > 0) distinct++;
+        Console.WriteLine($"  default-clipped R pixels n={cnt} -> after -2EV distinct={distinct} (gradient recovered)");
+    }
+
+    private static void HighlightProbe(string path)
+    {
+        Console.WriteLine($"== highlight probe: {Path.GetFileName(path)} ==");
+
+        ushort[] Decode(int mode, bool noAutoBright)
+        {
+            using var r = RawContext.OpenFile(path);
+            r.Unpack();
+            r.DcrawProcess(p =>
+            {
+                p.HalfSize = false;
+                p.UseCameraWb = true;
+                p.OutputBps = 16;
+                p.OutputTiff = false;
+                p.HighlightMode = mode;
+                p.NoAutoBright = noAutoBright;
+            });
+            using var img = r.MakeDcrawMemoryImage();
+            return img.AsSpan<ushort>().ToArray();
+        }
+
+        var b = Decode(0, true);
+        int n = b.Length / 3;
+        long baseClipR = 0, baseClipG = 0, baseClipB = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (b[i * 3] >= 65535) baseClipR++;
+            if (b[i * 3 + 1] >= 65535) baseClipG++;
+            if (b[i * 3 + 2] >= 65535) baseClipB++;
+        }
+        Console.WriteLine($"  base hl=0 noAutoBright: clipped R={baseClipR} G={baseClipG} B={baseClipB} of {n}");
+
+        double EncMean(ushort[] a) { double s = 0; foreach (var v in a) s += v; return s / a.Length; }
+        double LinMean(ushort[] a) { double s = 0; foreach (var v in a) { double cc = v / 65535.0; s += cc <= 0.04045 ? cc / 12.92 : Math.Pow((cc + 0.055) / 1.055, 2.4); } return s / a.Length; }
+        Console.WriteLine("  --- default brightness (encMean / linMean / linear pct) ---");
+        foreach (var cfg in new[] { (0, false, "hl0 autoBright (current)"), (5, false, "hl5 autoBright"), (5, true, "hl5 noAuto"), (0, true, "hl0 noAuto") })
+        {
+            var d = Decode(cfg.Item1, cfg.Item2);
+            var lin = new double[d.Length / 3];
+            for (int i = 0; i < lin.Length; i++)
+            {
+                double r = d[i * 3] / 65535.0, g = d[i * 3 + 1] / 65535.0, bl = d[i * 3 + 2] / 65535.0;
+                double lr = r <= 0.04045 ? r / 12.92 : Math.Pow((r + 0.055) / 1.055, 2.4);
+                double lg = g <= 0.04045 ? g / 12.92 : Math.Pow((g + 0.055) / 1.055, 2.4);
+                double lb = bl <= 0.04045 ? bl / 12.92 : Math.Pow((bl + 0.055) / 1.055, 2.4);
+                lin[i] = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
+            }
+            Array.Sort(lin);
+            double P(double p) => lin[Math.Min(lin.Length - 1, (int)(lin.Length * p))];
+            Console.WriteLine($"    {cfg.Item3,-25} encMean={EncMean(d):0.0} linMean={LinMean(d):0.00000} p10={P(0.10):0.0000} p50={P(0.50):0.0000} p90={P(0.90):0.0000} p99={P(0.99):0.0000} p99.99={P(0.9999):0.0000}");
+        }
+
+        foreach (int mode in new[] { 1, 2, 3, 5, 6 })
+        {
+            var m = Decode(mode, true);
+            for (int c = 0; c < 3; c++)
+            {
+                var baseClip = c == 0 ? baseClipR : c == 1 ? baseClipG : baseClipB;
+                if (baseClip == 0) continue;
+                var hist = new long[65536];
+                long sumMode = 0, cnt = 0, sumBase = 0;
+                int min = 65535, max = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    int bi = b[i * 3 + c];
+                    if (bi < 65535) continue;
+                    int mi = m[i * 3 + c];
+                    hist[mi]++;
+                    sumMode += mi; cnt++;
+                    sumBase += bi;
+                    if (mi < min) min = mi;
+                    if (mi > max) max = mi;
+                }
+                int distinct = 0;
+                for (int v = 0; v < 65536; v++) if (hist[v] > 0) distinct++;
+                double meanMode = cnt > 0 ? (double)sumMode / cnt : 0;
+                Console.WriteLine($"  hl={mode} ch={c}: base-clipped n={cnt} -> distinct={distinct} min={min} max={max} mean={meanMode:0.0} (base mean {((double)sumBase / Math.Max(1, cnt)):0.0})");
+            }
+            long sum0 = 0, sum1 = 0;
+            for (int i = 0; i < b.Length; i++) { sum0 += b[i]; sum1 += m[i]; }
+            Console.WriteLine($"  hl={mode} overall mean ratio = {(double)sum1 / sum0:0.0000}");
+        }
+
+        Console.WriteLine("  --- recovery + brightness compensation (mode 5) ---");
+        foreach (double br in new[] { 1.0, 1.2, 1.4, 1.5048, 1.6 })
+        {
+            using var r = RawContext.OpenFile(path);
+            r.Unpack();
+            r.DcrawProcess(p =>
+            {
+                p.HalfSize = false;
+                p.UseCameraWb = true;
+                p.OutputBps = 16;
+                p.OutputTiff = false;
+                p.HighlightMode = 5;
+                p.NoAutoBright = true;
+                p.Brightness = (float)br;
+            });
+            using var img = r.MakeDcrawMemoryImage();
+            var m = img.AsSpan<ushort>().ToArray();
+            long sum0 = 0, sum1 = 0, clipR = 0, clipG = 0, clipB = 0;
+            for (int i = 0; i < b.Length; i++) { sum0 += b[i]; sum1 += m[i]; }
+            for (int i = 0; i < n; i++)
+            {
+                if (m[i * 3] >= 65535) clipR++;
+                if (m[i * 3 + 1] >= 65535) clipG++;
+                if (m[i * 3 + 2] >= 65535) clipB++;
+            }
+            var histR = new long[65536];
+            long cnt = 0;
+            for (int i = 0; i < n; i++) if (b[i * 3] >= 65535) { histR[m[i * 3]]++; cnt++; }
+            int distinct = 0;
+            for (int v = 0; v < 65536; v++) if (histR[v] > 0) distinct++;
+            Console.WriteLine($"  bright={br:0.0000}: ratio={((double)sum1 / sum0):0.0000} clipR={clipR} clipG={clipG} clipB={clipB} baseClipR-recovered distinct={distinct}/{cnt}");
         }
     }
 

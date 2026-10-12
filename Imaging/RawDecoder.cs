@@ -52,6 +52,14 @@ public static class RawDecoder
         }
     }
 
+    public static double GetBaseEv(string path)
+    {
+        lock (DecodeLock)
+        {
+            return Cache.TryGetValue(path, out var e) ? e.FullEv : 0.0;
+        }
+    }
+
     private static CacheEntry Fill(string path, bool halfSize)
     {
         var entry = Cache.GetOrAdd(path, _ => new CacheEntry());
@@ -62,7 +70,7 @@ public static class RawDecoder
             : entry.Full16 is not null && entry.Full is not null;
         if (ready) return entry;
 
-        var (raw16, display) = DecodePair(path, halfSize);
+        var (raw16, display, ev) = DecodePair(path, halfSize);
         if (halfSize)
         {
             entry.Half16 = raw16;
@@ -72,12 +80,13 @@ public static class RawDecoder
         {
             entry.Full16 = raw16;
             entry.Full = display;
+            entry.FullEv = ev;
         }
         Evict(path);
         return entry;
     }
 
-    private static (Raw16Image Raw, BitmapSource Display) DecodePair(string path, bool halfSize)
+    private static (Raw16Image Raw, BitmapSource Display, double Ev) DecodePair(string path, bool halfSize)
     {
         using var r = RawContext.OpenFile(path);
         r.Unpack();
@@ -87,6 +96,8 @@ public static class RawDecoder
             p.UseCameraWb = true;
             p.OutputBps = 16;
             p.OutputTiff = false;
+            p.HighlightMode = 2;
+            p.NoAutoBright = true;
         });
         using var img = r.MakeDcrawMemoryImage();
 
@@ -96,9 +107,11 @@ public static class RawDecoder
         int w = img.Width;
         int h = img.Height;
         var raw16 = Raw16Image.FromInterleaved(img.AsSpan<ushort>().ToArray(), w, h);
-        var display = raw16.ToDisplay(dither: true);
-        Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp");
-        return (raw16, display);
+        double ev = LinearRender.ComputeBaseEv(raw16);
+        var normalized = LinearRender.ApplyGain(raw16, ev, 0.0);
+        var display = normalized.ToDisplay(dither: true);
+        Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp hl=2 baseEv={ev:0.00}");
+        return (raw16, display, ev);
     }
 
     public static ImageInfo GetInfo(string path)
@@ -152,6 +165,7 @@ public static class RawDecoder
         public Raw16Image? Full16;
         public BitmapSource? Half;
         public BitmapSource? Full;
+        public double FullEv;
         public long LastUse;
         public void Touch() => LastUse = Environment.TickCount64;
     }

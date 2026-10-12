@@ -35,6 +35,7 @@ public partial class MainWindow : Window
 
     private BitmapSource? _baseBitmap;
     private Raw16Image? _baseRaw16;
+    private double _baseEv;
     private ImageInfo? _baseInfo;
     private bool _baseIsFull;
     private bool _saving;
@@ -102,7 +103,7 @@ public partial class MainWindow : Window
             });
         };
 
-        _adjustTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
+        _adjustTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
         _adjustTimer.Tick += (_, _) =>
         {
             _adjustTimer.Stop();
@@ -265,6 +266,7 @@ public partial class MainWindow : Window
         _baseInfo = info;
         _baseIsFull = isFull;
         _baseRaw16 = RawDecoder.IsRaw(path) ? RawDecoder.GetCached16(path, isFull) : null;
+        _baseEv = _baseRaw16 is not null ? RawDecoder.GetBaseEv(path) : 0.0;
 
         if (isFull)
         {
@@ -349,7 +351,7 @@ public partial class MainWindow : Window
         double g = GammaSlider.Value;
         var manual = HistogramPanel.Snapshot();
 
-        if (AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null)
+        if (raw16 is null && AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null)
         {
             _applyCts?.Cancel();
             Viewer.SetSource(raw, info.DisplaySize);
@@ -362,6 +364,7 @@ public partial class MainWindow : Window
         _applyCts?.Dispose();
         _applyCts = new CancellationTokenSource();
         var ct = _applyCts.Token;
+        double baseEv = _baseEv;
 
         _ = Task.Run(() =>
         {
@@ -370,9 +373,11 @@ public partial class MainWindow : Window
                 if (raw16 is not null)
                 {
                     var sw = System.Diagnostics.Stopwatch.StartNew();
-                    var corrected = Adjust16.Apply(raw16, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
+                    var rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, ct);
+                    var extra2 = StripExposureTemp(extra);
+                    var corrected = Adjust16.Apply(rendered, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct);
                     sw.Stop();
-                    Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms size={raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} manual={manual} mono={_monoMode:D} extra={extra is not null}");
+                    Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms size={raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} baseEv={baseEv:0.00} manual={manual} mono={_monoMode:D} extra={extra2 is not null}");
                     if (ct.IsCancellationRequested) return;
                     var disp = corrected.ToDisplay(dither: true);
                     Dispatcher.BeginInvoke(() =>
@@ -640,7 +645,8 @@ public partial class MainWindow : Window
                 if (rawFile)
                 {
                     var base16 = RawDecoder.Decode16(path, halfSize: false);
-                    var corrected = Adjust16.Apply(base16, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
+                    var rendered = LinearRender.ApplyGain(base16, RawDecoder.GetBaseEv(path) + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0);
+                    var corrected = Adjust16.Apply(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra));
                     SaveEncoded(corrected, dest, tiff);
                     Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={corrected.W}x{corrected.H} raw16 tiff16={tiff}");
                 }
@@ -915,6 +921,24 @@ public partial class MainWindow : Window
             DenoiseSlider.Value,
             ColorNoiseSlider.Value);
         return a.IsDefault ? null : a;
+    }
+
+    private static PhotoAdjustments? StripExposureTemp(PhotoAdjustments? a)
+    {
+        if (a is null) return null;
+        return new PhotoAdjustments
+        {
+            Exposure = 0.0,
+            Temperature = 0.0,
+            Contrast = a.Contrast,
+            Saturation = a.Saturation,
+            Clarity = a.Clarity,
+            Sharpen = a.Sharpen,
+            Highlights = a.Highlights,
+            Dehaze = a.Dehaze,
+            Denoise = a.Denoise,
+            ColorNoise = a.ColorNoise
+        };
     }
 
     private bool _syncingShadow;
