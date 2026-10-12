@@ -84,7 +84,7 @@
                 <Border Style="{StaticResource ToolSeparator}" />
 
                 <Button x:Name="BtnZoomOut" Content="&#x2212;" Style="{StaticResource ToolButton}" Click="OnZoomOutClick" />
-                <Slider x:Name="ZoomSlider" Width="80" Margin="6,0" VerticalAlignment="Center" Minimum="0.1" Maximum="4" SmallChange="0.05" LargeChange="0.25" />
+                <Slider x:Name="ZoomSlider" Width="80" Margin="6,0" VerticalAlignment="Center" Minimum="0.1" Maximum="4" SmallChange="0.05" LargeChange="0.25" v:PhotoshopSlider.Enable="True" />
                 <TextBlock x:Name="ZoomLabel" VerticalAlignment="Center" MinWidth="46" TextAlignment="Right" Margin="0,0,4,0" Text="100 %" />
                 <Button x:Name="BtnZoomIn" Content="+" Style="{StaticResource ToolButton}" Click="OnZoomInClick" />
                 <Button x:Name="BtnFit" Content="&#xE9A9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
@@ -94,11 +94,11 @@
                 <Border Style="{StaticResource ToolSeparator}" />
 
                 <TextBlock Text="Cienie" Style="{StaticResource ToolLabel}" />
-                <Slider x:Name="ShadowSlider" Width="90" VerticalAlignment="Center" Minimum="-50" Maximum="70" SmallChange="1" LargeChange="10" />
+                <Slider x:Name="ShadowSlider" Width="90" VerticalAlignment="Center" Minimum="-50" Maximum="70" SmallChange="1" LargeChange="10" v:PhotoshopSlider.Enable="True" />
                 <TextBlock x:Name="ShadowValue" Width="48" Margin="5,0,0,0" VerticalAlignment="Center" Text="0 %" TextAlignment="Right" />
 
                 <TextBlock Text="Gamma" Style="{StaticResource ToolLabel}" />
-                <Slider x:Name="GammaSlider" Width="90" VerticalAlignment="Center" Minimum="0.5" Maximum="2" SmallChange="0.02" LargeChange="0.1" />
+                <Slider x:Name="GammaSlider" Width="90" VerticalAlignment="Center" Minimum="0.5" Maximum="2" SmallChange="0.02" LargeChange="0.1" v:PhotoshopSlider.Enable="True" />
                 <TextBlock x:Name="GammaValue" Width="48" Margin="5,0,0,0" VerticalAlignment="Center" Text="1.00" TextAlignment="Right" />
 
                 <Button x:Name="BtnReset" Content="Reset" Margin="8,0,0,0" Style="{StaticResource ToolButton}" Click="OnResetClick" />
@@ -226,14 +226,14 @@
                                      <TextBlock Text="Ekspozycja" />
                                      <TextBlock x:Name="ExpValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0.00" />
                                  </Grid>
-                                 <Slider x:Name="ExpSlider" Minimum="-2" Maximum="2" SmallChange="0.05" LargeChange="0.25" Margin="0,4,0,0" />
+                                  <Slider x:Name="ExpSlider" Minimum="-2" Maximum="2" SmallChange="0.05" LargeChange="0.25" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Kontrast" />
                                      <TextBlock x:Name="ContrastValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                                  </Grid>
-                                 <Slider x:Name="ContrastSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="ContrastSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
@@ -253,63 +253,63 @@
                                          <TextBlock x:Name="TempValue" Foreground="{StaticResource MutedBrush}" Text="0" />
                                      </StackPanel>
                                  </Grid>
-                                 <Slider x:Name="TempSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="TempSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Nasycenie" />
                                      <TextBlock x:Name="SatValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="100 %" />
                                  </Grid>
-                                 <Slider x:Name="SatSlider" Value="100" Minimum="0" Maximum="200" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="SatSlider" Value="100" Minimum="0" Maximum="200" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Cienie" />
                                      <TextBlock x:Name="PanelShadowValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0 %" />
                                  </Grid>
-                                 <Slider x:Name="PanelShadowSlider" Minimum="-50" Maximum="70" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="PanelShadowSlider" Minimum="-50" Maximum="70" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Światła" />
                                      <TextBlock x:Name="HighlightsValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                                  </Grid>
-                                 <Slider x:Name="HighlightsSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="HighlightsSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Clarity" />
                                      <TextBlock x:Name="ClarityValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                                  </Grid>
-                                 <Slider x:Name="ClaritySlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="ClaritySlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Wyostrzenie" />
                                      <TextBlock x:Name="SharpenValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                                  </Grid>
-                                 <Slider x:Name="SharpenSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="SharpenSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Dehaze" />
                                      <TextBlock x:Name="DehazeValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                                  </Grid>
-                                 <Slider x:Name="DehazeSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="DehazeSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Odszumianie" />
                                      <TextBlock x:Name="DenoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                                  </Grid>
-                                 <Slider x:Name="DenoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="DenoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                              <StackPanel Margin="0,12,0,0">
                                  <Grid>
                                      <TextBlock Text="Redukcja szumu kolorów" />
                                      <TextBlock x:Name="ColorNoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                                  </Grid>
-                                 <Slider x:Name="ColorNoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" />
+                                  <Slider x:Name="ColorNoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                              </StackPanel>
                          </StackPanel>
                      </ScrollViewer>

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ImgViewer.Controls;
@@ -84,6 +85,8 @@ internal static class Program
         TestCrossImageSwitch();
         TestRaw();
         TestRaw16();
+        TestGpu();
+        TestSliders();
         TestPhotoExtras();
         TestExifRotation();
         TestEyeFile();
@@ -434,6 +437,122 @@ internal static class Program
 
             Debug.Log($"RAW TEST {f}: info={info.Width}x{info.Height} full={half.PixelWidth}x{half.PixelHeight}");
         }
+    }
+
+    private static void TestGpu()
+    {
+        string name = Adjust16.GpuDeviceName;
+        if (name is null)
+        {
+            Console.WriteLine("gpu: brak sprzętowego GPU, test pominięty");
+            return;
+        }
+        Console.WriteLine($"gpu: {name}");
+
+        string src = Path.Combine(Path.GetTempPath(), "opencode", "rawsamples", "sample1.rw2");
+        if (!File.Exists(src))
+        {
+            Check(false, "gpu sample present: sample1.rw2");
+            return;
+        }
+
+        var base16 = RawDecoder.Decode16(src, halfSize: false);
+        var extra = new PhotoAdjustments
+        {
+            Contrast = 0.25,
+            Saturation = 1.2,
+            Temperature = 0.15,
+            Clarity = 0.45,
+            Sharpen = 0.4,
+            Highlights = -0.3,
+            Dehaze = 0.2,
+            Denoise = 0.4,
+            ColorNoise = 0.4
+        };
+
+        var swCpu = System.Diagnostics.Stopwatch.StartNew();
+        var cpu = Adjust16.Apply(base16, 0.3, 1.15, null, out var histCpu, mono: MonoMode.TriX, grainSeed: 555, extra: extra);
+        swCpu.Stop();
+
+        var swGpu = System.Diagnostics.Stopwatch.StartNew();
+        var gpu = Adjust16.TryApplyGpu(base16, 0.3, 1.15, null, out var histGpu, mono: MonoMode.TriX, grainSeed: 555, extra: extra);
+        swGpu.Stop();
+
+        Check(gpu is not null, "gpu pipeline returns image");
+        if (gpu is null) return;
+
+        Check(gpu.W == cpu.W && gpu.H == cpu.H, $"gpu dims match ({gpu.W}x{gpu.H})");
+
+        long sum = 0;
+        int max = 0;
+        long cnt = 0;
+        for (int i = 0; i < cpu.G.Length; i += 7)
+        {
+            int dr = Math.Abs(cpu.R[i] - gpu.R[i]);
+            int dg = Math.Abs(cpu.G[i] - gpu.G[i]);
+            int db = Math.Abs(cpu.B[i] - gpu.B[i]);
+            int d = Math.Max(dr, Math.Max(dg, db));
+            sum += dr + dg + db;
+            if (d > max) max = d;
+            cnt++;
+        }
+        double mean = sum / (double)(cnt * 3);
+        Check(mean < 8.0, $"gpu vs cpu mean abs diff ({mean:0.##}, max {max})");
+        Console.WriteLine($"gpu: cpu={swCpu.ElapsedMilliseconds}ms gpu={swGpu.ElapsedMilliseconds}ms meanDiff={mean:0.###} maxDiff={max}");
+
+        var gpuNoop = Adjust16.TryApplyGpu(base16, 0.0, 1.0, null, out _, autoStretch: false, extra: new PhotoAdjustments());
+        Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obsługuje CPU)");
+
+        bool prevEnabled = Adjust16.GpuEnabled;
+        Adjust16.GpuEnabled = false;
+        var disabled = Adjust16.TryApplyGpu(base16, 0.3, 1.15, null, out _, mono: MonoMode.TriX, extra: extra);
+        Adjust16.GpuEnabled = prevEnabled;
+        Check(disabled is null, "gpu wyłączony -> fallback CPU");
+        Console.WriteLine($"gpu status: {Adjust16.GpuStatus}");
+    }
+
+    private static void TestSliders()
+    {
+        static bool Near(double a, double b) => Math.Abs(a - b) < 1e-9;
+
+        Check(Near(PhotoshopSlider.Factor(false, false, false), 1.0), "suwak: normalny wsp. = 1");
+        Check(Near(PhotoshopSlider.Factor(false, true, false), 0.1), "suwak: Alt = precyzyjnie 0,1");
+        Check(Near(PhotoshopSlider.Factor(false, false, true), 0.1), "suwak: Ctrl = precyzyjnie 0,1");
+        Check(Near(PhotoshopSlider.Factor(true, false, false), 10.0), "suwak: Shift = szybko 10");
+
+        Check(Near(PhotoshopSlider.Quantum(0.05), 0.01), "suwak: kwant EV 0,01");
+        Check(Near(PhotoshopSlider.Quantum(1.0), 1.0), "suwak: kwant liczb całkowitych 1");
+
+        Check(Near(PhotoshopSlider.Snap(0.037, -2, 2, 0.05), 0.04), "suwak: zaokrąglenie EV 0,037->0,04");
+        Check(Near(PhotoshopSlider.Snap(2.7, -100, 100, 1.0), 3.0), "suwak: zaokrąglenie 2,7->3");
+        Check(Near(PhotoshopSlider.Snap(9.9, -5, 5, 1.0), 5.0), "suwak: przycięcie do maksimum");
+
+        // ekspozycja: pełny tor (250 px) = pełny zakres 4 EV, krok 0,01 EV
+        Check(Near(PhotoshopSlider.Scrub(0, 250, -2, 2, 0.05, false, false, false), 2.0), "suwak: 250 px = pełny zakres");
+        Check(Near(PhotoshopSlider.Scrub(0, 100, -2, 2, 0.05, false, false, false), 1.6), "suwak: 100 px = +1,6 EV");
+        Check(Near(PhotoshopSlider.Scrub(0, 100, -2, 2, 0.05, false, true, false), 0.16), "suwak: Alt 100 px = +0,16 EV (precyzja)");
+        Check(Near(PhotoshopSlider.Scrub(-0.5, 50, -2, 2, 0.05, false, false, true), -0.42), "suwak: Ctrl 50 px od -0,5 = -0,42 EV");
+
+        // kontrast: zakres 200, 25 px ~ 20 jednostek, Ctrl -> 2
+        Check(Near(PhotoshopSlider.Scrub(0, 25, -100, 100, 1.0, false, false, false), 20), "suwak: kontrast 25 px = +20");
+        Check(Near(PhotoshopSlider.Scrub(0, 25, -100, 100, 1.0, false, true, false), 2), "suwak: kontrast Alt 25 px = +2");
+        Check(PhotoshopSlider.Scrub(0, 999, -100, 100, 1.0, false, false, false) == 100, "suwak: kontrast przycięty do 100");
+
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, false), 0.05), "suwak: krok strzałki EV 0,05");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, true, false), 0.25), "suwak: Shift+strzałka EV 0,25");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, true), 0.01), "suwak: Ctrl+strzałka EV 0,01 (precyzja)");
+        Check(Near(PhotoshopSlider.Step(1.0, 10.0, true, false), 10), "suwak: Shift+strzałka liczb = 10");
+        Check(Near(PhotoshopSlider.Step(1.0, 10.0, false, true), 1), "suwak: Ctrl+strzałka liczb = 1 (min. krok)");
+
+        var slider = new Slider { Minimum = -2, Maximum = 2, SmallChange = 0.05, LargeChange = 0.25 };
+        Check(!PhotoshopSlider.GetEnable(slider), "suwak: domyślnie wyłączony");
+        PhotoshopSlider.SetEnable(slider, true);
+        Check(PhotoshopSlider.GetEnable(slider), "suwak: włączony po SetEnable");
+        Check(slider.IsMoveToPointEnabled, "suwak: klik na torze ustawia wartość (Photoshop)");
+        Check(slider.Focusable, "suwak: fokusowalny (strzałki)");
+        Check(slider.ToolTip is string, "suwak: podpowiedź ustawiona");
+        PhotoshopSlider.SetEnable(slider, false);
+        Check(!PhotoshopSlider.GetEnable(slider), "suwak: wyłączony po SetEnable(false)");
     }
 
     private static void TestRaw16()

@@ -38,7 +38,15 @@ public sealed class AboutWindow : Window
         {
             Text = $"Przeglądarka obrazów JPG/PNG  •  wersja {version?.Major ?? 1}.{version?.Minor ?? 0}",
             Foreground = muted,
-            Margin = new Thickness(0, 4, 0, 14),
+            Margin = new Thickness(0, 4, 0, 2),
+            HorizontalAlignment = HorizontalAlignment.Center
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = ImgViewer.Imaging.Adjust16.GpuStatus,
+            Foreground = muted,
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 0, 14),
             HorizontalAlignment = HorizontalAlignment.Center
         });
 

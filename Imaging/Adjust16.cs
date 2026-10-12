@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace ImgViewer.Imaging;
 
-public static class Adjust16
+public static partial class Adjust16
 {
     private static readonly ConditionalWeakTable<Raw16Image, StretchEntry16> StretchCache = new();
 
@@ -57,17 +57,7 @@ public static class Adjust16
         bool shadow = Math.Abs(shadowLift) > 0.0001;
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
 
-        ushort[]? stretch = null;
-        if (shadow && autoStretch)
-        {
-            var entry = StretchCache.GetOrCreateValue(source);
-            stretch = entry.Value;
-            if (stretch is null)
-            {
-                stretch = ComputeStretch16(source);
-                entry.Value = stretch;
-            }
-        }
+        ushort[]? stretch = shadow ? GetStretch(source, autoStretch) : null;
         if (stretch is not null)
         {
             float k = (float)Math.Min(1.0, Math.Abs(shadowLift) / 0.5);
@@ -235,7 +225,20 @@ public static class Adjust16
         return new ushort[] { (ushort)loV, (ushort)hiV };
     }
 
-    private static void ApplyStretch(Raw16Image img, ushort[] st, float k, ParallelOptions opts)
+    private static ushort[]? GetStretch(Raw16Image source, bool autoStretch)
+    {
+        if (!autoStretch) return null;
+        var entry = StretchCache.GetOrCreateValue(source);
+        var stretch = entry.Value;
+        if (stretch is null)
+        {
+            stretch = ComputeStretch16(source);
+            entry.Value = stretch;
+        }
+        return stretch;
+    }
+
+    private static ushort[] BuildStretchLut(ushort[] st, float k)
     {
         float lo = st[0];
         float scale = 65535.0f / Math.Max(1, st[1] - st[0]);
@@ -250,6 +253,12 @@ public static class Adjust16
             int o = (int)(x * ik + s * k + 0.5f);
             lut[i] = (ushort)(o < 0 ? 0 : o > 65535 ? 65535 : o);
         }
+        return lut;
+    }
+
+    private static void ApplyStretch(Raw16Image img, ushort[] st, float k, ParallelOptions opts)
+    {
+        var lut = BuildStretchLut(st, k);
         ApplyChannelLut16(img.R, lut, opts);
         ApplyChannelLut16(img.G, lut, opts);
         ApplyChannelLut16(img.B, lut, opts);
@@ -296,25 +305,7 @@ public static class Adjust16
 
     private static void ApplyShadow16(Raw16Image img, double strength, ParallelOptions opts)
     {
-        var lift = new float[1024];
-        float exp = 1.0f + (float)(2.0 * Math.Abs(strength));
-        lift[0] = 0.0f;
-        if (strength >= 0)
-        {
-            for (int i = 1; i < 1024; i++)
-            {
-                float x = i / 1023.0f;
-                lift[i] = 1.0f - MathF.Pow(1.0f - x, exp);
-            }
-        }
-        else
-        {
-            for (int i = 1; i < 1024; i++)
-            {
-                float x = i / 1023.0f;
-                lift[i] = MathF.Pow(x, exp);
-            }
-        }
+        var lift = BuildLift(strength);
 
         const float threshold = 0.25f;
         const float softness = 0.15f;
@@ -371,7 +362,7 @@ public static class Adjust16
         return lut;
     }
 
-    private static void ApplyManual16(Raw16Image img, ManualStretchMap manual, ParallelOptions opts)
+    private static ushort[] BuildManualLut(ManualStretchMap manual)
     {
         var lut = new ushort[65536];
         for (int i = 0; i < 65536; i++)
@@ -379,6 +370,36 @@ public static class Adjust16
             double v = manual.Map(i / 65535.0);
             lut[i] = (ushort)Math.Clamp(Math.Round(v * 65535.0), 0, 65535);
         }
+        return lut;
+    }
+
+    private static float[] BuildLift(double value)
+    {
+        float exp = 1.0f + (float)(2.0 * Math.Abs(value));
+        var lift = new float[1024];
+        lift[0] = 0.0f;
+        if (value >= 0)
+        {
+            for (int i = 1; i < 1024; i++)
+            {
+                float x = i / 1023.0f;
+                lift[i] = 1.0f - MathF.Pow(1.0f - x, exp);
+            }
+        }
+        else
+        {
+            for (int i = 1; i < 1024; i++)
+            {
+                float x = i / 1023.0f;
+                lift[i] = MathF.Pow(x, exp);
+            }
+        }
+        return lift;
+    }
+
+    private static void ApplyManual16(Raw16Image img, ManualStretchMap manual, ParallelOptions opts)
+    {
+        var lut = BuildManualLut(manual);
         ApplyChannelLut16(img.R, lut, opts);
         ApplyChannelLut16(img.G, lut, opts);
         ApplyChannelLut16(img.B, lut, opts);
@@ -674,7 +695,6 @@ public static class Adjust16
     {
         double v = Math.Clamp(highlights, -1.0, 1.0);
         if (Math.Abs(v) <= 0.0005) return;
-        float exp = 1.0f + (float)(2.0 * Math.Abs(v));
 
         const float threshold = 0.72f;
         const float softness = 0.16f;
@@ -685,18 +705,7 @@ public static class Adjust16
         var srgbLin = SrgbLinF16Lut.Value;
         var linSrgb = LinSrgbU16Lut.Value;
 
-        var lift = new float[1024];
-        if (v > 0)
-        {
-            for (int i = 0; i < 1024; i++)
-                lift[i] = 1.0f - MathF.Pow(1.0f - i / 1023.0f, exp);
-        }
-        else
-        {
-            for (int i = 1; i < 1024; i++)
-                lift[i] = MathF.Pow(i / 1023.0f, exp);
-            lift[0] = 0.0f;
-        }
+        var lift = BuildLift(v);
 
         var pr = img.R;
         var pg = img.G;

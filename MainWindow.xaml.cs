@@ -133,6 +133,7 @@ public partial class MainWindow : Window
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         Debug.Log($"Tier={RenderCapability.Tier >> 16}");
+        Debug.Log($"GPU: {Adjust16.GpuStatus}");
         SetToolbarMinWidth();
         var target = Environment.GetCommandLineArgs().Skip(1)
             .FirstOrDefault(a => !a.StartsWith('-') && (File.Exists(a) || Directory.Exists(a)));
@@ -375,7 +376,9 @@ public partial class MainWindow : Window
                     var sw = System.Diagnostics.Stopwatch.StartNew();
                     var rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, ct);
                     var extra2 = StripExposureTemp(extra);
-                    var corrected = Adjust16.Apply(rendered, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct);
+                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct);
+                    if (corrected is null)
+                        corrected = Adjust16.Apply(rendered, s, g, manual, out hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct);
                     sw.Stop();
                     Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms size={raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} baseEv={baseEv:0.00} manual={manual} mono={_monoMode:D} extra={extra2 is not null}");
                     if (ct.IsCancellationRequested) return;
@@ -646,7 +649,9 @@ public partial class MainWindow : Window
                 {
                     var base16 = RawDecoder.Decode16(path, halfSize: false);
                     var rendered = LinearRender.ApplyGain(base16, RawDecoder.GetBaseEv(path) + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0);
-                    var corrected = Adjust16.Apply(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra));
+                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra));
+                    if (corrected is null)
+                        corrected = Adjust16.Apply(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra));
                     SaveEncoded(corrected, dest, tiff);
                     Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={corrected.W}x{corrected.H} raw16 tiff16={tiff}");
                 }
@@ -1219,6 +1224,7 @@ public partial class MainWindow : Window
         if (e.Key is Key.LeftCtrl or Key.RightCtrl) return;
 
         if (Keyboard.FocusedElement is Slider) return;
+        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase) return;
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase) return;
 
         if (e.Key == Key.O && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
