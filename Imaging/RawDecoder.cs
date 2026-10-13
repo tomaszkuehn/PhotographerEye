@@ -60,6 +60,20 @@ public static class RawDecoder
         }
     }
 
+    public static CameraToneCurve? GetCameraTone(string path)
+    {
+        lock (DecodeLock)
+        {
+            return Cache.TryGetValue(path, out var e) ? e.Curve : null;
+        }
+    }
+
+    private static bool IsSony(string path)
+    {
+        string ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext is ".arw" or ".srf" or ".sr2";
+    }
+
     private const double BaseTarget = 0.93;
     private const double BasePercent = 0.005;
 
@@ -104,7 +118,7 @@ public static class RawDecoder
             : entry.Full16 is not null && entry.Full is not null;
         if (ready) return entry;
 
-        var (raw16, display, ev) = DecodePair(path, halfSize);
+        var (raw16, display, ev, curve) = DecodePair(path, halfSize, !entry.CurveDone && IsSony(path));
         if (halfSize)
         {
             entry.Half16 = raw16;
@@ -115,17 +129,22 @@ public static class RawDecoder
             entry.Full16 = raw16;
             entry.Full = display;
         }
+        if (!entry.CurveDone)
+        {
+            entry.Curve = curve;
+            entry.CurveDone = true;
+        }
         if (!entry.BaseEvDone)
         {
-            entry.BaseEv = ev;
+            entry.BaseEv = curve is null ? ev : 0.0;
             entry.BaseEvDone = true;
-            Debug.Log($"RAW BASEEV: {Path.GetFileName(path)} baseEv={ev:0.00}");
+            Debug.Log($"RAW BASEEV: {Path.GetFileName(path)} baseEv={entry.BaseEv:0.00} curve={(curve is null ? "no" : $"yes {curve.KnotCount}k")}");
         }
         Evict(path);
         return entry;
     }
 
-    private static (Raw16Image Raw, BitmapSource Display, double Ev) DecodePair(string path, bool halfSize)
+    private static (Raw16Image Raw, BitmapSource Display, double Ev, CameraToneCurve? Curve) DecodePair(string path, bool halfSize, bool wantCurve)
     {
         if (IsJpegXsRaw(path))
         {
@@ -136,14 +155,14 @@ public static class RawDecoder
         }
         try
         {
-            var (raw, disp, ev) = DecodePairSdcb(path, halfSize);
-            if (IsLikelyGarbageDecode(raw))
+            var s = DecodePairSdcb(path, halfSize, wantCurve);
+            if (IsLikelyGarbageDecode(s.Raw))
             {
                 Debug.Log("RAW SDCB: wynik wygląda na śmieci (derror); próba fallbacku libraw22");
                 var fb = DecodeViaLibRaw22(path, halfSize, heTool: false);
                 if (fb is not null) return fb.Value;
             }
-            return (raw, disp, ev);
+            return s;
         }
         catch (Exception ex)
         {
@@ -181,10 +200,11 @@ public static class RawDecoder
         return Math.Abs(cRG) < 0.3 || Math.Abs(cGB) < 0.3;
     }
 
-    private static (Raw16Image Raw, BitmapSource Display, double Ev) DecodePairSdcb(string path, bool halfSize)
+    private static (Raw16Image Raw, BitmapSource Display, double Ev, CameraToneCurve? Curve) DecodePairSdcb(string path, bool halfSize, bool wantCurve)
     {
         using var r = RawContext.OpenFile(path);
         r.Unpack();
+        byte[]? thumb = wantCurve ? ReadThumbJpeg(r, path) : null;
         r.DcrawProcess(p =>
         {
             p.HalfSize = halfSize;
@@ -204,13 +224,39 @@ public static class RawDecoder
         int h = img.Height;
         var raw16 = Raw16Image.FromInterleaved(img.AsSpan<ushort>().ToArray(), w, h);
         double ev = ComputeBaseEv(raw16);
-        var gained = LinearRender.ApplyGain(raw16, ev, 0.0);
-        var display = Adjust16.RenderNeutral(gained).ToDisplay(dither: true);
-        Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp linear hl=2 baseEv={ev:0.00}");
-        return (raw16, display, ev);
+        CameraToneCurve? curve = wantCurve && thumb is not null
+            ? CameraToneFit.FitFromThumb(raw16, thumb, ev, Path.GetFileName(path))
+            : null;
+        var neutralSrc = curve is null ? LinearRender.ApplyGain(raw16, ev, 0.0) : raw16;
+        var display = Adjust16.RenderNeutral(neutralSrc, curve).ToDisplay(dither: true);
+        Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp linear hl=2 baseEv={ev:0.00} curve={(curve is null ? "no" : "yes")}");
+        return (raw16, display, ev, curve);
     }
 
-    public static (Raw16Image Raw, BitmapSource Display, double Ev)? DecodeViaLibRaw22(string path, bool halfSize, bool heTool)
+    private static byte[]? ReadThumbJpeg(RawContext r, string path)
+    {
+        try
+        {
+            r.UnpackThumbnail(0);
+            using var t = r.MakeDcrawMemoryThumbnail();
+            if (t.ImageType == ProcessedImageType.Jpeg && t.DataSize > 2048)
+            {
+                var bytes = new byte[t.DataSize];
+                var span = t.AsSpan<byte>();
+                span.CopyTo(bytes);
+                return bytes;
+            }
+            Debug.Log($"RAW THUMB: {Path.GetFileName(path)} thumb type={t.ImageType} {t.Width}x{t.Height} size={t.DataSize} (needs jpeg)");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"RAW THUMB: {Path.GetFileName(path)} {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    public static (Raw16Image Raw, BitmapSource Display, double Ev, CameraToneCurve? Curve)? DecodeViaLibRaw22(string path, bool halfSize, bool heTool)
     {
         string exe = Path.Combine(AppContext.BaseDirectory, "thirdparty", heTool ? "librawhe" : "libraw22", "dcraw_emu.exe");
         if (!File.Exists(exe)) return null;
@@ -246,7 +292,7 @@ public static class RawDecoder
             var gained = LinearRender.ApplyGain(raw16, ev, 0.0);
             var display = Adjust16.RenderNeutral(gained).ToDisplay(dither: true);
             Debug.Log($"RAW DECODE{(heTool ? "HE" : "22")}: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp linear hl=2 baseEv={ev:0.00}");
-            return (raw16, display, ev);
+            return (raw16, display, ev, null);
         }
         catch (Exception ex)
         {
@@ -401,6 +447,8 @@ public static class RawDecoder
         public BitmapSource? Full;
         public double BaseEv;
         public bool BaseEvDone;
+        public CameraToneCurve? Curve;
+        public bool CurveDone;
         public long LastUse;
         public void Touch() => LastUse = Environment.TickCount64;
     }

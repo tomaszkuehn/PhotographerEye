@@ -209,9 +209,11 @@ public static class PhotoOps
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(bool, double, double, double, string), float[]> ToneStretchCache = new();
 
-    public static float[] GetToneLut(double contrast, double whites, double blacks, bool scene, ManualStretchMap? manual = null)
+    public static float[] GetToneLut(double contrast, double whites, double blacks, bool scene, ManualStretchMap? manual = null, CameraToneCurve? cameraTone = null)
     {
-        float[] baseLut = BuildToneLutCached(Math.Clamp(contrast, -1.0, 1.0), Math.Clamp(whites, -1.0, 1.0), Math.Clamp(blacks, -1.0, 1.0), scene);
+        float[] baseLut = scene && cameraTone is not null
+            ? cameraTone.SceneLut
+            : BuildToneLutCached(Math.Clamp(contrast, -1.0, 1.0), Math.Clamp(whites, -1.0, 1.0), Math.Clamp(blacks, -1.0, 1.0), scene);
         if (manual is null || !manual.HasEffect) return baseLut;
         double c = Math.Clamp(contrast, -1.0, 1.0);
         double w = Math.Clamp(whites, -1.0, 1.0);

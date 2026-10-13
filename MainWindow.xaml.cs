@@ -43,6 +43,9 @@ public partial class MainWindow : Window
     private Raw16Image? _baseRaw16;
     private double _baseEv;
     private double _eyeBaseEv = double.NaN;
+    private CameraToneCurve? _baseCurve;
+    private CameraToneCurve? _eyeCurve;
+    private bool _eyeCurveSet;
     private bool _histPending;
     private EyeState? _histPendingSt;
     private ImageInfo? _baseInfo;
@@ -209,6 +212,9 @@ public partial class MainWindow : Window
         _histPending = true;
         _histPendingSt = null;
         _eyeBaseEv = double.NaN;
+        _eyeCurveSet = false;
+        _eyeCurve = null;
+        _baseCurve = null;
         _baseBitmap = null;
         _baseRaw16 = null;
         _baseInfo = null;
@@ -294,6 +300,8 @@ public partial class MainWindow : Window
 
     private double CurrentBaseEv() => double.IsNaN(_eyeBaseEv) ? _baseEv : _eyeBaseEv;
 
+    private CameraToneCurve? CurrentCurve() => _eyeCurveSet ? _eyeCurve : _baseCurve;
+
     private void SetBase(string path, ImageInfo info, BitmapSource raw, bool isFull, Size requestedBox)
     {
         if (!IsCurrent(path)) return;
@@ -301,6 +309,7 @@ public partial class MainWindow : Window
         _baseInfo = info;
         _baseIsFull = isFull;
         _baseRaw16 = RawDecoder.IsRaw(path) ? RawDecoder.GetCached16(path, isFull) : null;
+        _baseCurve = _baseRaw16 is not null ? RawDecoder.GetCameraTone(path) : null;
         _baseEv = _baseRaw16 is not null ? RawDecoder.GetBaseEv(path) : 0.0;
         if (double.IsNaN(_eyeBaseEv)) _eyeBaseEv = _baseEv;
 
@@ -397,7 +406,8 @@ public partial class MainWindow : Window
             ev => PhotoOps.EvToDisplayFraction(ev, g));
         var manual = HistogramPanel.Snapshot();
 
-        bool neutralRaw = raw16 is not null && Math.Abs(s) <= 0.0001 && Math.Abs(g - 1.0) < 0.0005 &&
+        bool baseMatchesFile = Math.Abs(_eyeBaseEv - _baseEv) < 1e-9 && !_eyeCurveSet;
+        bool neutralRaw = baseMatchesFile && raw16 is not null && Math.Abs(s) <= 0.0001 && Math.Abs(g - 1.0) < 0.0005 &&
             !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null;
         if (raw16 is not null
                 ? neutralRaw
@@ -415,6 +425,7 @@ public partial class MainWindow : Window
         _applyCts = new CancellationTokenSource();
         var ct = _applyCts.Token;
         double baseEv = CurrentBaseEv();
+        var toneCurve = CurrentCurve();
 
         _ = Task.Run(() =>
         {
@@ -425,9 +436,9 @@ public partial class MainWindow : Window
                     var sw = System.Diagnostics.Stopwatch.StartNew();
                     var rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, ct);
                     var extra2 = StripExposureTemp(extra);
-                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct);
+                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct, cameraTone: toneCurve);
                     if (corrected is null)
-                        corrected = Adjust16.Apply(rendered, s, g, manual, out hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct);
+                        corrected = Adjust16.Apply(rendered, s, g, manual, out hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct, cameraTone: toneCurve);
                     sw.Stop();
                     Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms size={raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} baseEv={baseEv:0.00} manual={manual} mono={_monoMode:D} extra={extra2 is not null}");
                     if (ct.IsCancellationRequested) return;
@@ -555,6 +566,7 @@ public partial class MainWindow : Window
     private static bool HistEqual(EyeState a, EyeState b)
     {
         if (a.Version != b.Version || a.Mono != b.Mono || Math.Abs(a.BaseEv - b.BaseEv) > 1e-9) return false;
+        if (!KnotsEqual(a.ToneCurve, b.ToneCurve)) return false;
         if (Math.Abs(a.ShadowLift - b.ShadowLift) > 1e-9 || Math.Abs(a.Gamma - b.Gamma) > 1e-9 ||
             Math.Abs(a.Exposure - b.Exposure) > 1e-9 || Math.Abs(a.Contrast - b.Contrast) > 1e-9 ||
             Math.Abs(a.Temperature - b.Temperature) > 1e-9 || Math.Abs(a.Saturation - b.Saturation) > 1e-9 ||
@@ -863,10 +875,11 @@ public partial class MainWindow : Window
                 if (rawFile)
                 {
                     var base16 = RawDecoder.Decode16(path, halfSize: false);
+                    var toneCurve = CurrentCurve();
                     var rendered = LinearRender.ApplyGain(base16, CurrentBaseEv() + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0);
-                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra));
+                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra), cameraTone: toneCurve);
                     if (corrected is null)
-                        corrected = Adjust16.Apply(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra));
+                        corrected = Adjust16.Apply(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra), cameraTone: toneCurve);
                     SaveEncoded(corrected, dest, tiff);
                     Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={corrected.W}x{corrected.H} raw16 tiff16={tiff}");
                 }
@@ -1324,6 +1337,8 @@ public partial class MainWindow : Window
     private void ResetAdjustments(bool silent = false)
     {
         _eyeBaseEv = double.NaN;
+        _eyeCurveSet = false;
+        _eyeCurve = null;
         HistogramPanel.ClearManualStretch();
         ShadowSlider.Value = 0;
         GammaSlider.Value = 1.0;
@@ -1367,6 +1382,7 @@ public partial class MainWindow : Window
         return new EyeState
         {
             BaseEv = double.IsNaN(_eyeBaseEv) ? _baseEv : _eyeBaseEv,
+            ToneCurve = CurrentCurve()?.KnotPairs(),
             ShadowLift = ShadowSlider.Value,
             Gamma = gamma,
             Stretch = stretch,
@@ -1393,9 +1409,24 @@ public partial class MainWindow : Window
         ApplyEyeState(st);
     }
 
+    private static CameraToneCurve? ParseCurve(double[][]? knots)
+    {
+        if (knots is not { Length: >= 2 }) return null;
+        try
+        {
+            return new CameraToneCurve(knots);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
     private void ApplyEyeState(EyeState st)
     {
         _eyeBaseEv = st.BaseEv;
+        _eyeCurveSet = true;
+        _eyeCurve = st.ToneCurve is { Length: >= 2 } ? ParseCurve(st.ToneCurve) : null;
         ShadowSlider.Value = Math.Clamp(st.ShadowLift, ShadowSlider.Minimum, ShadowSlider.Maximum);
         PanelShadowSlider.Value = Math.Clamp(st.ShadowLift, PanelShadowSlider.Minimum, PanelShadowSlider.Maximum);
         GammaSlider.Value = Math.Clamp(st.Gamma, GammaSlider.Minimum, GammaSlider.Maximum);

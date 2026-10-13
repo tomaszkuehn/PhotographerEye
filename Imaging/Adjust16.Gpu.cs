@@ -100,7 +100,7 @@ public static partial class Adjust16
         return dst;
     }
 
-    public static Raw16Image? TryApplyGpu(Raw16Image source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, MonoMode mono = MonoMode.None, int grainSeed = 0, PhotoAdjustments? extra = null, CancellationToken ct = default)
+    public static Raw16Image? TryApplyGpu(Raw16Image source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, MonoMode mono = MonoMode.None, int grainSeed = 0, PhotoAdjustments? extra = null, CancellationToken ct = default, CameraToneCurve? cameraTone = null)
     {
         histogram = null;
         if (!GpuEnabled) return null;
@@ -120,7 +120,7 @@ public static partial class Adjust16
         {
             try
             {
-                return RunGpu(source, w, h, (int)n, shadowLift, gamma, manual, out histogram, mono, grainSeed, extra, ct);
+                return RunGpu(source, w, h, (int)n, shadowLift, gamma, manual, out histogram, mono, grainSeed, extra, ct, cameraTone);
             }
             catch (OperationCanceledException)
             {
@@ -135,7 +135,7 @@ public static partial class Adjust16
         }
     }
 
-    private static Raw16Image RunGpu(Raw16Image source, int w, int h, int n, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, MonoMode mono, int grainSeed, PhotoAdjustments? extra, CancellationToken ct)
+    private static Raw16Image RunGpu(Raw16Image source, int w, int h, int n, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, MonoMode mono, int grainSeed, PhotoAdjustments? extra, CancellationToken ct, CameraToneCurve? cameraTone = null)
     {
         histogram = null;
         var d = _gpu!;
@@ -168,7 +168,7 @@ public static partial class Adjust16
             RegionCurve(d, b, w, h, shadowLift, highlight: false, ct);
         }
 
-        Tone(d, b, w, h, extra ?? new PhotoAdjustments(), manual, ct);
+        Tone(d, b, w, h, extra ?? new PhotoAdjustments(), manual, cameraTone, ct);
         Sat(d, b, w, h, extra ?? new PhotoAdjustments(), ct);
         EncodeLut(d, b, w, h, ct);
         if (hasGamma)
@@ -244,10 +244,10 @@ public static partial class Adjust16
         d.For(w, h, new Lut3Kernel(b.R, b.G, b.B, _bEncodeSrgb!, w, h));
     }
 
-    private static void Tone(GraphicsDevice d, GpuBufs b, int w, int h, PhotoAdjustments a, ManualStretchMap? manual, CancellationToken ct)
+    private static void Tone(GraphicsDevice d, GpuBufs b, int w, int h, PhotoAdjustments a, ManualStretchMap? manual, CameraToneCurve? cameraTone, CancellationToken ct)
     {
         float gain = (float)Math.Pow(2.0, Math.Clamp(a.Exposure, -5.0, 5.0));
-        var lut = PhotoOps.GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: true, manual);
+        var lut = PhotoOps.GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: true, manual, cameraTone);
         if (Math.Abs(gain - 1f) > 1e-4f)
         {
             d.For(w, h, new ToneGainKernel(b.R, b.G, b.B, gain, w, h));

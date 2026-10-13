@@ -21,7 +21,7 @@ public static partial class Adjust16
     private static readonly ConcurrentDictionary<(long, long), ushort[]> ChannelLutCache = new();
     private static readonly ConcurrentDictionary<long, ushort[]> GammaLutCache = new();
 
-    public static Raw16Image Apply(Raw16Image source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, MonoMode mono = MonoMode.None, int grainSeed = 0, PhotoAdjustments? extra = null, CancellationToken ct = default)
+    public static Raw16Image Apply(Raw16Image source, double shadowLift, double gamma, ManualStretchMap? manual, out HistogramData? histogram, MonoMode mono = MonoMode.None, int grainSeed = 0, PhotoAdjustments? extra = null, CancellationToken ct = default, CameraToneCurve? cameraTone = null)
     {
         int w = source.W;
         int h = source.H;
@@ -52,7 +52,7 @@ public static partial class Adjust16
             ApplyRegionCurve16(img, shadowLift, highlight: false, opts);
         }
 
-        ApplyTone16(img, extra ?? new PhotoAdjustments(), manual, opts);
+        ApplyTone16(img, extra ?? new PhotoAdjustments(), manual, opts, cameraTone);
         ApplySaturation16(img, extra ?? new PhotoAdjustments(), opts);
         EncodeSrgb16(img, opts);
 
@@ -74,11 +74,11 @@ public static partial class Adjust16
         return img;
     }
 
-    public static Raw16Image RenderNeutral(Raw16Image source, CancellationToken ct = default)
+    public static Raw16Image RenderNeutral(Raw16Image source, CameraToneCurve? cameraTone = null, CancellationToken ct = default)
     {
         var opts = new ParallelOptions { CancellationToken = ct };
         var img = source.Clone();
-        ApplyTone16(img, new PhotoAdjustments(), null, opts);
+        ApplyTone16(img, new PhotoAdjustments(), null, opts, cameraTone);
         EncodeSrgb16(img, opts);
         return img;
     }
@@ -203,10 +203,10 @@ public static partial class Adjust16
         });
     }
 
-    private static void ApplyTone16(Raw16Image img, PhotoAdjustments a, ManualStretchMap? manual, ParallelOptions opts)
+    private static void ApplyTone16(Raw16Image img, PhotoAdjustments a, ManualStretchMap? manual, ParallelOptions opts, CameraToneCurve? cameraTone = null)
     {
         float gain = (float)Math.Pow(2.0, Math.Clamp(a.Exposure, -5.0, 5.0));
-        var lut = PhotoOps.GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: true, manual);
+        var lut = PhotoOps.GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: true, manual, cameraTone);
         var p2 = img.R;
         var g2 = img.G;
         var b2 = img.B;

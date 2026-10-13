@@ -47,7 +47,7 @@ internal static class Program
             bool he = args[0] == "--rawhe";
             var fb = RawDecoder.DecodeViaLibRaw22(args[1], halfSize: args.Length > 2 && args[2] == "half", heTool: he);
             if (fb is null) { Console.WriteLine($"{args[0]} FAIL"); Environment.ExitCode = 1; return; }
-            var disp = Adjust16.RenderNeutral(fb.Value.Raw).ToDisplay(dither: false);
+            var disp = Adjust16.RenderNeutral(fb.Value.Raw, fb.Value.Curve).ToDisplay(dither: false);
             var enc = new JpegBitmapEncoder { QualityLevel = 90 };
             enc.Frames.Add(BitmapFrame.Create(disp));
             using (var fs = File.Create(args.Length > 3 ? args[3] : Path.ChangeExtension(args[1], ".fallback.jpg")))
@@ -85,6 +85,11 @@ internal static class Program
             enc2.Frames.Add(BitmapFrame.Create(bmp));
             using (var outp = File.Create(args[2])) enc2.Save(outp);
             Console.WriteLine($"ppm2jpg {args[1]} -> {args[2]} {pwidth}x{pheight}");
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--sonyfit")
+        {
+            SonyFitProbe(args[1], args.Length > 2 ? args[2] : "");
             return;
         }
         if (args.Length > 0 && args[0] == "--dump")
@@ -653,12 +658,52 @@ internal static class Program
         var gpuNoop = Adjust16.TryApplyGpu(base16, 0.0, 1.0, null, out _, extra: new PhotoAdjustments());
         Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obsługuje CPU)");
 
+        var cam = new CameraToneCurve(new[]
+        {
+            new double[] { 0.011, 0.028 }, new double[] { 0.046, 0.09 }, new double[] { 0.18, 0.44 },
+            new double[] { 0.203, 0.494 }, new double[] { 0.27, 0.6 }, new double[] { 0.526, 0.803 }
+        });
+        var cpuCam = Adjust16.Apply(base16, 0.3, 1.15, null, out _, extra: extra, cameraTone: cam);
+        var gpuCam = Adjust16.TryApplyGpu(base16, 0.3, 1.15, null, out _, extra: extra, cameraTone: cam);
+        Check(gpuCam is not null, "gpu camera tone run");
+        if (gpuCam is not null && cpuCam is not null)
+        {
+            long sum3 = 0;
+            int max3 = 0;
+            long cnt3 = 0;
+            for (int i = 0; i < cpuCam.G.Length; i += 7)
+            {
+                int d = Math.Max(Math.Abs(cpuCam.R[i] - gpuCam.R[i]),
+                    Math.Max(Math.Abs(cpuCam.G[i] - gpuCam.G[i]), Math.Abs(cpuCam.B[i] - gpuCam.B[i])));
+                sum3 += d;
+                if (d > max3) max3 = d;
+                cnt3++;
+            }
+            double mean3 = sum3 / (double)cnt3;
+            Check(mean3 < 8.0, $"gpu vs cpu camera tone mean abs diff ({mean3:0.##}, max {max3})");
+        }
+        var neutralCamRef = Adjust16.RenderNeutral(MakeFlat(0.18), cam);
+        var neutralCamPlain = Adjust16.RenderNeutral(MakeFlat(0.18));
+        Check(CameraMean(neutralCamRef) > CameraMean(neutralCamPlain) + 0.05, $"camera tone neutral brighter at grey ({CameraMean(neutralCamRef):0.####} vs {CameraMean(neutralCamPlain):0.####})");
+        var curveGain = Adjust16.Apply(LinearRender.ApplyGain(MakeFlat(0.18), 1.0, 0.0), 0.0, 1.0, null, out _, cameraTone: cam);
+        Check(CameraMean(curveGain) > CameraMean(neutralCamRef), $"camera tone exposure responds ({CameraMean(curveGain):0.####} > {CameraMean(neutralCamRef):0.####})");
+
         bool prevEnabled = Adjust16.GpuEnabled;
         Adjust16.GpuEnabled = false;
         var disabled = Adjust16.TryApplyGpu(base16, 0.3, 1.15, null, out _, mono: MonoMode.TriX, extra: extra);
         Adjust16.GpuEnabled = prevEnabled;
         Check(disabled is null, "gpu wyłączony -> fallback CPU");
         Console.WriteLine($"gpu status: {Adjust16.GpuStatus}");
+
+        static Raw16Image MakeFlat(double v)
+        {
+            var img = new Raw16Image(8, 8);
+            ushort u = (ushort)Math.Clamp(v * 65535.0, 0, 65535);
+            for (int i = 0; i < img.R.Length; i++) { img.R[i] = u; img.G[i] = u; img.B[i] = u; }
+            return img;
+        }
+
+        static double CameraMean(Raw16Image img) { double s = 0; for (int i = 0; i < img.G.Length; i++) s += img.G[i]; return s / img.G.Length / 65535.0; }
     }
 
     private static void TestLightroom()
@@ -1112,6 +1157,8 @@ internal static class Program
 
             var st = new EyeState
             {
+                BaseEv = 0.8,
+                ToneCurve = new[] { new double[] { 0.01, 0.012 }, new double[] { 0.18, 0.44 }, new double[] { 0.526, 0.803 } },
                 ShadowLift = 25,
                 Gamma = 1.4,
                 Stretch = new[] { new double[] { 0.25, 0.45 }, new double[] { 0.7, 0.66 } },
@@ -1146,6 +1193,18 @@ internal static class Program
                       st2.StretchEv is { Length: 2 } &&
                       Math.Abs(st2.StretchEv[0][0] - -1.25) < 1e-9 && Math.Abs(st2.StretchEv[0][1] - 0.75) < 1e-9;
             Check(ok, "eye roundtrip all parameters");
+
+            var curveState = st.ToneCurve is { Length: 3 } ? new CameraToneCurve(st.ToneCurve) : null;
+            var curveRound = curveState?.KnotPairs();
+            bool curveMatch = curveRound is { Length: 3 } &&
+                              Math.Abs(curveRound[1][0] - 0.18) < 2e-5 && Math.Abs(curveRound[1][1] - 0.44) < 2e-5 &&
+                              Math.Abs(curveRound[2][1] - 0.803) < 2e-5;
+            double evalMid = curveState is not null ? curveState.Eval(0.18) : -1;
+            Check(curveMatch && Math.Abs(evalMid - 0.44) < 2e-5, "camera tone curve knots roundtrip + eval");
+
+            double evalBelow = curveState!.Eval(0.0);
+            double evalAbove = curveState.Eval(2.0);
+            Check(evalBelow <= 0.0 + 1e-12 && evalAbove >= curveState.KnotPairs()[2][1] - 1e-12, "camera tone curve extension below/above");
 
             var undo1 = st with { Exposure = 0 };
             var undo2 = st with { Exposure = -1.5 };
@@ -1624,17 +1683,77 @@ internal static class Program
         Console.WriteLine($"dumped mode={mode} thr={adjustMaxThr} linear -> {outPath}");
     }
 
+    private static void SonyFitProbe(string path, string outDir)
+    {
+        var raw = RawDecoder.Decode16(path, halfSize: true);
+        double ev = RawDecoder.GetBaseEv(path);
+        var curve = RawDecoder.GetCameraTone(path);
+        Console.WriteLine($"== sonyfit: {Path.GetFileName(path)} baseEv={ev:0.00} curve={(curve is null ? "null" : $"{curve.KnotCount} knots")} ==");
+        if (curve is not null)
+        {
+            var pairs = curve.KnotPairs();
+            for (int i = 0; i < pairs.Length; i++)
+                Console.WriteLine($"  knot {i,2}: {pairs[i][0]:0.00000} -> {pairs[i][1]:0.00000}");
+            float[] lut = curve.SceneLut;
+            Console.WriteLine($"  sceneLut: len={lut.Length} min={lut[0] * 1e9:0.0}e-9 grey0.18->{curve.Eval(0.18):0.0000} max={lut[lut.Length - 1]:0.0000}");
+        }
+
+        if (outDir.Length > 0 && curve is not null)
+        {
+            Directory.CreateDirectory(outDir);
+            using var rThumb = Sdcb.LibRaw.RawContext.OpenFile(path);
+            rThumb.Unpack(); rThumb.UnpackThumbnail(0);
+            using (var t = rThumb.MakeDcrawMemoryThumbnail())
+            {
+                if (t.ImageType == Sdcb.LibRaw.ProcessedImageType.Jpeg)
+                {
+                    var jb = new byte[t.DataSize];
+                    t.AsSpan<byte>().CopyTo(jb);
+                    string p0 = Path.Combine(outDir, "camera_jpeg.jpg");
+                    File.WriteAllBytes(p0, jb);
+                    Console.WriteLine($"  camera jpeg {t.Width}x{t.Height} -> {p0}");
+                }
+            }
+            var half = RawDecoder.Decode16(path, halfSize: true);
+            var neutral = Adjust16.RenderNeutral(half, curve);
+            var dispNeutral = neutral.ToDisplay(dither: false);
+            string p1 = Path.Combine(outDir, "curve_neutral.jpg");
+            var encJ = new JpegBitmapEncoder { QualityLevel = 93 };
+            encJ.Frames.Add(BitmapFrame.Create(dispNeutral));
+            using (var fs = File.Create(p1)) encJ.Save(fs);
+            Console.WriteLine($"  dumped neutral(curve) -> {p1}");
+
+            var render = LinearRender.ApplyGain(half, 0.4, 0.0);
+            var adjusted = Adjust16.Apply(render, 0.0, 1.0, null, out _, cameraTone: curve);
+            var dispAdj = adjusted.ToDisplay(dither: false);
+            string p2 = Path.Combine(outDir, "curve_exp04.jpg");
+            var encJ2 = new JpegBitmapEncoder { QualityLevel = 93 };
+            encJ2.Frames.Add(BitmapFrame.Create(dispAdj));
+            using (var fs = File.Create(p2)) encJ2.Save(fs);
+            Console.WriteLine($"  dumped neutral+0.4EV -> {p2}");
+
+            var adjDown = Adjust16.Apply(LinearRender.ApplyGain(half, -0.6, 0.0), 0.0, 1.0, null, out _, cameraTone: curve);
+            var dispDown = adjDown.ToDisplay(dither: false);
+            string p3 = Path.Combine(outDir, "curve_expm06.jpg");
+            var encJ3 = new JpegBitmapEncoder { QualityLevel = 93 };
+            encJ3.Frames.Add(BitmapFrame.Create(dispDown));
+            using (var fs = File.Create(p3)) encJ3.Save(fs);
+            Console.WriteLine($"  dumped neutral-0.6EV -> {p3}");
+        }
+    }
+
     private static void DumpPreview(string path, string outPath, double extraEv)
     {
         var raw = RawDecoder.Decode16(path, false);
         double ev = RawDecoder.GetBaseEv(path);
-        var render = LinearRender.ApplyGain(raw, ev + extraEv, 0.0);
-        var adjusted = Adjust16.Apply(render, 0.0, 1.0, null, out _);
+        var curve = RawDecoder.GetCameraTone(path);
+        var render = LinearRender.ApplyGain(raw, (curve is null ? ev : 0.0) + extraEv, 0.0);
+        var adjusted = Adjust16.Apply(render, 0.0, 1.0, null, out _, cameraTone: curve);
         var disp = adjusted.ToDisplay(dither: false);
         var enc = new JpegBitmapEncoder { QualityLevel = 90 };
         enc.Frames.Add(BitmapFrame.Create(disp));
         using (var fs = File.Create(outPath)) enc.Save(fs);
-        Console.WriteLine($"dumped {Path.GetFileName(path)} baseEv={ev:0.00} extraEv={extraEv:0.0} -> {outPath}");
+        Console.WriteLine($"dumped {Path.GetFileName(path)} baseEv={ev:0.00} extraEv={extraEv:0.0} curve={(curve is null ? "no" : $"yes {curve.KnotCount}k")} -> {outPath}");
     }
 
     private static void SdcbCorr(string path)
