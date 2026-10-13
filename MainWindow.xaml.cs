@@ -445,13 +445,10 @@ public partial class MainWindow : Window
     private void ApplyHistogram(string path, HistogramData? hist)
     {
         if (!IsCurrent(path)) return;
-        if (hist is null || !_showHistogram)
-        {
-            HistHost.Visibility = Visibility.Hidden;
-            return;
-        }
-        HistHost.Visibility = Visibility.Visible;
-        HistogramPanel.SetHistogram(hist.Lum, hist.R, hist.G, hist.B);
+        if (hist is not null) HistogramPanel.SetHistogram(hist.Lum, hist.R, hist.G, hist.B);
+        HistHost.Visibility = hist is not null && _showHistogram && RightPanel.Visibility == Visibility.Visible
+            ? Visibility.Visible
+            : Visibility.Hidden;
     }
 
     private void OnHistCloseClick(object sender, RoutedEventArgs e)
@@ -472,7 +469,7 @@ public partial class MainWindow : Window
     {
         if (_currentPath is null) return;
         _showHistogram = true;
-        HistHost.Visibility = Visibility.Visible;
+        HistHost.Visibility = RightPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Hidden;
         UpdateSaveState();
         if (_adjustTimer is null) return;
         long now = Environment.TickCount64;
@@ -920,6 +917,16 @@ public partial class MainWindow : Window
         bool open = RightPanel.Visibility != Visibility.Visible;
         RightPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         BtnPanel.Foreground = (Brush)FindResource(open ? "AccentBrush" : "ForegroundBrush");
+        if (open)
+        {
+            _showHistogram = true;
+            HistHost.Visibility = Visibility.Visible;
+            ReapplyAdjustments();
+        }
+        else
+        {
+            HistHost.Visibility = Visibility.Hidden;
+        }
         SetStatus(open ? "Adjustments panel — open (E)" : "Adjustments panel — closed", error: false);
     }
 
@@ -1043,8 +1050,9 @@ public partial class MainWindow : Window
                 _syncingShadow = false;
             }
         }
-        UpdatePanelLabels();
         _showHistogram = true;
+        HistHost.Visibility = RightPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Hidden;
+        UpdatePanelLabels();
         UpdateSaveState();
         if (_adjustTimer is not null)
         {
