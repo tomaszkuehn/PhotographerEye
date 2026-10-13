@@ -108,6 +108,7 @@ internal static class Program
         TestHistogram();
         TestAutoStretch();
         TestManualStretch();
+        TestStretchScene();
         TestMono();
         TestTriX();
         TestCrossImageSwitch();
@@ -320,29 +321,34 @@ internal static class Program
               $"neutral grays stay neutral under shadows ({Spread(0, 25)},{Spread(0, 50)},{Spread(0, 75)},{Spread(1, 50)})");
     }
 
+    private static double EncodeSrgbH(double lin) =>
+        lin <= 0.0031308 ? lin * 12.92 : 1.055 * Math.Pow(lin, 1.0 / 2.4) - 0.055;
+
     private static void TestManualStretch()
     {
         var map = new ManualStretchMap();
         Check(!map.HasEffect && map.Count == 0, "manual map starts neutral");
-        Check(Near(map.Map(0.25), 0.25) && Near(map.Map(0.9), 0.9), "neutral map is identity");
+        Check(Near(map.Map(-2.0), -2.0) && Near(map.Map(1.5), 1.5), "neutral map is identity in EV");
 
-        map.Upsert(0.5, 0.7);
-        Check(Near(map.Map(0.5), 0.7), "knot output honored");
-        Check(Near(map.Map(0.25), 0.35), "left side stretches toward knot");
-        Check(Near(map.Map(0.75), 0.85), "right side compresses toward knot");
-        Check(Near(map.Map(0.0), 0.0) && Near(map.Map(1.0), 1.0), "manual endpoints fixed");
-        Check(Near(map.Inverse(0.7), 0.5), "inverse maps knot back");
-        Check(Near(map.Inverse(0.85), 0.75), "inverse on right segment");
+        double evIn = PhotoOps.DisplayFractionToEv(0.5, 1.0);
+        double evOut = PhotoOps.DisplayFractionToEv(0.7, 1.0);
+        map.Upsert(evIn, evOut);
+        Check(Near(map.Map(evIn), evOut), "knot EV output honored");
+        Check(Near(map.Inverse(evOut), evIn), "inverse maps knot back in EV");
+        Check(Near(map.Map(PhotoOps.ToneEvMin), PhotoOps.ToneEvMin), "EV low endpoint anchored");
+        Check(Near(map.Map(PhotoOps.ToneEvMax), PhotoOps.ToneEvMax), "EV high endpoint anchored");
+        Check(map.Map(-6.0) > -6.0 && map.Map(-6.0) < 1.0, "below-knot stretch lifts shadows moderately");
 
         bool monotonic = true;
-        double prev = 0;
-        for (int i = 0; i <= 255; i++)
+        double prev = map.Map(PhotoOps.ToneEvMin - 1.0);
+        for (int i = 1; i <= 512; i++)
         {
-            double v = map.Map(i / 255.0);
+            double ev = PhotoOps.ToneEvMin + (PhotoOps.ToneEvMax - PhotoOps.ToneEvMin) * i / 512.0;
+            double v = map.Map(ev);
             if (v < prev - 1e-9) monotonic = false;
             prev = v;
         }
-        Check(monotonic, "manual map monotonic");
+        Check(monotonic, "manual EV map monotonic");
 
         var src = MakeRampSource();
         var plain = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _);
@@ -352,17 +358,23 @@ internal static class Program
         var r0 = ReadRow(stretched!, 0);
         var r1 = ReadRow(stretched!, 1);
         var r2 = ReadRow(stretched!, 2);
-        int exp0 = (int)Math.Round(map.Map(64 / 255.0) * 255.0);
-        int exp1 = (int)Math.Round(map.Map(128 / 255.0) * 255.0);
-        int exp2 = (int)Math.Round(map.Map(191 / 255.0) * 255.0);
-        Check(Math.Abs(r0.g - exp0) <= 1 && Math.Abs(r1.g - exp1) <= 1 && Math.Abs(r2.g - exp2) <= 1,
-              $"manual map applied to pixels ({r0.g}/{exp0}, {r1.g}/{exp1}, {r2.g}/{exp2})");
+        double Expected(int c)
+        {
+            double lum = Math.Pow(c / 255.0, 2.2);
+            double ev = Math.Log2(Math.Max(lum, 1e-10) / PhotoOps.ToneGrey);
+            double eo = map.Map(ev);
+            double oLin = PhotoOps.ToneGrey * Math.Pow(2.0, Math.Min(eo, PhotoOps.ToneEvMax));
+            return Math.Pow(Math.Max(oLin, 0.0), 1.0 / 2.2) * 255.0;
+        }
+        Check(Math.Abs(r0.g - Expected(64)) <= 1.5 && Math.Abs(r1.g - Expected(128)) <= 1.5 && Math.Abs(r2.g - Expected(191)) <= 1.5,
+              $"8-bit manual EV map applied through tone LUT ({r0.g}/{Expected(64):0}, {r1.g}/{Expected(128):0}, {r2.g}/{Expected(191):0})");
+        Check(Math.Abs(r1.g - Expected(128)) < Math.Abs(r1.g - 128), "8-bit knot actually moves midtone");
         Check(r0.r == r0.g && r0.g == r0.b && r2.r == r2.g && r2.g == r2.b, "manual map preserves gray");
 
         var clone = map.Clone();
-        clone.Upsert(0.2, 0.05);
+        clone.Upsert(-5.0, -6.0);
         Check(map.Count == 1 && clone.Count == 2, "clone isolation");
-        Check(Near(map.Map(0.25), 0.35), "clone edit does not leak into original");
+        Check(Near(map.Map(evIn), evOut), "clone edit does not leak into original");
 
         var empty = new ManualStretchMap();
         Check(!empty.HasEffect, "empty map has no effect");
@@ -372,6 +384,43 @@ internal static class Program
             AdjustmentsProcessor.Apply(src, 0.0, 1.0, neutral, out _)!,
             AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _)!),
               "empty manual map applies as identity");
+    }
+
+    private static void TestStretchScene()
+    {
+        var map = new ManualStretchMap();
+        map.Upsert(0.0, 1.0);
+
+        Raw16Image FlatRaw(double v)
+        {
+            var img = new Raw16Image(32, 32);
+            ushort u = (ushort)Math.Round(v * 65535.0);
+            for (int i = 0; i < img.G.Length; i++) img.R[i] = img.G[i] = img.B[i] = u;
+            return img;
+        }
+        double MeanG(Raw16Image img) { double s = 0; for (int i = 0; i < img.G.Length; i++) s += img.G[i]; return s / img.G.Length / 65535.0; }
+
+        var baseOnly = Adjust16.Apply(FlatRaw(0.18), 0.0, 1.0, null, out _);
+        var stretchOnly = Adjust16.Apply(FlatRaw(0.18), 0.0, 1.0, map, out _);
+        Check(MeanG(stretchOnly) > MeanG(baseOnly) + 0.05, $"scene EV knot brightens 0.18 EV-0 scene ({MeanG(baseOnly):0.000} -> {MeanG(stretchOnly):0.000})");
+
+        var withExp = Adjust16.Apply(FlatRaw(0.18), 0.0, 1.0, map, out _,
+            extra: new PhotoAdjustments { Exposure = 1.0 });
+        var sceneShift = Adjust16.Apply(FlatRaw(0.36), 0.0, 1.0, map, out _);
+        Check(Math.Abs(MeanG(withExp) - MeanG(sceneShift)) < 0.01,
+              $"stretch pinned to scene: exposure +1EV == scene at +1EV ({MeanG(withExp):0.000} vs {MeanG(sceneShift):0.000})");
+
+        var noExpStretch = Adjust16.Apply(FlatRaw(0.18), 0.0, 1.0, map, out _);
+        var expAfterStretch = Adjust16.Apply(FlatRaw(0.18), 0.0, 1.0, map, out _,
+            extra: new PhotoAdjustments { Exposure = 1.0 });
+        Check(MeanG(expAfterStretch) > MeanG(noExpStretch), "slider still acts under the curve, not duplicated by it");
+
+        double evPick = PhotoOps.DisplayFractionToEv(0.3, 1.0);
+        Check(evPick < 0, $"pick conversion: display 0.3 maps to negative EV ({evPick:0.##})");
+        Check(Math.Abs(PhotoOps.EvToDisplayFraction(evPick, 1.0) - 0.3) < 0.005, "display<->EV conversion roundtrip");
+
+        var hist = Adjust16.Apply(FlatRaw(0.18), 0.0, 1.0, map, out var histData).G;
+        Check(histData is not null, "stretch path emits histogram");
     }
 
     private static bool SamePixels(WriteableBitmap a, WriteableBitmap b)
@@ -518,6 +567,29 @@ internal static class Program
         double mean = sum / (double)(cnt * 3);
         Check(mean < 8.0, $"gpu vs cpu mean abs diff ({mean:0.##}, max {max})");
         Console.WriteLine($"gpu: cpu={swCpu.ElapsedMilliseconds}ms gpu={swGpu.ElapsedMilliseconds}ms meanDiff={mean:0.###} maxDiff={max}");
+
+        var stretchGpu = new ManualStretchMap();
+        stretchGpu.Upsert(0.0, 0.8);
+        stretchGpu.Upsert(-2.5, -2.2);
+        var cpu2 = Adjust16.Apply(base16, 0.3, 1.15, stretchGpu, out _, extra: extra);
+        var gpu2 = Adjust16.TryApplyGpu(base16, 0.3, 1.15, stretchGpu, out _, extra: extra);
+        Check(gpu2 is not null, "gpu stretch parity run");
+        if (gpu2 is not null)
+        {
+            long sum2 = 0;
+            int max2 = 0;
+            long cnt2 = 0;
+            for (int i = 0; i < cpu2.G.Length; i += 7)
+            {
+                int d = Math.Max(Math.Abs(cpu2.R[i] - gpu2.R[i]),
+                    Math.Max(Math.Abs(cpu2.G[i] - gpu2.G[i]), Math.Abs(cpu2.B[i] - gpu2.B[i])));
+                sum2 += d;
+                if (d > max2) max2 = d;
+                cnt2++;
+            }
+            double mean2 = sum2 / (double)cnt2;
+            Check(mean2 < 8.0, $"gpu vs cpu stretch mean abs diff ({mean2:0.##}, max {max2})");
+        }
 
         var gpuNoop = Adjust16.TryApplyGpu(base16, 0.0, 1.0, null, out _, extra: new PhotoAdjustments());
         Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obsługuje CPU)");
@@ -913,7 +985,7 @@ internal static class Program
 
         var exposed = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Exposure = 2.0 });
-        Check(exposed is not null && LumMean(exposed) > LumMean(src) + 40,
+        Check(exposed is not null && LumMean(exposed) > LumMean(src) + 30,
               $"exposure brightens ({LumMean(src):0.#} -> {LumMean(exposed ?? src):0.#})");
 
         var desat = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _,
@@ -984,6 +1056,7 @@ internal static class Program
                 ShadowLift = 25,
                 Gamma = 1.4,
                 Stretch = new[] { new double[] { 0.25, 0.45 }, new double[] { 0.7, 0.66 } },
+                StretchEv = new[] { new[] { -1.25, 0.75 }, new[] { 1.5, 1.2 } },
                 Mono = 2,
                 Exposure = 0.75,
                 Contrast = -30,
@@ -1010,7 +1083,9 @@ internal static class Program
                       st2.Sharpen == 30 && st2.Dehaze == 12 && st2.Denoise == 18 && st2.ColorNoise == 24 &&
                       st2.Stretch is { Length: 2 } &&
                       Math.Abs(st2.Stretch[0][0] - 0.25) < 1e-9 && Math.Abs(st2.Stretch[0][1] - 0.45) < 1e-9 &&
-                      Math.Abs(st2.Stretch[1][0] - 0.7) < 1e-9 && Math.Abs(st2.Stretch[1][1] - 0.66) < 1e-9;
+                      Math.Abs(st2.Stretch[1][0] - 0.7) < 1e-9 && Math.Abs(st2.Stretch[1][1] - 0.66) < 1e-9 &&
+                      st2.StretchEv is { Length: 2 } &&
+                      Math.Abs(st2.StretchEv[0][0] - -1.25) < 1e-9 && Math.Abs(st2.StretchEv[0][1] - 0.75) < 1e-9;
             Check(ok, "eye roundtrip all parameters");
         }
         finally

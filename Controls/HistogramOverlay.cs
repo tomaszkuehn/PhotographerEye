@@ -30,6 +30,8 @@ public sealed class HistogramOverlay : FrameworkElement
     private int[]? _b;
 
     private readonly ManualStretchMap _manual = new();
+    private Func<double, double>? _displayToEv;
+    private Func<double, double>? _evToDisplay;
     private int _grabIdx = -1;
     private bool _moved;
     private long _lastRaiseTicks;
@@ -39,6 +41,19 @@ public sealed class HistogramOverlay : FrameworkElement
     public ManualStretchMap Snapshot() => _manual.Clone();
 
     public bool HasManualEffect => _manual.HasEffect;
+
+    public void SetEvConverters(Func<double, double>? displayToEv, Func<double, double>? evToDisplay)
+    {
+        _displayToEv = displayToEv;
+        _evToDisplay = evToDisplay;
+        InvalidateVisual();
+    }
+
+    private double DisplayToEv(double u) =>
+        _displayToEv?.Invoke(u) ?? PhotoOps.DisplayFractionToEv(u, 1.0);
+
+    private double EvToDisplay(double ev) =>
+        _evToDisplay?.Invoke(ev) ?? PhotoOps.EvToDisplayFraction(ev, 1.0);
 
     public void ClearManualStretch()
     {
@@ -67,7 +82,7 @@ public sealed class HistogramOverlay : FrameworkElement
     public HistogramOverlay()
     {
         SnapsToDevicePixels = true;
-        ToolTip = "Drag a point on the histogram — manual tone stretch (double-click — remove points)";
+        ToolTip = "Drag a point on the histogram — tone stretch pinned to scene EV, consistent with the adjustment sliders (double-click — remove points)";
     }
 
     protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer() =>
@@ -109,7 +124,7 @@ public sealed class HistogramOverlay : FrameworkElement
         double best = 0.02;
         for (int i = 0; i < _manual.Count; i++)
         {
-            double d = Math.Abs(_manual.Knots[i].Out - u);
+            double d = Math.Abs(EvToDisplay(_manual.Knots[i].Out) - u);
             if (d < best)
             {
                 best = d;
@@ -122,8 +137,9 @@ public sealed class HistogramOverlay : FrameworkElement
         }
         else
         {
-            double xin = _manual.Inverse(u);
-            _grabIdx = _manual.Upsert(xin, u);
+            double evOut = DisplayToEv(u);
+            double evIn = _manual.Inverse(evOut);
+            _grabIdx = _manual.Upsert(evIn, evOut);
             _moved = false;
         }
         CaptureMouse();
@@ -145,11 +161,11 @@ public sealed class HistogramOverlay : FrameworkElement
         }
         double u = OutAt(e.GetPosition(this));
         var knots = _manual.Knots;
-        double lo = _grabIdx > 0 ? knots[_grabIdx - 1].Out : 0.0;
-        double hi = _grabIdx < knots.Count - 1 ? knots[_grabIdx + 1].Out : 1.0;
-        double newOut = Math.Clamp(u, lo, hi);
+        double lo = _grabIdx > 0 ? knots[_grabIdx - 1].Out : PhotoOps.ToneEvMin;
+        double hi = _grabIdx < knots.Count - 1 ? knots[_grabIdx + 1].Out : PhotoOps.ToneEvMax;
+        double newOut = Math.Clamp(DisplayToEv(u), lo, hi);
         var k = knots[_grabIdx];
-        if (Math.Abs(newOut - k.Out) < 1e-5) return;
+        if (Math.Abs(newOut - k.Out) < 1e-4) return;
         _moved = true;
         _manual.SetOut(_grabIdx, newOut);
         InvalidateVisual();
@@ -210,7 +226,7 @@ public sealed class HistogramOverlay : FrameworkElement
 
         foreach (var k in _manual.Knots)
         {
-            double mx = pl + k.Out * plotW;
+            double mx = pl + EvToDisplay(k.Out) * plotW;
             dc.DrawEllipse(KnotFill, KnotPen, new Point(mx, yb - 2), 4, 4);
         }
     }

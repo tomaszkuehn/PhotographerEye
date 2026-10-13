@@ -52,14 +52,13 @@ public static partial class Adjust16
             ApplyRegionCurve16(img, shadowLift, highlight: false, opts);
         }
 
-        ApplyTone16(img, extra ?? new PhotoAdjustments(), opts);
+        ApplyTone16(img, extra ?? new PhotoAdjustments(), manual, opts);
         ApplySaturation16(img, extra ?? new PhotoAdjustments(), opts);
         EncodeSrgb16(img, opts);
 
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
 
         if (hasGamma) ApplyGamma16(img, gamma, opts);
-        if (manual is not null && manual.HasEffect) ApplyManual16(img, manual, opts);
         switch (mono)
         {
             case MonoMode.Documentary:
@@ -79,7 +78,7 @@ public static partial class Adjust16
     {
         var opts = new ParallelOptions { CancellationToken = ct };
         var img = source.Clone();
-        ApplyTone16(img, new PhotoAdjustments(), opts);
+        ApplyTone16(img, new PhotoAdjustments(), null, opts);
         EncodeSrgb16(img, opts);
         return img;
     }
@@ -204,10 +203,10 @@ public static partial class Adjust16
         });
     }
 
-    private static void ApplyTone16(Raw16Image img, PhotoAdjustments a, ParallelOptions opts)
+    private static void ApplyTone16(Raw16Image img, PhotoAdjustments a, ManualStretchMap? manual, ParallelOptions opts)
     {
         float gain = (float)Math.Pow(2.0, Math.Clamp(a.Exposure, -5.0, 5.0));
-        var lut = PhotoOps.GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: true);
+        var lut = PhotoOps.GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: true, manual);
         var p2 = img.R;
         var g2 = img.G;
         var b2 = img.B;
@@ -223,7 +222,7 @@ public static partial class Adjust16
                     continue;
                 }
                 float o = PhotoOps.ToneLutEvF(yl2, lut);
-                float scale = o / yl2;
+                float scale = o / MathF.Max(yl, 1e-7f);
                 float r = p2[i] * scale;
                 float g = g2[i] * scale;
                 float b = b2[i] * scale;
@@ -269,25 +268,6 @@ public static partial class Adjust16
             lut[i] = (ushort)Math.Clamp(v * 65535.0 + 0.5, 0, 65535);
         }
         return lut;
-    }
-
-    private static ushort[] BuildManualLut(ManualStretchMap manual)
-    {
-        var lut = new ushort[65536];
-        for (int i = 0; i < 65536; i++)
-        {
-            double v = manual.Map(i / 65535.0);
-            lut[i] = (ushort)Math.Clamp(Math.Round(v * 65535.0), 0, 65535);
-        }
-        return lut;
-    }
-
-    private static void ApplyManual16(Raw16Image img, ManualStretchMap manual, ParallelOptions opts)
-    {
-        var lut = BuildManualLut(manual);
-        ApplyChannelLut16(img.R, lut, opts);
-        ApplyChannelLut16(img.G, lut, opts);
-        ApplyChannelLut16(img.B, lut, opts);
     }
 
     private static ushort[] BuildMonoLut(float[] ax, float[] ay)

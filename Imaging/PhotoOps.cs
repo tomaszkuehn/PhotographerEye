@@ -207,8 +207,54 @@ public static class PhotoOps
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(bool, double, double, double), float[]> ToneLutCache = new();
 
-    public static float[] GetToneLut(double contrast, double whites, double blacks, bool scene) =>
-        BuildToneLutCached(Math.Clamp(contrast, -1.0, 1.0), Math.Clamp(whites, -1.0, 1.0), Math.Clamp(blacks, -1.0, 1.0), scene);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(bool, double, double, double, string), float[]> ToneStretchCache = new();
+
+    public static float[] GetToneLut(double contrast, double whites, double blacks, bool scene, ManualStretchMap? manual = null)
+    {
+        float[] baseLut = BuildToneLutCached(Math.Clamp(contrast, -1.0, 1.0), Math.Clamp(whites, -1.0, 1.0), Math.Clamp(blacks, -1.0, 1.0), scene);
+        if (manual is null || !manual.HasEffect) return baseLut;
+        double c = Math.Clamp(contrast, -1.0, 1.0);
+        double w = Math.Clamp(whites, -1.0, 1.0);
+        double b = Math.Clamp(blacks, -1.0, 1.0);
+        string key = manual.MapKey;
+        return ToneStretchCache.GetOrAdd((scene, c, w, b, key), _ =>
+        {
+            var lut = new float[baseLut.Length];
+            for (int i = 0; i < lut.Length; i++)
+            {
+                double o = baseLut[i];
+                if (o <= 1e-7)
+                {
+                    continue;
+                }
+                double ev = Math.Log2(Math.Min(o, 1.0) / ToneGrey);
+                double ev2 = manual.Map(Math.Clamp(ev, ToneEvMin, ToneEvMax));
+                lut[i] = ev2 <= ToneEvMin ? 0f : (float)(ToneGrey * Math.Pow(2.0, Math.Min(ev2, ToneEvMax)));
+            }
+            return lut;
+        });
+    }
+
+    public static double SrgbDecode(double u) =>
+        u <= 0.04045 ? u / 12.92 : Math.Pow((u + 0.055) / 1.055, 2.4);
+
+    public static double DisplayFractionToEv(double u, double gamma)
+    {
+        double e = Math.Pow(Math.Clamp(u, 0.0, 1.0), Math.Max(gamma, 0.05));
+        double lin = SrgbDecode(e);
+        if (lin <= 1e-10) return ToneEvMin;
+        return Math.Clamp(Math.Log2(lin / ToneGrey), ToneEvMin, ToneEvMax);
+    }
+
+    public static double EvToDisplayFraction(double ev, double gamma)
+    {
+        double lin = ToneGrey * Math.Pow(2.0, Math.Clamp(ev, ToneEvMin, ToneEvMax));
+        if (lin <= 0.0) return 0.0;
+        if (lin >= 1.0) return 1.0;
+        double e = lin <= 0.0031308 ? lin * 12.92 : 1.055 * Math.Pow(lin, 1.0 / 2.4) - 0.055;
+        double d = Math.Pow(e, 1.0 / Math.Max(gamma, 0.05));
+        return Math.Clamp(d, 0.0, 1.0);
+    }
 
     public static unsafe void ApplyColorPoints(byte[] buffer, PhotoAdjustments a)
     {
@@ -238,28 +284,44 @@ public static class PhotoOps
         }
     }
 
-    public static unsafe void ApplyTone(byte[] buffer, PhotoAdjustments a)
+    public static unsafe void ApplyTone(byte[] buffer, PhotoAdjustments a, ManualStretchMap? manual = null)
     {
         double ev = Math.Clamp(a.Exposure, -5.0, 5.0);
-        if (Math.Abs(ev) <= 0.0005 && ToneNeutral(a.Contrast, a.Whites, a.Blacks)) return;
+        bool manualActive = manual is { HasEffect: true };
+        bool toneFlat = Math.Abs(ev) <= 0.0005 && ToneNeutral(a.Contrast, a.Whites, a.Blacks);
+        if (toneFlat && !manualActive) return;
         float gain = (float)Math.Pow(2.0, ev);
 
-        if (ToneNeutral(a.Contrast, a.Whites, a.Blacks))
+        if (toneFlat)
         {
+            float[] lut0 = GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: false, manual);
+
+            var linLut0 = new float[256];
+            for (int i = 0; i < 256; i++) linLut0[i] = (float)Math.Pow(i / 255.0, 2.2);
+            const int encN0 = 4097;
+            var encLut0 = new float[encN0];
+            for (int i = 0; i <= 4096; i++) encLut0[i] = (float)Math.Pow(i / 4096.0, 1.0 / 2.2);
+
             fixed (byte* p = buffer)
             {
                 byte* end = p + buffer.Length;
                 for (byte* q = p; q < end; q += 4)
                 {
-                    q[0] = ClampByte(q[0] * gain);
-                    q[1] = ClampByte(q[1] * gain);
-                    q[2] = ClampByte(q[2] * gain);
+                    int lr = q[2];
+                    int lg = q[1];
+                    int lb = q[0];
+                    float yl = 0.2126f * linLut0[lr] + 0.7152f * linLut0[lg] + 0.0722f * linLut0[lb];
+                    float o = ToneLutEvF(yl, lut0);
+                    float scale = o <= 0.0f ? 0.0f : o / MathF.Max(yl, 1e-7f);
+                    q[2] = ClampByte(enc(lr, linLut0, encLut0, scale) * 255f);
+                    q[1] = ClampByte(enc(lg, linLut0, encLut0, scale) * 255f);
+                    q[0] = ClampByte(enc(lb, linLut0, encLut0, scale) * 255f);
                 }
             }
             return;
         }
 
-        float[] lut = GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: false);
+        float[] lut = GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: false, manual);
 
         var linLut = new float[256];
         for (int i = 0; i < 256; i++) linLut[i] = (float)Math.Pow(i / 255.0, 2.2);
@@ -278,7 +340,7 @@ public static class PhotoOps
                 float yl = 0.2126f * linLut[lr] + 0.7152f * linLut[lg] + 0.0722f * linLut[lb];
                 float yl2 = yl * gain;
                 float o = ToneLutEvF(yl2, lut);
-                float scale = o <= 0.0f ? 0.0f : o / MathF.Max(yl2, 1e-7f);
+                float scale = o <= 0.0f ? 0.0f : o / MathF.Max(yl, 1e-7f);
                 q[2] = ClampByte(enc(lr, linLut, encLut, scale) * 255f);
                 q[1] = ClampByte(enc(lg, linLut, encLut, scale) * 255f);
                 q[0] = ClampByte(enc(lb, linLut, encLut, scale) * 255f);

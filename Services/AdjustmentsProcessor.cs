@@ -57,15 +57,15 @@ public static class AdjustmentsProcessor
             if (shadow) PhotoOps.ApplyRegionCurve(buffer, shadowLift, highlight: false);
             if (Math.Abs(extra.Clarity) > 0.0005) PhotoOps.ApplyClarity(buffer, w, h, extra.Clarity);
             if (extra.Sharpen > 0.0005) PhotoOps.ApplySharpen(buffer, w, h, extra.Sharpen);
-            PhotoOps.ApplyTone(buffer, extra);
+            PhotoOps.ApplyTone(buffer, extra, manual);
         }
-        else if (shadow)
+        else if (shadow || (manual is { HasEffect: true }))
         {
-            PhotoOps.ApplyRegionCurve(buffer, shadowLift, highlight: false);
+            if (shadow) PhotoOps.ApplyRegionCurve(buffer, shadowLift, highlight: false);
+            if (manual is { HasEffect: true }) PhotoOps.ApplyTone(buffer, new PhotoAdjustments(), manual);
         }
 
         if (hasGamma) ApplyGamma(buffer, gamma);
-        if (manual is not null && manual.HasEffect) ApplyManual(buffer, manual);
         switch (mono)
         {
             case MonoMode.Documentary:
@@ -180,27 +180,6 @@ public static class AdjustmentsProcessor
             }
         }
         return new HistogramData(lum, r, g, b);
-    }
-
-    private static unsafe void ApplyManual(byte[] buffer, ManualStretchMap manual)
-    {
-        var lut = new byte[256];
-        for (int i = 0; i < 256; i++)
-        {
-            double v = manual.Map(i / 255.0);
-            lut[i] = (byte)Math.Clamp(Math.Round(v * 255.0), 0, 255);
-        }
-
-        fixed (byte* p = buffer)
-        {
-            byte* end = p + buffer.Length;
-            for (byte* q = p; q < end; q += 4)
-            {
-                q[0] = lut[q[0]];
-                q[1] = lut[q[1]];
-                q[2] = lut[q[2]];
-            }
-        }
     }
 
     private static unsafe void ApplyMonoCore(byte[] buffer, float wr, float wg, float wb, float[] ax, float[] ay)

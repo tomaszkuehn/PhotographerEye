@@ -168,7 +168,7 @@ public static partial class Adjust16
             RegionCurve(d, b, w, h, shadowLift, highlight: false, ct);
         }
 
-        Tone(d, b, w, h, extra ?? new PhotoAdjustments(), ct);
+        Tone(d, b, w, h, extra ?? new PhotoAdjustments(), manual, ct);
         Sat(d, b, w, h, extra ?? new PhotoAdjustments(), ct);
         EncodeLut(d, b, w, h, ct);
         if (hasGamma)
@@ -176,11 +176,6 @@ public static partial class Adjust16
             var gl = GammaLutCache.GetOrAdd((long)Math.Round(gamma * 1000000.0), _ => BuildGammaLut16(gamma));
             using var gb = d.AllocateReadOnlyBuffer(ToIntLut(gl));
             ApplyLut(d, b, w, h, gb, ct);
-        }
-        if (manual is not null && manual.HasEffect)
-        {
-            using var mb = d.AllocateReadOnlyBuffer(ToIntLut(BuildManualLut(manual)));
-            ApplyLut(d, b, w, h, mb, ct);
         }
         switch (mono)
         {
@@ -249,10 +244,10 @@ public static partial class Adjust16
         d.For(w, h, new Lut3Kernel(b.R, b.G, b.B, _bEncodeSrgb!, w, h));
     }
 
-    private static void Tone(GraphicsDevice d, GpuBufs b, int w, int h, PhotoAdjustments a, CancellationToken ct)
+    private static void Tone(GraphicsDevice d, GpuBufs b, int w, int h, PhotoAdjustments a, ManualStretchMap? manual, CancellationToken ct)
     {
         float gain = (float)Math.Pow(2.0, Math.Clamp(a.Exposure, -5.0, 5.0));
-        var lut = PhotoOps.GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: true);
+        var lut = PhotoOps.GetToneLut(a.Contrast, a.Whites, a.Blacks, scene: true, manual);
         if (Math.Abs(gain - 1f) > 1e-4f)
         {
             d.For(w, h, new ToneGainKernel(b.R, b.G, b.B, gain, w, h));
@@ -616,7 +611,7 @@ public readonly partial struct ToneKernel(ReadWriteBuffer<int> pr, ReadWriteBuff
                 o = lut[idx] + (lut[idx + 1] - lut[idx]) * t;
             }
         }
-        float scale = o / yl2;
+        float scale = o / Hlsl.Max(yl, 1e-7f);
         float r0 = pr[i] * scale;
         float g0 = pg[i] * scale;
         float b0 = pb[i] * scale;

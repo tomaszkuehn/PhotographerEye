@@ -355,6 +355,9 @@ public partial class MainWindow : Window
         _lastApplyTicks = Environment.TickCount64;
         double s = ShadowSlider.Value / 100.0;
         double g = GammaSlider.Value;
+        HistogramPanel.SetEvConverters(
+            u => PhotoOps.DisplayFractionToEv(u, g),
+            ev => PhotoOps.EvToDisplayFraction(ev, g));
         var manual = HistogramPanel.Snapshot();
 
         bool neutralRaw = raw16 is not null && Math.Abs(s) <= 0.0001 && Math.Abs(g - 1.0) < 0.0005 &&
@@ -1131,15 +1134,21 @@ public partial class MainWindow : Window
 
     private EyeState CaptureEyeState()
     {
+        double gamma = GammaSlider.Value;
         var knots = HistogramPanel.Snapshot().Knots;
+        var stretchEv = new double[knots.Count][];
         var stretch = new double[knots.Count][];
         for (int i = 0; i < knots.Count; i++)
-            stretch[i] = new[] { knots[i].In, knots[i].Out };
+        {
+            stretchEv[i] = new[] { knots[i].In, knots[i].Out };
+            stretch[i] = new[] { PhotoOps.EvToDisplayFraction(knots[i].In, gamma), PhotoOps.EvToDisplayFraction(knots[i].Out, gamma) };
+        }
         return new EyeState
         {
             ShadowLift = ShadowSlider.Value,
-            Gamma = GammaSlider.Value,
+            Gamma = gamma,
             Stretch = stretch,
+            StretchEv = stretchEv,
             Mono = (int)_monoMode,
             Exposure = ExpSlider.Value,
             Contrast = ContrastSlider.Value,
@@ -1169,12 +1178,21 @@ public partial class MainWindow : Window
         GammaSlider.Value = Math.Clamp(st.Gamma, GammaSlider.Minimum, GammaSlider.Maximum);
         _monoMode = (MonoMode)Math.Clamp(st.Mono, 0, (int)MonoMode.TriX);
         UpdateMonoButton();
-        if (st.Stretch is { Length: > 0 })
+        if (st.StretchEv is { Length: > 0 })
+        {
+            var knots = new List<StretchKnot>(st.StretchEv.Length);
+            foreach (var p in st.StretchEv)
+                if (p is { Length: 2 })
+                    knots.Add(new StretchKnot(Math.Clamp(p[0], PhotoOps.ToneEvMin, PhotoOps.ToneEvMax), Math.Clamp(p[1], PhotoOps.ToneEvMin, PhotoOps.ToneEvMax)));
+            HistogramPanel.RestoreManualStretch(knots);
+        }
+        else if (st.Stretch is { Length: > 0 })
         {
             var knots = new List<StretchKnot>(st.Stretch.Length);
             foreach (var p in st.Stretch)
                 if (p is { Length: 2 })
-                    knots.Add(new StretchKnot(Math.Clamp(p[0], 0.0, 1.0), Math.Clamp(p[1], 0.0, 1.0)));
+                    knots.Add(new StretchKnot(PhotoOps.DisplayFractionToEv(Math.Clamp(p[0], 0.0, 1.0), st.Gamma),
+                                              PhotoOps.DisplayFractionToEv(Math.Clamp(p[1], 0.0, 1.0), st.Gamma)));
             HistogramPanel.RestoreManualStretch(knots);
         }
         ExpSlider.Value = Math.Clamp(st.Exposure, ExpSlider.Minimum, ExpSlider.Maximum);
