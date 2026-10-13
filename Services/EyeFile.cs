@@ -8,6 +8,7 @@ namespace ImgViewer.Services;
 public sealed record EyeState
 {
     public int Version { get; init; } = 2;
+    public double BaseEv { get; init; }
     public double ShadowLift { get; init; }
     public double Gamma { get; init; } = 1.0;
     public double[][]? Stretch { get; init; }

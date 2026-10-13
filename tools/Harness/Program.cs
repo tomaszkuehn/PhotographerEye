@@ -60,6 +60,33 @@ internal static class Program
             Console.WriteLine($"{args[0]} OK {fb.Value.Raw.W}x{fb.Value.Raw.H} mean={mean:0.0}");
             return;
         }
+        if (args.Length > 0 && args[0] == "--ppm2jpg")
+        {
+            var fs = File.OpenRead(args[1]);
+            var br = new BinaryReader(fs);
+            var magic = new string(new[] { (char)br.Read(), (char)br.Read() });
+            var f = new int[3];
+            int fi = 0;
+            while (fi < 3)
+            {
+                int ch = br.Read();
+                if (ch == 35) { while (br.Read() != 10) { } continue; }
+                if (ch == 10 || ch == 13 || ch == 32 || ch == 9) continue;
+                var num = "";
+                while (ch >= 48 && ch <= 57) { num += (char)ch; ch = br.Read(); }
+                f[fi++] = int.Parse(num);
+                if (fi < 3) br.BaseStream.Seek(-1, SeekOrigin.Current);
+            }
+            int pwidth = f[0], pheight = f[1];
+            var data = br.ReadBytes(pwidth * pheight * 3);
+            br.Close(); fs.Close();
+            var bmp = BitmapSource.Create(pwidth, pheight, 96, 96, PixelFormats.Rgb24, null, data, pwidth * 3);
+            var enc2 = new JpegBitmapEncoder { QualityLevel = 88 };
+            enc2.Frames.Add(BitmapFrame.Create(bmp));
+            using (var outp = File.Create(args[2])) enc2.Save(outp);
+            Console.WriteLine($"ppm2jpg {args[1]} -> {args[2]} {pwidth}x{pheight}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--dump")
         {
             DumpPreview(args[1], args[2], args.Length > 3 ? double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture) : 0.0);
@@ -1122,7 +1149,7 @@ internal static class Program
 
             var undo1 = st with { Exposure = 0 };
             var undo2 = st with { Exposure = -1.5 };
-            var stateWithHist = st with { History = new List<EyeState> { undo1, undo2 }, HistoryPos = 1 };
+            var stateWithHist = st with { History = new List<EyeState> { undo1, undo2 }, HistoryPos = 1, BaseEv = 2.58 };
             EyeFile.Save(img, stateWithHist);
             bool histOk = EyeFile.TryLoad(img, out var histState) &&
                           histState.History is { Count: 2 } &&
@@ -1131,8 +1158,17 @@ internal static class Program
                           histState.History[1].Exposure == -1.5 &&
                           histState.History[1].History is null && histState.History[1].HistoryPos is null &&
                           histState.Exposure == stateWithHist.Exposure &&
-                          histState.History[0].Version == 2;
+                          histState.BaseEv == 2.58 &&
+                          histState.Version == 2;
             Check(histOk, "eye history roundtrip (2 steps, pos, nested entries naked)");
+
+            string legacyJson = "{\n  \"Version\": 2,\n  \"ShadowLift\": 10\n}";
+            File.WriteAllText(EyeFile.SidecarPath(img), legacyJson);
+            bool legacyOk = EyeFile.TryLoad(img, out var legacyState) &&
+                            legacyState.BaseEv == 0.0 &&
+                            legacyState.ShadowLift == 10 &&
+                            legacyState.History is null;
+            Check(legacyOk, "eye legacy sidecar without BaseEv loads as BaseEv=0");
         }
         finally
         {

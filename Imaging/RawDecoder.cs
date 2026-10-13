@@ -56,8 +56,42 @@ public static class RawDecoder
     {
         lock (DecodeLock)
         {
-            return Cache.TryGetValue(path, out var e) ? e.FullEv : 0.0;
+            return Cache.TryGetValue(path, out var e) ? e.BaseEv : 0.0;
         }
+    }
+
+    private const double BaseTarget = 0.93;
+    private const double BasePercent = 0.005;
+
+    public static double ComputeBaseEv(Raw16Image img)
+    {
+        const int bins = 4096;
+        var hist = new long[bins];
+        long n = 0;
+        int len = img.R.Length;
+        int stride = Math.Max(1, len / 2_000_000);
+        var sR = img.R;
+        var sG = img.G;
+        var sB = img.B;
+        for (int i = 0; i < len; i += stride)
+        {
+            int lum = (int)((0.2126f * sR[i] + 0.7152f * sG[i] + 0.0722f * sB[i]) + 0.5f);
+            hist[Math.Min(lum >> 4, bins - 1)]++;
+            n++;
+        }
+        if (n == 0) return 0.0;
+        long clip = Math.Max(1, (long)(n * BasePercent));
+        long acc = 0;
+        int bin = bins - 1;
+        for (bin = bins - 1; bin >= 0; bin--)
+        {
+            acc += hist[bin];
+            if (acc >= clip) break;
+        }
+        double p995 = (bin + 0.5) * 65535.0 / bins;
+        if (p995 <= 16) return 0.0;
+        double ev = Math.Log2(BaseTarget * 65535.0 / p995);
+        return Math.Clamp(ev, -3.5, 5.5);
     }
 
     private static CacheEntry Fill(string path, bool halfSize)
@@ -80,7 +114,12 @@ public static class RawDecoder
         {
             entry.Full16 = raw16;
             entry.Full = display;
-            entry.FullEv = ev;
+        }
+        if (!entry.BaseEvDone)
+        {
+            entry.BaseEv = ev;
+            entry.BaseEvDone = true;
+            Debug.Log($"RAW BASEEV: {Path.GetFileName(path)} baseEv={ev:0.00}");
         }
         Evict(path);
         return entry;
@@ -164,8 +203,9 @@ public static class RawDecoder
         int w = img.Width;
         int h = img.Height;
         var raw16 = Raw16Image.FromInterleaved(img.AsSpan<ushort>().ToArray(), w, h);
-        double ev = 0.0;
-        var display = Adjust16.RenderNeutral(raw16).ToDisplay(dither: true);
+        double ev = ComputeBaseEv(raw16);
+        var gained = LinearRender.ApplyGain(raw16, ev, 0.0);
+        var display = Adjust16.RenderNeutral(gained).ToDisplay(dither: true);
         Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp linear hl=2 baseEv={ev:0.00}");
         return (raw16, display, ev);
     }
@@ -202,8 +242,9 @@ public static class RawDecoder
             var packed = ParseP6Rgb16(tout, out int w, out int h);
             if (packed is null) return null;
             var raw16 = Raw16Image.FromInterleaved(packed, w, h);
-            double ev = 0.0;
-            var display = Adjust16.RenderNeutral(raw16).ToDisplay(dither: true);
+            double ev = ComputeBaseEv(raw16);
+            var gained = LinearRender.ApplyGain(raw16, ev, 0.0);
+            var display = Adjust16.RenderNeutral(gained).ToDisplay(dither: true);
             Debug.Log($"RAW DECODE{(heTool ? "HE" : "22")}: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp linear hl=2 baseEv={ev:0.00}");
             return (raw16, display, ev);
         }
@@ -358,7 +399,8 @@ public static class RawDecoder
         public Raw16Image? Full16;
         public BitmapSource? Half;
         public BitmapSource? Full;
-        public double FullEv;
+        public double BaseEv;
+        public bool BaseEvDone;
         public long LastUse;
         public void Touch() => LastUse = Environment.TickCount64;
     }

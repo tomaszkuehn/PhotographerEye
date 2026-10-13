@@ -42,6 +42,9 @@ public partial class MainWindow : Window
     private BitmapSource? _baseBitmap;
     private Raw16Image? _baseRaw16;
     private double _baseEv;
+    private double _eyeBaseEv = double.NaN;
+    private bool _histPending;
+    private EyeState? _histPendingSt;
     private ImageInfo? _baseInfo;
     private bool _baseIsFull;
     private bool _saving;
@@ -203,9 +206,13 @@ public partial class MainWindow : Window
         _monoSeed = MonoSeed(path);
         _hist = new List<EyeState>();
         _histPos = -1;
+        _histPending = true;
+        _histPendingSt = null;
+        _eyeBaseEv = double.NaN;
         _baseBitmap = null;
         _baseRaw16 = null;
         _baseInfo = null;
+        _baseEv = 0.0;
         _fullDecodeBox = default;
         _redecodeSeq++;
         _redecodeCts?.Cancel();
@@ -216,16 +223,12 @@ public partial class MainWindow : Window
         if (_session.TryGetValue(path, out var remembered))
         {
             ApplyEyeStateSuppressed(remembered);
-            InitHistory(remembered);
+            _histPendingSt = remembered;
         }
         else if (EyeFile.TryLoad(path, out var st))
         {
             ApplyEyeStateSuppressed(st);
-            InitHistory(st);
-        }
-        else
-        {
-            InitHistory(CaptureEyeState());
+            _histPendingSt = st;
         }
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
@@ -289,6 +292,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private double CurrentBaseEv() => double.IsNaN(_eyeBaseEv) ? _baseEv : _eyeBaseEv;
+
     private void SetBase(string path, ImageInfo info, BitmapSource raw, bool isFull, Size requestedBox)
     {
         if (!IsCurrent(path)) return;
@@ -297,6 +302,14 @@ public partial class MainWindow : Window
         _baseIsFull = isFull;
         _baseRaw16 = RawDecoder.IsRaw(path) ? RawDecoder.GetCached16(path, isFull) : null;
         _baseEv = _baseRaw16 is not null ? RawDecoder.GetBaseEv(path) : 0.0;
+        if (double.IsNaN(_eyeBaseEv)) _eyeBaseEv = _baseEv;
+
+        if (_histPending)
+        {
+            _histPending = false;
+            if (_histPendingSt is not null) { InitHistory(_histPendingSt); _histPendingSt = null; }
+            else InitHistory(CaptureEyeState());
+        }
 
         if (isFull)
         {
@@ -401,7 +414,7 @@ public partial class MainWindow : Window
         _applyCts?.Dispose();
         _applyCts = new CancellationTokenSource();
         var ct = _applyCts.Token;
-        double baseEv = _baseEv;
+        double baseEv = CurrentBaseEv();
 
         _ = Task.Run(() =>
         {
@@ -541,7 +554,7 @@ public partial class MainWindow : Window
 
     private static bool HistEqual(EyeState a, EyeState b)
     {
-        if (a.Version != b.Version || a.Mono != b.Mono) return false;
+        if (a.Version != b.Version || a.Mono != b.Mono || Math.Abs(a.BaseEv - b.BaseEv) > 1e-9) return false;
         if (Math.Abs(a.ShadowLift - b.ShadowLift) > 1e-9 || Math.Abs(a.Gamma - b.Gamma) > 1e-9 ||
             Math.Abs(a.Exposure - b.Exposure) > 1e-9 || Math.Abs(a.Contrast - b.Contrast) > 1e-9 ||
             Math.Abs(a.Temperature - b.Temperature) > 1e-9 || Math.Abs(a.Saturation - b.Saturation) > 1e-9 ||
@@ -850,7 +863,7 @@ public partial class MainWindow : Window
                 if (rawFile)
                 {
                     var base16 = RawDecoder.Decode16(path, halfSize: false);
-                    var rendered = LinearRender.ApplyGain(base16, RawDecoder.GetBaseEv(path) + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0);
+                    var rendered = LinearRender.ApplyGain(base16, CurrentBaseEv() + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0);
                     var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra));
                     if (corrected is null)
                         corrected = Adjust16.Apply(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra));
@@ -1310,6 +1323,7 @@ public partial class MainWindow : Window
 
     private void ResetAdjustments(bool silent = false)
     {
+        _eyeBaseEv = double.NaN;
         HistogramPanel.ClearManualStretch();
         ShadowSlider.Value = 0;
         GammaSlider.Value = 1.0;
@@ -1352,6 +1366,7 @@ public partial class MainWindow : Window
         }
         return new EyeState
         {
+            BaseEv = double.IsNaN(_eyeBaseEv) ? _baseEv : _eyeBaseEv,
             ShadowLift = ShadowSlider.Value,
             Gamma = gamma,
             Stretch = stretch,
@@ -1380,6 +1395,7 @@ public partial class MainWindow : Window
 
     private void ApplyEyeState(EyeState st)
     {
+        _eyeBaseEv = st.BaseEv;
         ShadowSlider.Value = Math.Clamp(st.ShadowLift, ShadowSlider.Minimum, ShadowSlider.Maximum);
         PanelShadowSlider.Value = Math.Clamp(st.ShadowLift, PanelShadowSlider.Minimum, PanelShadowSlider.Maximum);
         GammaSlider.Value = Math.Clamp(st.Gamma, GammaSlider.Minimum, GammaSlider.Maximum);
