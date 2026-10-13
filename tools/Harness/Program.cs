@@ -109,6 +109,7 @@ internal static class Program
         TestAutoStretch();
         TestManualStretch();
         TestStretchScene();
+        TestKnotsSliders();
         TestMono();
         TestTriX();
         TestCrossImageSwitch();
@@ -421,6 +422,37 @@ internal static class Program
 
         var hist = Adjust16.Apply(FlatRaw(0.18), 0.0, 1.0, map, out var histData).G;
         Check(histData is not null, "stretch path emits histogram");
+    }
+
+    private static void TestKnotsSliders()
+    {
+        var m = new ManualStretchMap();
+        m.Upsert(-2.0, -1.0);
+        var s = PhotoOps.KnotsToSliders(m.Knots);
+        Check(Math.Abs(s.Exposure) < 0.001, $"shadow knot leaves exposure at 0 (got {s.Exposure:0.###})");
+        Check(s.Shadows > 90 && s.Shadows <= 100, $"shadow knot hits Shadows slider cap (got {s.Shadows:0.#})");
+        Check(Math.Abs(s.Highlights) < 5 && Math.Abs(s.Whites) < 5, $"shadow knot does not leak to Highlights/Whites (hl={s.Highlights:0.#} wh={s.Whites:0.#})");
+        Check(Math.Abs(s.Blacks) < 5, $"shadow knot (In=-2) outside Blacks bucket (bl={s.Blacks:0.#})");
+
+        var m2 = new ManualStretchMap();
+        m2.Upsert(-0.5, 0.5);
+        var s2 = PhotoOps.KnotsToSliders(m2.Knots);
+        Check(Math.Abs(s2.Exposure - 1.0) < 0.05, $"midtone knot -> Exposure +1EV (got {s2.Exposure:0.###})");
+
+        var m3 = new ManualStretchMap();
+        m3.Upsert(2.5, 3.2);
+        var s3 = PhotoOps.KnotsToSliders(m3.Knots);
+        Check(s3.Whites > 30 && s3.Whites < 60, $"bright knot -> Whites ~44 (got {s3.Whites:0.#})");
+
+        var m4 = new ManualStretchMap();
+        m4.Upsert(-3.0, -2.0);
+        var s4 = PhotoOps.KnotsToSliders(m4.Knots);
+        Check(s4.Blacks > 70 && s4.Blacks < 95, $"deep-shadow knot -> Blacks ~83 (got {s4.Blacks:0.#})");
+
+        var m5 = new ManualStretchMap();
+        m5.Upsert(1.5, 2.5);
+        var s5 = PhotoOps.KnotsToSliders(m5.Knots);
+        Check(s5.Highlights > 50 && s5.Highlights < 85, $"highlight knot -> Highlights ~81 (got {s5.Highlights:0.#})");
     }
 
     private static bool SamePixels(WriteableBitmap a, WriteableBitmap b)

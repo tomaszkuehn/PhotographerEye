@@ -159,6 +159,17 @@
                   Visibility="Hidden">
                 <v:HistogramOverlay x:Name="HistogramPanel" />
                 <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,3,0" Orientation="Horizontal">
+                    <ToggleButton x:Name="BtnHistBake"
+                                  Width="18" Height="18"
+                                  IsChecked="True"
+                                  Content="&#xE8AB;"
+                                  FontFamily="Segoe MDL2 Assets"
+                                  FontSize="10"
+                                  Padding="0"
+                                  MinWidth="0"
+                                  Margin="0,0,4,0"
+                                  Style="{StaticResource ToolToggle}"
+                                  ToolTip="Convert histogram drags into slider values (off — keep the drag as an independent curve)" />
                     <Button x:Name="BtnHistReset"
                             Width="18" Height="18"
                             Content="&#xE72C;"

@@ -256,6 +256,46 @@ public static class PhotoOps
         return Math.Clamp(d, 0.0, 1.0);
     }
 
+    public static (double Exposure, double Highlights, double Shadows, double Whites, double Blacks) KnotsToSliders(IReadOnlyList<StretchKnot> knots)
+    {
+        double exp = 0.0, hl = 0.0, sh = 0.0, wh = 0.0, bl = 0.0;
+        if (knots is not null)
+        {
+            foreach (var k in knots)
+            {
+                double d = k.Out - k.In;
+                if (k.In >= 2.2) wh += d / 1.6;
+                else if (k.In >= 0.8) hl += d / (1.7 * MaskHigh(k.In));
+                else if (k.In > -0.8) exp += d;
+                else if (k.In > -3.0) sh += d / (1.7 * Math.Sqrt(MaskShadow(k.In)));
+                else bl += d / 1.2;
+            }
+        }
+        return (Math.Clamp(exp, -5.0, 5.0),
+                Math.Clamp(hl, -1.0, 1.0) * 100.0,
+                Math.Clamp(sh, -1.0, 1.0) * 100.0,
+                Math.Clamp(wh, -1.0, 1.0) * 100.0,
+                Math.Clamp(bl, -1.0, 1.0) * 100.0);
+    }
+
+    private static double MaskHigh(double ev)
+    {
+        double t = (ev + 1.0) / 3.8;
+        return Smooth01(t);
+    }
+
+    private static double MaskShadow(double ev)
+    {
+        double t = (ev + 4.8) / 5.1;
+        return 1.0 - Smooth01(t);
+    }
+
+    private static double Smooth01(double t)
+    {
+        t = Math.Clamp(t, 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    }
+
     public static unsafe void ApplyColorPoints(byte[] buffer, PhotoAdjustments a)
     {
         var luts = BuildChannelLuts(a);

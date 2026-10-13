@@ -471,6 +471,41 @@ public partial class MainWindow : Window
         _showHistogram = true;
         HistHost.Visibility = RightPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Hidden;
         UpdateSaveState();
+
+        var manual = HistogramPanel.Snapshot();
+        bool bake = BtnHistBake.IsChecked == true;
+        if (HistogramPanel.IsDragging || !manual.HasEffect || !bake)
+        {
+            ScheduleApplyWithThrottle();
+            return;
+        }
+
+        var (exp, hl, sh, wh, bl) = PhotoOps.KnotsToSliders(manual.Knots);
+
+        _suppressSliderSync = true;
+        try
+        {
+            ExpSlider.Value = Math.Clamp(exp, ExpSlider.Minimum, ExpSlider.Maximum);
+            PanelShadowSlider.Value = Math.Clamp(sh, PanelShadowSlider.Minimum, PanelShadowSlider.Maximum);
+            HighlightsSlider.Value = Math.Clamp(hl, HighlightsSlider.Minimum, HighlightsSlider.Maximum);
+            WhitesSlider.Value = Math.Clamp(wh, WhitesSlider.Minimum, WhitesSlider.Maximum);
+            BlacksSlider.Value = Math.Clamp(bl, BlacksSlider.Minimum, BlacksSlider.Maximum);
+            ShadowValue.Text = $"{Math.Round(ShadowSlider.Value)}";
+            UpdatePanelLabels();
+        }
+        finally
+        {
+            _suppressSliderSync = false;
+        }
+
+        HistogramPanel.ClearManualStretch();
+        UpdateSaveState();
+        SetStatus("Histogram stretch transferred to sliders", error: false);
+        ReapplyAdjustments();
+    }
+
+    private void ScheduleApplyWithThrottle()
+    {
         if (_adjustTimer is null) return;
         long now = Environment.TickCount64;
         if (now - _lastApplyTicks >= 40)
@@ -894,6 +929,7 @@ public partial class MainWindow : Window
 
     private void OnAdjustmentChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        if (_suppressSliderSync) return;
         _showHistogram = true;
         ShadowValue.Text = $"{Math.Round(ShadowSlider.Value)}";
         GammaValue.Text = GammaSlider.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
@@ -970,6 +1006,7 @@ public partial class MainWindow : Window
     }
 
     private bool _syncingShadow;
+    private bool _suppressSliderSync;
 
     private void OnToolbarShadowSynced(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
@@ -1038,6 +1075,7 @@ public partial class MainWindow : Window
 
     private void OnPanelSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        if (_suppressSliderSync) return;
         if (sender is Slider s && ReferenceEquals(s, PanelShadowSlider) && !_syncingShadow)
         {
             _syncingShadow = true;

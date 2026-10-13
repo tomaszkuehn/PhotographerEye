@@ -42,6 +42,8 @@ public sealed class HistogramOverlay : FrameworkElement
 
     public bool HasManualEffect => _manual.HasEffect;
 
+    public bool IsDragging => _grabIdx >= 0 && IsMouseCaptured;
+
     public void SetEvConverters(Func<double, double>? displayToEv, Func<double, double>? evToDisplay)
     {
         _displayToEv = displayToEv;
@@ -82,7 +84,7 @@ public sealed class HistogramOverlay : FrameworkElement
     public HistogramOverlay()
     {
         SnapsToDevicePixels = true;
-        ToolTip = "Drag a point on the histogram — tone stretch pinned to scene EV, consistent with the adjustment sliders (double-click — remove points)";
+        ToolTip = "Drag a point on the histogram — the stretch is converted to Exposure/Highlights/Shadows/Whites/Blacks sliders (double-click — remove points)";
     }
 
     protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer() =>
