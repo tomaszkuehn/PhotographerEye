@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -24,6 +25,8 @@ public sealed record EyeState
     public double Dehaze { get; init; }
     public double Denoise { get; init; }
     public double ColorNoise { get; init; }
+    public List<EyeState>? History { get; init; }
+    public int? HistoryPos { get; init; }
 }
 
 public static class EyeFile

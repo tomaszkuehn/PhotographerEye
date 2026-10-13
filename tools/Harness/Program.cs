@@ -1119,6 +1119,20 @@ internal static class Program
                       st2.StretchEv is { Length: 2 } &&
                       Math.Abs(st2.StretchEv[0][0] - -1.25) < 1e-9 && Math.Abs(st2.StretchEv[0][1] - 0.75) < 1e-9;
             Check(ok, "eye roundtrip all parameters");
+
+            var undo1 = st with { Exposure = 0 };
+            var undo2 = st with { Exposure = -1.5 };
+            var stateWithHist = st with { History = new List<EyeState> { undo1, undo2 }, HistoryPos = 1 };
+            EyeFile.Save(img, stateWithHist);
+            bool histOk = EyeFile.TryLoad(img, out var histState) &&
+                          histState.History is { Count: 2 } &&
+                          histState.HistoryPos == 1 &&
+                          histState.History[0].Exposure == 0 &&
+                          histState.History[1].Exposure == -1.5 &&
+                          histState.History[1].History is null && histState.History[1].HistoryPos is null &&
+                          histState.Exposure == stateWithHist.Exposure &&
+                          histState.History[0].Version == 2;
+            Check(histOk, "eye history roundtrip (2 steps, pos, nested entries naked)");
         }
         finally
         {

@@ -27,6 +27,11 @@ public partial class MainWindow : Window
 
     private readonly ConcurrentDictionary<string, BitmapSource> _previewCache = new();
     private readonly ConcurrentDictionary<string, EyeState> _session = new(StringComparer.OrdinalIgnoreCase);
+    private List<EyeState> _hist = new();
+    private int _histPos = -1;
+    private bool _histSuppress;
+    private DispatcherTimer? _histCommitTimer;
+    private const int HistMax = 10;
     private readonly List<string> _cacheOrder = new();
     private readonly object _cacheOrderLock = new();
 
@@ -188,9 +193,16 @@ public partial class MainWindow : Window
 
         _index = idx;
         string path = _files[idx];
-        if (_currentPath is not null) _session[_currentPath] = CaptureEyeState();
+        if (_currentPath is not null)
+        {
+            CommitHistNow();
+            var cur = CaptureEyeState();
+            _session[_currentPath] = cur with { History = new List<EyeState>(_hist), HistoryPos = _histPos };
+        }
         _currentPath = path;
         _monoSeed = MonoSeed(path);
+        _hist = new List<EyeState>();
+        _histPos = -1;
         _baseBitmap = null;
         _baseRaw16 = null;
         _baseInfo = null;
@@ -201,8 +213,20 @@ public partial class MainWindow : Window
         CounterText.Text = $"{idx + 1} / {_files.Count}";
         Title = $"{Path.GetFileName(path)} — {idx + 1}/{_files.Count} — PhotographerEye";
         ResetAdjustments(silent: true);
-        if (_session.TryGetValue(path, out var remembered)) ApplyEyeState(remembered);
-        else ApplyEyeFile(path);
+        if (_session.TryGetValue(path, out var remembered))
+        {
+            ApplyEyeStateSuppressed(remembered);
+            InitHistory(remembered);
+        }
+        else if (EyeFile.TryLoad(path, out var st))
+        {
+            ApplyEyeStateSuppressed(st);
+            InitHistory(st);
+        }
+        else
+        {
+            InitHistory(CaptureEyeState());
+        }
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
         HintPanel.Visibility = Visibility.Collapsed;
@@ -465,6 +489,137 @@ public partial class MainWindow : Window
         SetStatus("Histogram stretch points removed", error: false);
     }
 
+    private void OnUndoClick(object sender, RoutedEventArgs e) => Undo();
+
+    private void OnRedoClick(object sender, RoutedEventArgs e) => Redo();
+
+    private void UpdateUndoButtons()
+    {
+        if (BtnUndo is null || BtnRedo is null) return;
+        BtnUndo.IsEnabled = _histPos > 0;
+        BtnRedo.IsEnabled = _histPos < _hist.Count - 1;
+    }
+
+    private void SyncSessionHist()
+    {
+        if (_currentPath is null) return;
+        var cur = CaptureEyeState();
+        _session[_currentPath] = cur with { History = new List<EyeState>(_hist), HistoryPos = _histPos };
+    }
+
+    private void ScheduleHistCommit()
+    {
+        if (_histSuppress || _currentPath is null) return;
+        if (_histCommitTimer is null)
+        {
+            _histCommitTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+            _histCommitTimer.Tick += (s, e) => CommitHistNow();
+        }
+        _histCommitTimer.Stop();
+        _histCommitTimer.Start();
+    }
+
+    private void CommitHistNow()
+    {
+        _histCommitTimer?.Stop();
+        if (_histSuppress || _currentPath is null) return;
+        var cur = CaptureEyeState() with { History = null, HistoryPos = null };
+        bool eq = _histPos >= 0 && _histPos < _hist.Count && HistEqual(_hist[_histPos], cur);
+        Debug.Log($"HIST: commit count={_hist.Count} pos={_histPos} exp={cur.Exposure:0.###} sh={cur.ShadowLift:0.#} knots={cur.StretchEv?.Length ?? 0} eq={eq}");
+        if (eq)
+        {
+            UpdateUndoButtons();
+            return;
+        }
+        if (_histPos < _hist.Count - 1) _hist.RemoveRange(_histPos + 1, _hist.Count - 1 - _histPos);
+        _hist.Add(cur);
+        if (_hist.Count > HistMax) _hist.RemoveAt(0);
+        _histPos = _hist.Count - 1;
+        SyncSessionHist();
+        UpdateUndoButtons();
+    }
+
+    private static bool HistEqual(EyeState a, EyeState b)
+    {
+        if (a.Version != b.Version || a.Mono != b.Mono) return false;
+        if (Math.Abs(a.ShadowLift - b.ShadowLift) > 1e-9 || Math.Abs(a.Gamma - b.Gamma) > 1e-9 ||
+            Math.Abs(a.Exposure - b.Exposure) > 1e-9 || Math.Abs(a.Contrast - b.Contrast) > 1e-9 ||
+            Math.Abs(a.Temperature - b.Temperature) > 1e-9 || Math.Abs(a.Saturation - b.Saturation) > 1e-9 ||
+            Math.Abs(a.Highlights - b.Highlights) > 1e-9 || Math.Abs(a.Whites - b.Whites) > 1e-9 ||
+            Math.Abs(a.Blacks - b.Blacks) > 1e-9 || Math.Abs(a.Clarity - b.Clarity) > 1e-9 ||
+            Math.Abs(a.Sharpen - b.Sharpen) > 1e-9 || Math.Abs(a.Dehaze - b.Dehaze) > 1e-9 ||
+            Math.Abs(a.Denoise - b.Denoise) > 1e-9 || Math.Abs(a.ColorNoise - b.ColorNoise) > 1e-9) return false;
+        return KnotsEqual(a.StretchEv, b.StretchEv);
+    }
+
+    private static bool KnotsEqual(double[][]? x, double[][]? y)
+    {
+        if (x is null || y is null) return (x is null || x.Length == 0) && (y is null || y.Length == 0);
+        if (x.Length != y.Length) return false;
+        for (int i = 0; i < x.Length; i++)
+        {
+            if (x[i].Length != y[i].Length) return false;
+            for (int j = 0; j < x[i].Length; j++)
+                if (Math.Abs(x[i][j] - y[i][j]) > 1e-9) return false;
+        }
+        return true;
+    }
+
+    private void InitHistory(EyeState st)
+    {
+        if (st.History is { Count: > 0 } h)
+        {
+            _hist = new List<EyeState>(h);
+            _histPos = Math.Clamp(st.HistoryPos ?? _hist.Count - 1, 0, _hist.Count - 1);
+            _hist[_histPos] = st with { History = null, HistoryPos = null };
+        }
+        else
+        {
+            _hist = new List<EyeState> { st with { History = null, HistoryPos = null } };
+            _histPos = 0;
+        }
+        Debug.Log($"HIST: init count={_hist.Count} pos={_histPos} exp={_hist[_histPos].Exposure:0.###} eye={st.History is { Count: > 0 }}");
+        UpdateUndoButtons();
+    }
+
+    private void Undo()
+    {
+        CommitHistNow();
+        if (_currentPath is null || _histPos <= 0) { SetStatus("Nothing to undo", error: false); return; }
+        _histPos--;
+        var st = _hist[_histPos];
+        Debug.Log($"HIST: undo -> pos={_histPos} exp={st.Exposure:0.###} sh={st.ShadowLift:0.#} knots={st.StretchEv?.Length ?? 0}");
+        ApplyEyeStateSuppressed(st);
+        SyncSessionHist();
+        UpdateUndoButtons();
+        SetStatus($"Undo — {_hist.Count - 1 - _histPos} steps before this state", error: false);
+    }
+
+    private void Redo()
+    {
+        if (_currentPath is null || _histPos >= _hist.Count - 1) { SetStatus("Nothing to redo", error: false); return; }
+        _histPos++;
+        var st = _hist[_histPos];
+        Debug.Log($"HIST: redo -> pos={_histPos} exp={st.Exposure:0.###}");
+        ApplyEyeStateSuppressed(st);
+        SyncSessionHist();
+        UpdateUndoButtons();
+        SetStatus("Redo", error: false);
+    }
+
+    private void ApplyEyeStateSuppressed(EyeState st)
+    {
+        _histSuppress = true;
+        try
+        {
+            ApplyEyeState(st);
+        }
+        finally
+        {
+            _histSuppress = false;
+        }
+    }
+
     private void OnManualStretchChanged(object? sender, EventArgs e)
     {
         if (_currentPath is null) return;
@@ -477,6 +632,7 @@ public partial class MainWindow : Window
         if (HistogramPanel.IsDragging || !manual.HasEffect || !bake)
         {
             ScheduleApplyWithThrottle();
+            ScheduleHistCommit();
             return;
         }
 
@@ -502,6 +658,7 @@ public partial class MainWindow : Window
         UpdateSaveState();
         SetStatus("Histogram stretch transferred to sliders", error: false);
         ReapplyAdjustments();
+        ScheduleHistCommit();
     }
 
     private void ScheduleApplyWithThrottle()
@@ -673,7 +830,8 @@ public partial class MainWindow : Window
 
         bool tiff = dialog.FilterIndex == 2;
         string dest = dialog.FileName;
-        var eyeState = CaptureEyeState();
+        CommitHistNow();
+        var eyeState = CaptureEyeState() with { History = new List<EyeState>(_hist), HistoryPos = _histPos };
         bool rawFile = RawDecoder.IsRaw(path);
 
         _saving = true;
@@ -944,6 +1102,7 @@ public partial class MainWindow : Window
             _saveTimer.Stop();
             _saveTimer.Start();
         }
+        ScheduleHistCommit();
     }
 
     private void OnPanelToggleClick(object sender, RoutedEventArgs e) => TogglePanel();
@@ -1097,6 +1256,7 @@ public partial class MainWindow : Window
             _adjustTimer.Stop();
             _adjustTimer.Start();
         }
+        ScheduleHistCommit();
     }
 
     private void UpdatePanelLabels()
@@ -1133,6 +1293,7 @@ public partial class MainWindow : Window
         UpdateMonoButton();
         UpdateSaveState();
         ReapplyAdjustments();
+        ScheduleHistCommit();
         SetStatus(_monoMode switch
         {
             MonoMode.Documentary => "Black & white (documentary)",
@@ -1241,6 +1402,10 @@ public partial class MainWindow : Window
                                               PhotoOps.DisplayFractionToEv(Math.Clamp(p[1], 0.0, 1.0), st.Gamma)));
             HistogramPanel.RestoreManualStretch(knots);
         }
+        else
+        {
+            HistogramPanel.RestoreManualStretch(new List<StretchKnot>());
+        }
         ExpSlider.Value = Math.Clamp(st.Exposure, ExpSlider.Minimum, ExpSlider.Maximum);
         ContrastSlider.Value = Math.Clamp(st.Contrast, ContrastSlider.Minimum, ContrastSlider.Maximum);
         TempSlider.Value = Math.Clamp(st.Temperature, TempSlider.Minimum, TempSlider.Maximum);
@@ -1315,6 +1480,16 @@ public partial class MainWindow : Window
             return;
         }
         if (e.Key is Key.LeftCtrl or Key.RightCtrl) return;
+
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && e.Key is Key.Z or Key.Y)
+        {
+            bool shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+            if (e.Key == Key.Y && !shift) Redo();
+            else if (shift) Redo();
+            else Undo();
+            e.Handled = true;
+            return;
+        }
 
         if (Keyboard.FocusedElement is Slider) return;
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase) return;
