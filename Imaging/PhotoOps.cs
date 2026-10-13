@@ -430,36 +430,46 @@ public static class PhotoOps
         return (byte)(i < 0 ? 0 : i > 255 ? 255 : i);
     }
 
+    public static (int R, float Blend, int Passes) ChromaDenoiseParams(double colorNoise)
+    {
+        double n = Math.Clamp(colorNoise, 0.0, 1.0);
+        int r = 1 + (int)(n * 3.0);
+        float blend = (float)(0.2 + 0.8 * n);
+        int passes = n >= 0.6 ? 2 : 1;
+        return (r, blend, passes);
+    }
+
     public static unsafe void ApplyChromaDenoise(byte[] buffer, int w, int h, double colorNoise)
     {
         double n = Math.Clamp(colorNoise, 0.0, 1.0);
         if (n <= 0.0005) return;
-        int r = n < 0.34 ? 1 : (n < 0.67 ? 2 : 3);
-        float blend = (float)(0.15 + 0.65 * n);
-
-        var temp = new byte[buffer.Length];
-        var blurred = new byte[buffer.Length];
-        BoxBlurBgrPass(buffer, temp, w, h, r, vertical: false);
-        BoxBlurBgrPass(temp, blurred, w, h, r, vertical: true);
-
-        var lum0 = new float[w * h];
-        var lumB = new float[w * h];
-        ComputeLuma(buffer, lum0, w, h);
-        ComputeLuma(blurred, lumB, w, h);
-
-        fixed (byte* p = buffer)
-        fixed (byte* bp = blurred)
-        fixed (float* l0 = lum0, lb = lumB)
+        var (r, blend, passes) = ChromaDenoiseParams(colorNoise);
+        for (int pass = 0; pass < passes; pass++)
         {
-            byte* end = p + buffer.Length;
-            float* a = l0;
-            float* b = lb;
-            for (byte* q = p, s = bp; q < end; q += 4, s += 4, a++, b++)
+            var temp = new byte[buffer.Length];
+            var blurred = new byte[buffer.Length];
+            BoxBlurBgrPass(buffer, temp, w, h, r, vertical: false);
+            BoxBlurBgrPass(temp, blurred, w, h, r, vertical: true);
+
+            var lum0 = new float[w * h];
+            var lumB = new float[w * h];
+            ComputeLuma(buffer, lum0, w, h);
+            ComputeLuma(blurred, lumB, w, h);
+
+            fixed (byte* p = buffer)
+            fixed (byte* bp = blurred)
+            fixed (float* l0 = lum0, lb = lumB)
             {
-                for (int c = 0; c < 3; c++)
+                byte* end = p + buffer.Length;
+                float* a = l0;
+                float* b = lb;
+                for (byte* q = p, s = bp; q < end; q += 4, s += 4, a++, b++)
                 {
-                    float corrected = *a + (s[c] - *b);
-                    q[c] = MixByte(q[c], (int)Math.Round(corrected), blend);
+                    for (int c = 0; c < 3; c++)
+                    {
+                        float corrected = *a + (s[c] - *b);
+                        q[c] = MixByte(q[c], (int)Math.Round(corrected), blend);
+                    }
                 }
             }
         }

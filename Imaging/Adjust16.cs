@@ -356,11 +356,14 @@ public static partial class Adjust16
 
     private static void ApplyChromaDenoise16(Raw16Image img, int w, int h, double colorNoise, ParallelOptions opts)
     {
-        double n = Math.Clamp(colorNoise, 0.0, 1.0);
-        if (n <= 0.0005) return;
-        int r = n < 0.34 ? 1 : (n < 0.67 ? 2 : 3);
-        float blend = (float)(0.15 + 0.65 * n);
+        if (colorNoise <= 0.0005) return;
+        var (r, blend, passes) = PhotoOps.ChromaDenoiseParams(colorNoise);
+        for (int pass = 0; pass < passes; pass++)
+            ChromaPass16(img, w, h, r, blend, opts);
+    }
 
+    private static void ChromaPass16(Raw16Image img, int w, int h, int r, float blend, ParallelOptions opts)
+    {
         var pr = img.R;
         var pg = img.G;
         var pb = img.B;

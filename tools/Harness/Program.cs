@@ -153,6 +153,7 @@ internal static class Program
         TestPhotoExtras();
         TestExifRotation();
         TestEyeFile();
+        TestChromaNoise();
 
         Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
         Environment.ExitCode = _fails;
@@ -1416,6 +1417,85 @@ internal static class Program
             }
         }
         return (float)(total / Math.Max(1, w * h));
+    }
+
+    private static void TestChromaNoise()
+    {
+        var jBase = MakeChromaNoiseSource(320, 240, seed: 7);
+        double j0 = ChromaStddev(jBase);
+        foreach (var (v, min) in new[] { (0.3, 0.20), (0.6, 0.55), (1.0, 0.75) })
+        {
+            var after = AdjustmentsProcessor.Apply(jBase, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { ColorNoise = v });
+            double red = 1.0 - ChromaStddev(after) / j0;
+            Check(red >= min, $"chroma NR JPEG {v * 100:##} reduces color noise ({red:P0})");
+        }
+
+        int w = 2048, h = 2048;
+        var raw = new Raw16Image(w, h);
+        uint rng = 1234567u;
+        for (int i = 0; i < raw.R.Length; i++)
+        {
+            ushort baseV = (ushort)Math.Round(0.18 * 65535.0);
+            for (int c = 0; c < 3; c++)
+            {
+                rng = rng * 1664525u + 1013904223u;
+                int d = (int)((rng >> 8) % 12000) - 6000;
+                ushort val = (ushort)Math.Clamp(baseV + d, 0, 65535);
+                if (c == 0) raw.R[i] = val;
+                else if (c == 1) raw.G[i] = val;
+                else raw.B[i] = val;
+            }
+        }
+        double ChromaMean16(Raw16Image img)
+        {
+            double s = 0;
+            long n = 0;
+            for (int i = 0; i < img.R.Length; i++)
+            {
+                double lum = 0.2126 * img.R[i] + 0.7152 * img.G[i] + 0.0722 * img.B[i];
+                s += Math.Abs(img.R[i] - lum) + Math.Abs(img.G[i] - lum) + Math.Abs(img.B[i] - lum);
+                n += 3;
+            }
+            return s / n / 65535.0;
+        }
+        double LumaMean16(Raw16Image img)
+        {
+            double s = 0;
+            long n = 0;
+            for (int i = 0; i < img.R.Length; i++)
+            {
+                s += 0.2126 * img.R[i] + 0.7152 * img.G[i] + 0.0722 * img.B[i];
+                n++;
+            }
+            return s / n / 65535.0;
+        }
+        var neutral16 = Adjust16.Apply(raw, 0.0, 1.0, null, out _, extra: new PhotoAdjustments());
+        double c0 = ChromaMean16(neutral16);
+        foreach (var (v, min) in new[] { (0.3, 0.2), (0.6, 0.55), (1.0, 0.75) })
+        {
+            var cn = Adjust16.Apply(raw, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { ColorNoise = v });
+            double red = 1.0 - ChromaMean16(cn) / c0;
+            Check(red >= min, $"chroma NR RAW16 {v * 100:##} reduces color noise ({red:P0})");
+        }
+        var cn1 = Adjust16.Apply(raw, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { ColorNoise = 1.0 });
+        Check(Math.Abs(LumaMean16(cn1) - LumaMean16(neutral16)) < 0.01,
+              $"chroma NR RAW16 max keeps luma ({LumaMean16(cn1):0.####} vs {LumaMean16(neutral16):0.####})");
+
+        var gpuCn = Adjust16.TryApplyGpu(raw, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { ColorNoise = 1.0 });
+        Check(gpuCn is not null, "chroma NR gpu run");
+        if (gpuCn is not null)
+        {
+            long s5 = 0;
+            long c5 = 0;
+            for (int i = 0; i < cn1.R.Length; i += 3)
+            {
+                s5 += Math.Max(Math.Abs(cn1.R[i] - gpuCn.R[i]),
+                    Math.Max(Math.Abs(cn1.G[i] - gpuCn.G[i]), Math.Abs(cn1.B[i] - gpuCn.B[i])));
+                c5++;
+            }
+            double m5 = s5 / (double)c5;
+            Check(m5 < 8.0, $"chroma NR gpu vs cpu mean abs diff ({m5:0.##})");
+        }
     }
 
     private static BitmapSource MakeChromaNoiseSource(int w, int h, int seed)

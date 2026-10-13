@@ -206,16 +206,29 @@ public static partial class Adjust16
     private static void BlurMix(GraphicsDevice d, GpuBufs b, int w, int h, double amount, bool chroma, CancellationToken ct)
     {
         double x = Math.Clamp(amount, 0.0, 1.0);
-        int r = x < 0.34 ? 1 : (x < 0.67 ? 2 : 3);
-        float blend = (float)(chroma ? 0.15 + 0.65 * x : 0.15 + 0.55 * x);
+        if (chroma)
+        {
+            var (r, blend, passes) = PhotoOps.ChromaDenoiseParams(amount);
+            for (int pass = 0; pass < passes; pass++)
+                ChromaPassGpu(d, b, w, h, r, blend, ct);
+            return;
+        }
+        int rl = x < 0.34 ? 1 : (x < 0.67 ? 2 : 3);
+        float blendL = (float)(0.15 + 0.55 * x);
+        BoxBlurInt(d, b.R, b.Blr, b.Tmp, w, h, rl, ct);
+        BoxBlurInt(d, b.G, b.Blg, b.Tmp, w, h, rl, ct);
+        BoxBlurInt(d, b.B, b.Blb, b.Tmp, w, h, rl, ct);
+        ct.ThrowIfCancellationRequested();
+        d.For(w, h, new BlurMixKernel(b.R, b.G, b.B, b.Blr, b.Blg, b.Blb, blendL, w, h));
+    }
+
+    private static void ChromaPassGpu(GraphicsDevice d, GpuBufs b, int w, int h, int r, float blend, CancellationToken ct)
+    {
         BoxBlurInt(d, b.R, b.Blr, b.Tmp, w, h, r, ct);
         BoxBlurInt(d, b.G, b.Blg, b.Tmp, w, h, r, ct);
         BoxBlurInt(d, b.B, b.Blb, b.Tmp, w, h, r, ct);
         ct.ThrowIfCancellationRequested();
-        if (chroma)
-            d.For(w, h, new ChromaMixKernel(b.R, b.G, b.B, b.Blr, b.Blg, b.Blb, blend, w, h));
-        else
-            d.For(w, h, new BlurMixKernel(b.R, b.G, b.B, b.Blr, b.Blg, b.Blb, blend, w, h));
+        d.For(w, h, new ChromaMixKernel(b.R, b.G, b.B, b.Blr, b.Blg, b.Blb, blend, w, h));
     }
 
     private static void BoxBlurInt(GraphicsDevice d, ReadWriteBuffer<int> src, ReadWriteBuffer<int> dst, ReadWriteBuffer<int> tmp, int w, int h, int r, CancellationToken ct)
