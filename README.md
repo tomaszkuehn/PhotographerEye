@@ -1,11 +1,13 @@
 # PhotographerEye
 
-Portable przeglądarka zdjęć JPG/JPEG/PNG oraz RAW dla Windows (WPF, .NET 8, pojedynczy plik `.exe`), z korekcją tonów (cienie, gamma, rozciąganie histogramu) i zapisem zmodyfikowanych zdjęć.
+Portable przeglądarka zdjęć JPG/JPEG/PNG, HEIC/HEIF/AVIF oraz RAW dla Windows (WPF, .NET 8, pojedynczy plik `.exe`), z korekcją tonów (cienie, gamma, rozciąganie histogramu) i zapisem zmodyfikowanych zdjęć.
 
 ## Funkcje
 
 - Podgląd obrazów z folderu, nawigacja (strzałki, Home/End); strzałki ←/→ przełączają zdjęcia zawsze — nawet gdy fokus jest na suwaku (edycja tekstu ma wyższy priorytet)
-- Pasek dolny po prawej: metadane pliku, gdy znane — model aparatu, data, ogniskowa, przesłona, ISO, czas naświetlania (LibRaw dla RAW, EXIF dla JPG/PNG/TIFF); wczytywane w tle po doładowaniu obrazu, bez danych w pliku pasek pozostaje pusty
+- Szybki podgląd RAW: wbudowana miniatura aparatu (LibRaw, największa z listy miniatur) pojawia się w ~0,3 s przy otwarciu i przełączaniu strzałkami, zanim dojdzie pełny dekod 16-bit; podczas podglądu zachowane będą proporcje miniatury, właściwe proporcje RAW stosowane dopiero po pełnym dekodowaniu (współczynnik proporcji miniatury może się różnić od RAW); wymiary czytane z nagłówka RAW bez dekompresji; miniatury sąsiadów (±1) są wstępnie dekodowane w tle (cache podglądów działa)
+- Pasek dolny po prawej: metadane pliku, gdy znane — model aparatu, data, ogniskowa, przesłona, ISO, czas naświetlania (LibRaw dla RAW, własny parser TIFF dla HEIC/HEIF/AVIF, EXIF `BitmapDecoder` dla JPG/PNG/TIFF); wczytywane w tle po doładowaniu obrazu, bez danych w pliku pasek pozostaje pusty
+- Zdjęcia HEIF — HEIC/HEIF/HIF (iPhone i innych) oraz AVIF — dekodowane wprost z pliku przez wbudowany LibHeif (LibHeifSharp + libheif z libde265/libx265/aom, bez zależności od WIC/Store), pełna rozdzielczość wejściowa do wszystkich korekt; orientacja z transformacji kontenera (`irot`/`imir`/`clap`, stosowane przez dekoder) ma pierwszeństwo, orientacja EXIF stosowana tylko przy jej braku; brak obsługi plików zaszyfrowanych (Apple `.HEIC` z zaszyfrowanymi zdjęciami wymaga wcześniejszego odszyfrowania), 10-bit HDR (HDR/SDR renderują się z konwersją do 8 bit)
 - Zoom 10–400%: rolka myszy, `+`/`-`, `1` — 100%, `0`/przycisk „Dopasuj" — dopasuj do okna, dwuklik — przełączanie fit/100%
 - Pan: przeciąganie myszką (gdy obraz większy od okna); obraz zawsze wyśrodkowany i nieucięty
 - Korekcja cieni −100…+100 (maska tonalna nad czernią, podnosi głębokie cienie i oszczędza półtony; pipeline liniowy sRGB) i gamma 0.50–2.00 (LUT środkowych tonów)
@@ -31,7 +33,7 @@ Portable przeglądarka zdjęć JPG/JPEG/PNG oraz RAW dla Windows (WPF, .NET 8, p
 
 ## Uruchamianie
 
-Portable: `dist\PhotographerEye.exe [plik|folder]` — bez instalacji, .NET wbudowany w plik. Obsługuje też pliki RAW (RW2, NEF, ARW, CR2/CR3, ORF, RAF, DNG…) przez wbudowany LibRaw.
+Portable: `dist\PhotographerEye.exe [plik|folder]` — bez instalacji, .NET wbudowany w plik. Obsługuje też pliki RAW (RW2, NEF, ARW, CR2/CR3, ORF, RAF, DNG…) przez wbudowany LibRaw oraz HEIC/HEIF/HIF/AVIF przez wbudowany LibHeif.
 
 ## Skróty klawiszowe
 
@@ -58,7 +60,7 @@ dotnet publish ImgViewer.csproj -c Release -r win-x64 --self-contained true -p:P
 
 ## Testy
 
-Harness logiki (zoom/pan/fit, DPI, korekty, histogram, RAW, panel korekt):
+Harness logiki (zoom/pan/fit, DPI, korekty, histogram, RAW, HEIC/EXIF, panel korekt):
 
 ```
 dotnet run --project tools\Harness\tools.csproj -c Release
@@ -78,7 +80,7 @@ E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
 - `Controls/ImageViewer.cs` — zoom/pan/fit (renderowanie layoutowe, bez transformacji macierzowej)
 - `Controls/HistogramOverlay.cs` — histogram w prawym górnym rogu + interaktywne punkty rozciągania
 - `Controls/PhotoshopSlider.cs` — zachowanie suwaków jak w Photoshopie (klik na torze, precyzyjne przeciąganie etykiety/liczby z modyfikatorami, wpisywanie wartości, kroki strzałkami)
-- `Imaging/RawDecoder.cs` — dekod RAW (LibRaw: 16 bit/kanał **liniowo** (wyłączona gamma LibRaw, `-g 1 1` w fallbacku), mieszany tryb prześwietleń, balans z aparatu, cache par 16-bit + podgląd Bgra32; podgląd startowy = neutralny proces bazowy: dla Sony krzywa tonalna dopasowana do osadzonego podglądu JPEG (`Imaging/CameraTone.cs`, węzły → LUT EV), w przeciwnym razie normalizacja ekspozycji z percentyla luminancji (99,5% → ~0.93) + tonemap Reinhard + kodowanie sRGB; gdy dekod wewnętrzny zawiedzie lub da śmieci — automatyczny fallback na dołączone narzędzia wiersza poleceń: `thirdparty/libraw22/dcraw_emu.exe` (LibRaw 0.22.2; obsługa m.in. zwykłych NEF z Nikon Z6 III) i `thirdparty/librawhe/dcraw_emu.exe` (fork LibRaw z dekoderem Nikon NEF High Efficiency = TicoRAW/JPEG-XS; dekoduje wariant HE, wariant HE* pozostaje nieobsługiwany — zamiast śmieci aplikacja pokazuje czytelny komunikat)
+- `Imaging/RawDecoder.cs` — dekod RAW (LibRaw: 16 bit/kanał **liniowo** (wyłączona gamma LibRaw, `-g 1 1` w fallbacku), mieszany tryb prześwietleń, balans z aparatu, cache par 16-bit + podgląd Bgra32; szybki podgląd RAW: `TryDecodePreview` — największa wbudowana miniatura JPEG/kamera, cache LRU ~12, `TryGetInfoHeader` — wymiary z nagłówka bez dekompresji; podgląd startowy = neutralny proces bazowy: dla Sony krzywa tonalna dopasowana do osadzonego podglądu JPEG (`Imaging/CameraTone.cs`, węzły → LUT EV), w przeciwnym razie normalizacja ekspozycji z percentyla luminancji (99,5% → ~0.93) + tonemap Reinhard + kodowanie sRGB; gdy dekod wewnętrzny zawiedzie lub da śmieci — automatyczny fallback na dołączone narzędzia wiersza poleceń: `thirdparty/libraw22/dcraw_emu.exe` (LibRaw 0.22.2; obsługa m.in. zwykłych NEF z Nikon Z6 III) i `thirdparty/librawhe/dcraw_emu.exe` (fork LibRaw z dekoderem Nikon NEF High Efficiency = TicoRAW/JPEG-XS; dekoduje wariant HE, wariant HE* pozostaje nieobsługiwany — zamiast śmieci aplikacja pokazuje czytelny komunikat)
 - `Services/AdjustmentsProcessor.cs` — pipeline 8-bit dla JPG/PNG: kolejność operacji deweloperskich (LUT balansu bieli+dehaze → regiony EV → clarity/wyostrzenie → tonemap luminancji z ekspozycją) + gamma, ręczna mapa rozciągania, histogram
 - `Imaging/Adjust16.cs` — pipeline RAW na 16 bit/kanał w domenie **sceny liniowej** (LUT balansu bieli+dehaze → regiony świateł/cieni w EV na log-luminancji → clarity/wyostrzenie → tonemap scenowa Reinhard z ekspozycją i anty-desaturacją prześwietleń → saturacja → kodowanie sRGB → gamma/ręczna mapa/mono/grain → histogram); dla RAW z krzywą aparatu dehaze jest stosowany za tonemapem (domena wyświetlania), a WB wchodzi bez dehaze
 - `Imaging/Adjust16.Gpu.cs` — backend GPU (ComputeSharp/DirectCompute) dla `Adjust16`: detekcja sprzętowego GPU (preferencja karty dyskretnej), shadery operacji edycji RAW (w tym ToneKernel — LUT EV), automatyczny fallback do CPU gdy brak GPU lub błąd
@@ -87,8 +89,9 @@ E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
 - `Services/EyeFile.cs` — odcisk korekt `.eye` (JSON) obok źródła, auto-aplikacja przy otwarciu; punkty rozciągania zapisywane w EV (`.eye` ze starymi punktami w ułamkach wyświetlania konwertowane przy wczytaniu)
 - `Imaging/PhotoOps.cs` — regionowe maski EV cieni/świateł (log-luminancja sceny), LUT-y balansu bieli/dehaze, tonemap luminancji (scenowa Reinhard dla RAW — zawsze aktywna jako proces bazowy, display S-curve gamma 2.2 dla JPG), saturacja, clarity/wyostrzenie (unsharp), odszumianie i szum kolorów (parametry chroma NR: `ChromaDenoiseParams` — jeden zestaw dla CPU/GPU/JPG), pomiar temperatury z próbki
 - `Imaging/ManualStretch.cs` — mapa punktów rozciągania w EV sceny (składana do LUT tonemap przed kodowaniem sRGB)
+- `Imaging/HeifDecoder.cs` — dekod HEIC/HEIF/AVIF (LibHeif in-proc): `IsHeif`, `GetInfo` z orientacją per zasadom kontener/EXIF, `LoadScaled`/`DecodeFull` z krótkim cache LRU (3), `ExifBytes` do paska metadanych; parser ISOBMFF w pliku (`ContainerHasTransforms`) wykrywa `irot`/`imir`/`clap` w `ipco` (transformacje kontenera są już aplikowane przez libheif, więc EXIF jest wtedy pomijany)
 - `Services/ImageFolder.cs`, `Services/SettingsStore.cs` — lista plików, ustawienia
-- `Services/PhotoMeta.cs` — metadane pliku do paska dolnego (`PhotoMetaReader.Get`, w cache): RAW przez LibRaw (`ImageParams`/`ImageOtherParams` — tylko nagłówek, bez dekompresji), reszta przez EXIF `BitmapDecoder` (Make/Model, DateTimeOriginal, ExposureTime/FNumber/FocalLength/ISO); brak danych → pusta etykieta
+- `Services/PhotoMeta.cs` — metadane pliku do paska dolnego (`PhotoMetaReader.Get`, w cache): RAW przez LibRaw (`ImageParams`/`ImageOtherParams` — tylko nagłówek, bez dekompresji), HEIC/HEIF/AVIF przez własny minimalny parser TIFF (`ParseTiff` — LE/BE, IFD0 + ExifIFD: Make/Model, DateTimeOriginal, ExposureTime/FNumber/FocalLength/ISO), reszta przez EXIF `BitmapDecoder`; brak danych → pusta etykieta
 - `tools/Harness/` — testy logiki
 - `scripts/` — testy E2E UIA i pomoce
 

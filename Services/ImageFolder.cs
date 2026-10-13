@@ -48,6 +48,7 @@ public static class ImageFolder
     private static readonly string[] Extensions =
     {
         ".jpg", ".jpeg", ".png",
+        ".heic", ".heif", ".hif", ".avif",
         ".rw2", ".nef", ".nrw", ".arw", ".srf", ".sr2", ".cr2", ".cr3", ".crw",
         ".orf", ".raf", ".pef", ".ptx", ".dng", ".srw", ".x3f", ".3fr", ".fff", ".iiq", ".mos", ".erf", ".kdc", ".dcr", ".mef", ".rwl"
     };

@@ -52,6 +52,7 @@ public partial class MainWindow : Window
     private bool _baseIsFull;
     private bool _saving;
     private Size _fullDecodeBox;
+    private Size _baseNativeBox;
     private int _redecodeSeq;
     private int _histSeq;
     private bool _showHistogram;
@@ -242,21 +243,39 @@ public partial class MainWindow : Window
         StatusRight.Text = "";
         SetStatus("Loading…", error: false);
 
-        _ = Task.Run(() => LoadWorkerAsync(path, ct));
+        _ = Task.Run(() => LoadWorkerAsync(path, idx, ct));
     }
 
-    private async Task LoadWorkerAsync(string path, CancellationToken ct)
+    private async Task LoadWorkerAsync(string path, int idx, CancellationToken ct)
     {
         try
         {
+            bool raw = RawDecoder.IsRaw(path);
+            ImageInfo info;
+            if (raw)
+            {
+                info = RawDecoder.TryGetInfoHeader(path, out var hdr) ? hdr : ImageLoader.GetInfo(path);
+                var preview = RawDecoder.TryDecodePreview(path);
+                ct.ThrowIfCancellationRequested();
+                if (preview is not null)
+                {
+                    await Dispatcher.BeginInvoke(() =>
+                    {
+                        if (IsCurrent(path)) SetBase(path, info, preview, isFull: false, new Size(preview.PixelWidth, preview.PixelHeight));
+                    });
+                    PrefetchNeighborPreviews(idx);
+                }
+            }
+            else
+            {
+                info = ImageLoader.GetInfo(path);
+                ct.ThrowIfCancellationRequested();
+            }
+
             await _decodeGate.WaitAsync(ct);
+            BitmapSource full;
             try
             {
-                var info = ImageLoader.GetInfo(path);
-                ct.ThrowIfCancellationRequested();
-
-                bool raw = RawDecoder.IsRaw(path);
-                BitmapSource full;
                 if (!raw && _previewCache.TryGetValue(path, out var cached))
                 {
                     full = cached;
@@ -299,6 +318,25 @@ public partial class MainWindow : Window
         }
     }
 
+    private void PrefetchNeighborPreviews(int idx)
+    {
+        if (idx < 0 || _files.Count == 0) return;
+        string[] nb =
+        {
+            _files[(idx + 1) % _files.Count],
+            _files[(_files.Count + idx - 1) % _files.Count]
+        };
+        _ = Task.Run(() =>
+        {
+            foreach (var p in nb)
+            {
+                if (string.Equals(p, _currentPath, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!RawDecoder.IsRaw(p)) continue;
+                RawDecoder.TryDecodePreview(p);
+            }
+        });
+    }
+
     private double CurrentBaseEv() => double.IsNaN(_eyeBaseEv) ? _baseEv : _eyeBaseEv;
 
     private CameraToneCurve? CurrentCurve() => _eyeCurveSet ? _eyeCurve : _baseCurve;
@@ -309,26 +347,33 @@ public partial class MainWindow : Window
         _baseBitmap = raw;
         _baseInfo = info;
         _baseIsFull = isFull;
-        _baseRaw16 = RawDecoder.IsRaw(path) ? RawDecoder.GetCached16(path, isFull) : null;
-        _baseCurve = _baseRaw16 is not null ? RawDecoder.GetCameraTone(path) : null;
-        _baseEv = _baseRaw16 is not null ? RawDecoder.GetBaseEv(path) : 0.0;
-        if (double.IsNaN(_eyeBaseEv)) _eyeBaseEv = _baseEv;
-
-        if (_histPending)
-        {
-            _histPending = false;
-            if (_histPendingSt is not null) { InitHistory(_histPendingSt); _histPendingSt = null; }
-            else InitHistory(CaptureEyeState());
-        }
-
+        _baseNativeBox = requestedBox.Width > 0 ? requestedBox : new Size(info.Width, info.Height);
         if (isFull)
         {
+            _baseRaw16 = RawDecoder.IsRaw(path) ? RawDecoder.GetCached16(path, full: true) : null;
+            _baseCurve = _baseRaw16 is not null ? RawDecoder.GetCameraTone(path) : null;
+            _baseEv = _baseRaw16 is not null ? RawDecoder.GetBaseEv(path) : 0.0;
+            if (double.IsNaN(_eyeBaseEv)) _eyeBaseEv = _baseEv;
+
+            if (_histPending)
+            {
+                _histPending = false;
+                if (_histPendingSt is not null) { InitHistory(_histPendingSt); _histPendingSt = null; }
+                else InitHistory(CaptureEyeState());
+            }
+
             _fullDecodeBox = requestedBox;
             string decoded = raw.PixelWidth < info.Width ? $" • decoder: {raw.PixelWidth}×{raw.PixelHeight} px" : "";
             SetStatus($"{Path.GetFileName(path)}  •  {info.Width}×{info.Height} px{decoded}", error: false);
-            UpdateStatusMeta(path);
         }
-
+        else
+        {
+            _baseRaw16 = null;
+            _baseCurve = null;
+            _baseEv = 0.0;
+            SetStatus($"{Path.GetFileName(path)}  •  podgląd…", error: false);
+        }
+        UpdateStatusMeta(path);
         ReapplyAdjustments(path, info);
     }
 
@@ -411,6 +456,7 @@ public partial class MainWindow : Window
         var raw = _baseBitmap;
         var raw16 = _baseRaw16;
         if (raw is null) return;
+        var box = _baseNativeBox.Width > 0 ? _baseNativeBox : info.DisplaySize;
 
         _lastApplyTicks = Environment.TickCount64;
         double s = ShadowSlider.Value / 100.0;
@@ -428,7 +474,7 @@ public partial class MainWindow : Window
                 : AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null)
         {
             _applyCts?.Cancel();
-            Viewer.SetSource(raw, info.DisplaySize);
+            Viewer.SetSource(raw, box);
             UpdateHistogram(path, raw);
             return;
         }
@@ -461,7 +507,7 @@ public partial class MainWindow : Window
                     {
                         if (!IsCurrent(path) || !ReferenceEquals(_baseRaw16, raw16)) return;
                         if (_compareOn) return;
-                        Viewer.SetSource(disp, info.DisplaySize);
+                        Viewer.SetSource(disp, box);
                         if (hist is not null) ApplyHistogram(path, hist);
                     });
                     return;
@@ -479,7 +525,7 @@ public partial class MainWindow : Window
                     {
                         return;
                     }
-                    Viewer.SetSource(processed, info.DisplaySize);
+                    Viewer.SetSource(processed, box);
                     if (hist8 is not null) ApplyHistogram(path, hist8);
                 });
             }
@@ -746,7 +792,7 @@ public partial class MainWindow : Window
         if (_baseBitmap is null || _baseInfo is not ImageInfo info || _currentPath is null) return;
         if (_compareOn)
         {
-            Viewer.SetSource(_baseBitmap, info.DisplaySize);
+            Viewer.SetSource(_baseBitmap, _baseNativeBox.Width > 0 ? _baseNativeBox : info.DisplaySize);
             UpdateHistogram(_currentPath, _baseBitmap);
             SetStatus("Compare — original without edits", error: false);
         }
@@ -1091,7 +1137,7 @@ public partial class MainWindow : Window
         var dlg = new OpenFileDialog
         {
             Title = "Open Image",
-            Filter = "Images|*.jpg;*.jpeg;*.png|RAW|*.rw2;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.cr2;*.cr3;*.crw;*.orf;*.raf;*.pef;*.ptx;*.dng;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.mos;*.erf;*.kdc;*.dcr;*.mef;*.rwl|All files|*.*",
+            Filter = "Images|*.jpg;*.jpeg;*.png;*.heic;*.heif;*.hif;*.avif|RAW|*.rw2;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.cr2;*.cr3;*.crw;*.orf;*.raf;*.pef;*.ptx;*.dng;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.mos;*.erf;*.kdc;*.dcr;*.mef;*.rwl|All files|*.*",
             CheckFileExists = true
         };
         if (dlg.ShowDialog(this) == true)

@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -8,6 +9,7 @@ using ImgViewer.Controls;
 using ImgViewer.Imaging;
 using ImgViewer.Services;
 using ImgViewer;
+using LibHeifSharp;
 using Sdcb.LibRaw;
 
 internal static class Program
@@ -40,6 +42,16 @@ internal static class Program
         if (args.Length > 0 && args[0] == "--domain-probe")
         {
             DomainProbe(args[1]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--heif-diag")
+        {
+            TestHeif();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--heif-probe")
+        {
+            HeifProbe();
             return;
         }
         if (args.Length > 0 && (args[0] == "--raw22" || args[0] == "--rawhe"))
@@ -155,6 +167,8 @@ internal static class Program
         TestEyeFile();
         TestChromaNoise();
         TestPhotoMeta();
+        TestRawPreview();
+        TestHeif();
 
         Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
         Environment.ExitCode = _fails;
@@ -297,7 +311,7 @@ internal static class Program
         var out1 = AdjustmentsProcessor.Apply(src, 0.0, 1.4);
         var out0 = AdjustmentsProcessor.Apply(src, 0.0, 1.0);
         Check(diff(ReadPixels(out1!).mid, ReadPixels(out0!).mid) > 8, "gamma brightens midtones");
-        Check(Math.Abs(ReadPixels(out1!).bright.g - 240) <= 5, "gamma keeps near-white (≤5 lvl)");
+        Check(Math.Abs(ReadPixels(out1!).bright.g - 240) <= 5, "gamma keeps near-white (?5 lvl)");
     }
 
     private static int diff((byte b, byte g, byte r) a, (byte b, byte g, byte r) c) => Math.Abs(a.g - c.g);
@@ -578,7 +592,7 @@ internal static class Program
         string name = Adjust16.GpuDeviceName;
         if (name is null)
         {
-            Console.WriteLine("gpu: brak sprzętowego GPU, test pominięty");
+            Console.WriteLine("gpu: brak sprz�towego GPU, test pomini�ty");
             return;
         }
         Console.WriteLine($"gpu: {name}");
@@ -658,7 +672,7 @@ internal static class Program
         }
 
         var gpuNoop = Adjust16.TryApplyGpu(base16, 0.0, 1.0, null, out _, extra: new PhotoAdjustments());
-        Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obsługuje CPU)");
+        Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obs�uguje CPU)");
 
         var cam = new CameraToneCurve(new[]
         {
@@ -694,7 +708,7 @@ internal static class Program
         Adjust16.GpuEnabled = false;
         var disabled = Adjust16.TryApplyGpu(base16, 0.3, 1.15, null, out _, mono: MonoMode.TriX, extra: extra);
         Adjust16.GpuEnabled = prevEnabled;
-        Check(disabled is null, "gpu wyłączony -> fallback CPU");
+        Check(disabled is null, "gpu wy��czony -> fallback CPU");
         Console.WriteLine($"gpu status: {Adjust16.GpuStatus}");
 
         var ramp = new Raw16Image(2048, 2048);
@@ -876,14 +890,14 @@ internal static class Program
         Check(Near(PhotoshopSlider.Factor(true, false, false), 10.0), "suwak: Shift = szybko 10");
 
         Check(Near(PhotoshopSlider.Quantum(0.05), 0.01), "suwak: kwant EV 0,01");
-        Check(Near(PhotoshopSlider.Quantum(1.0), 1.0), "suwak: kwant liczb całkowitych 1");
+        Check(Near(PhotoshopSlider.Quantum(1.0), 1.0), "suwak: kwant liczb ca�kowitych 1");
 
-        Check(Near(PhotoshopSlider.Snap(0.037, -2, 2, 0.05), 0.04), "suwak: zaokrąglenie EV 0,037->0,04");
-        Check(Near(PhotoshopSlider.Snap(2.7, -100, 100, 1.0), 3.0), "suwak: zaokrąglenie 2,7->3");
-        Check(Near(PhotoshopSlider.Snap(9.9, -5, 5, 1.0), 5.0), "suwak: przycięcie do maksimum");
+        Check(Near(PhotoshopSlider.Snap(0.037, -2, 2, 0.05), 0.04), "suwak: zaokr�glenie EV 0,037->0,04");
+        Check(Near(PhotoshopSlider.Snap(2.7, -100, 100, 1.0), 3.0), "suwak: zaokr�glenie 2,7->3");
+        Check(Near(PhotoshopSlider.Snap(9.9, -5, 5, 1.0), 5.0), "suwak: przyci�cie do maksimum");
 
-        // ekspozycja: pełny tor (250 px) = pełny zakres 4 EV, krok 0,01 EV
-        Check(Near(PhotoshopSlider.Scrub(0, 250, -2, 2, 0.05, false, false, false), 2.0), "suwak: 250 px = pełny zakres");
+        // ekspozycja: pe�ny tor (250 px) = pe�ny zakres 4 EV, krok 0,01 EV
+        Check(Near(PhotoshopSlider.Scrub(0, 250, -2, 2, 0.05, false, false, false), 2.0), "suwak: 250 px = pe�ny zakres");
         Check(Near(PhotoshopSlider.Scrub(0, 100, -2, 2, 0.05, false, false, false), 1.6), "suwak: 100 px = +1,6 EV");
         Check(Near(PhotoshopSlider.Scrub(0, 100, -2, 2, 0.05, false, true, false), 0.16), "suwak: Alt 100 px = +0,16 EV (precyzja)");
         Check(Near(PhotoshopSlider.Scrub(-0.5, 50, -2, 2, 0.05, false, false, true), -0.42), "suwak: Ctrl 50 px od -0,5 = -0,42 EV");
@@ -891,23 +905,23 @@ internal static class Program
         // kontrast: zakres 200, 25 px ~ 20 jednostek, Ctrl -> 2
         Check(Near(PhotoshopSlider.Scrub(0, 25, -100, 100, 1.0, false, false, false), 20), "suwak: kontrast 25 px = +20");
         Check(Near(PhotoshopSlider.Scrub(0, 25, -100, 100, 1.0, false, true, false), 2), "suwak: kontrast Alt 25 px = +2");
-        Check(PhotoshopSlider.Scrub(0, 999, -100, 100, 1.0, false, false, false) == 100, "suwak: kontrast przycięty do 100");
+        Check(PhotoshopSlider.Scrub(0, 999, -100, 100, 1.0, false, false, false) == 100, "suwak: kontrast przyci�ty do 100");
 
-        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, false), 0.05), "suwak: krok strzałki EV 0,05");
-        Check(Near(PhotoshopSlider.Step(0.05, 0.25, true, false), 0.25), "suwak: Shift+strzałka EV 0,25");
-        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, true), 0.01), "suwak: Ctrl+strzałka EV 0,01 (precyzja)");
-        Check(Near(PhotoshopSlider.Step(1.0, 10.0, true, false), 10), "suwak: Shift+strzałka liczb = 10");
-        Check(Near(PhotoshopSlider.Step(1.0, 10.0, false, true), 1), "suwak: Ctrl+strzałka liczb = 1 (min. krok)");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, false), 0.05), "suwak: krok strza�ki EV 0,05");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, true, false), 0.25), "suwak: Shift+strza�ka EV 0,25");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, true), 0.01), "suwak: Ctrl+strza�ka EV 0,01 (precyzja)");
+        Check(Near(PhotoshopSlider.Step(1.0, 10.0, true, false), 10), "suwak: Shift+strza�ka liczb = 10");
+        Check(Near(PhotoshopSlider.Step(1.0, 10.0, false, true), 1), "suwak: Ctrl+strza�ka liczb = 1 (min. krok)");
 
         var slider = new Slider { Minimum = -2, Maximum = 2, SmallChange = 0.05, LargeChange = 0.25 };
-        Check(!PhotoshopSlider.GetEnable(slider), "suwak: domyślnie wyłączony");
+        Check(!PhotoshopSlider.GetEnable(slider), "suwak: domy�lnie wy��czony");
         PhotoshopSlider.SetEnable(slider, true);
-        Check(PhotoshopSlider.GetEnable(slider), "suwak: włączony po SetEnable");
-        Check(slider.IsMoveToPointEnabled, "suwak: klik na torze ustawia wartość (Photoshop)");
-        Check(slider.Focusable, "suwak: fokusowalny (strzałki)");
-        Check(slider.ToolTip is string, "suwak: podpowiedź ustawiona");
+        Check(PhotoshopSlider.GetEnable(slider), "suwak: w��czony po SetEnable");
+        Check(slider.IsMoveToPointEnabled, "suwak: klik na torze ustawia warto�� (Photoshop)");
+        Check(slider.Focusable, "suwak: fokusowalny (strza�ki)");
+        Check(slider.ToolTip is string, "suwak: podpowied� ustawiona");
         PhotoshopSlider.SetEnable(slider, false);
-        Check(!PhotoshopSlider.GetEnable(slider), "suwak: wyłączony po SetEnable(false)");
+        Check(!PhotoshopSlider.GetEnable(slider), "suwak: wy��czony po SetEnable(false)");
     }
 
     private static void TestRaw16()
@@ -1551,6 +1565,609 @@ internal static class Program
             Check(r.IsoText == null || (r.IsoText.StartsWith("ISO ") && int.Parse(r.IsoText.Substring(4)) > 0), $"raw meta iso ({Path.GetFileName(f)}: {r.IsoText})");
             Console.WriteLine($"{Path.GetFileName(f)} meta: {r.Summary}");
         }
+    }
+
+    private static unsafe void HeifProbe()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "opencode", "heifprobe");
+        Directory.CreateDirectory(dir);
+        string heic = Path.Combine(dir, "probe.heic");
+
+        int w = 64, h = 128;
+        using (var ctx = new HeifContext())
+        {
+            using var img = new HeifImage(w, h, HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
+            img.AddPlane(HeifChannel.Interleaved, w, h, 8);
+            var plane = img.GetPlane(HeifChannel.Interleaved);
+            byte* dst = (byte*)plane.Scan0.ToPointer();
+            int stride = plane.Stride;
+            for (int y = 0; y < h; y++)
+            {
+                byte* row = dst + (long)y * stride;
+                for (int x = 0; x < w; x++)
+                {
+                    row[x * 3 + 0] = (byte)(x * 4);
+                    row[x * 3 + 1] = (byte)(y * 2);
+                    row[x * 3 + 2] = 128;
+                }
+            }
+            var descriptors = ctx.GetEncoderDescriptors(HeifCompressionFormat.Hevc);
+            Console.WriteLine($"encoders: {descriptors.Count}");
+            var enc = ctx.GetEncoder(descriptors[0]);
+            enc.SetLossyQuality(85);
+            var handle = ctx.EncodeImageAndReturnHandle(img, enc, new HeifEncodingOptions());
+            ctx.SetPrimaryImage(handle);
+            ctx.WriteToFile(heic);
+            Console.WriteLine($"encoded: {heic} {new FileInfo(heic).Length} B");
+        }
+
+        using (var ctx = new HeifContext(heic))
+        {
+            using var handle = ctx.GetPrimaryImageHandle();
+            Console.WriteLine($"handle dims {handle.Width}x{handle.Height}");
+            byte[] exif = null;
+            try { exif = handle.GetExifMetadata(); } catch (Exception ex) { Console.WriteLine("exif absent: " + ex.GetType().Name); }
+            Console.WriteLine($"exif: {(exif is null ? "null" : exif.Length + " B")}");
+            if (exif is not null) PrintHex(exif, 24);
+            using var dec = handle.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24, new HeifDecodingOptions());
+            Console.WriteLine($"decoded dims {dec.Width}x{dec.Height}");
+            var pl = dec.GetPlane(HeifChannel.Interleaved);
+            Console.WriteLine($"plane {pl.Width}x{pl.Height} stride={pl.Stride} scan0Type={pl.Scan0.GetType().Name}");
+            byte* s = (byte*)pl.Scan0.ToPointer();
+            int ps = pl.Stride;
+            for (int i = 0; i < 3; i++)
+            {
+                int[] px = { 1, 60, 63 }, py = { 1, 64, 127 };
+                byte* p2 = s + (long)py[i] * ps + px[i] * 3;
+                Console.WriteLine($"px({px[i]},{py[i]})=({p2[0]},{p2[1]},{p2[2]}) expect={(byte)(px[i] * 4)},{(byte)(py[i] * 2)},{128}");
+            }
+        }
+
+        var info = ImgViewer.Imaging.HeifDecoder.GetInfo(heic);
+        Console.WriteLine($"GetInfo {info.Width}x{info.Height} orient={info.Orientation}");
+        var bmp = ImgViewer.Imaging.HeifDecoder.LoadScaled(heic, info, info.Width, info.Height);
+        Console.WriteLine($"LoadScaled {bmp.PixelWidth}x{bmp.PixelHeight} fmt={bmp.Format}");
+        var colorBuf = new byte[3];
+        int stride2 = bmp.PixelWidth * 3;
+        int[] sx = { 1, 60, 63 }, xy = { 1, 64, 127 };
+        for (int i = 0; i < 3; i++)
+        {
+            bmp.CopyPixels(new Int32Rect(sx[i], xy[i], 1, 1), colorBuf, 3, 0);
+            Console.WriteLine($"dec px({sx[i]},{xy[i]})=({colorBuf[0]},{colorBuf[1]},{colorBuf[2]}) expect={(byte)(sx[i] * 4)},{(byte)(xy[i] * 2)},{128}");
+        }
+    }
+
+    private static void DumpBoxes(string path, string label)
+    {
+        byte[] p = File.ReadAllBytes(path);
+        int q = 0;
+        while (q + 8 <= p.Length)
+        {
+            int sz = (int)ReadHeifU32(p, q);
+            string ty = HeifBoxType(p, q);
+            Console.WriteLine($"[{label}] top box @{q}: {ty} size={sz}");
+            if (ty == "meta")
+            {
+                int e = q + sz;
+                int c = q + 12;
+                while (c + 8 <= e)
+                {
+                    int cs = (int)ReadHeifU32(p, c);
+                    string cy = HeifBoxType(p, c);
+                    Console.WriteLine($"[{label}]    meta child @{c}: {cy} size={cs}");
+                    if (cy == "iprp")
+                    {
+                        int ce = c + cs;
+                        int cc = c + 8;
+                        while (cc + 8 <= ce)
+                        {
+                            int ccs = (int)ReadHeifU32(p, cc);
+                            string ccy = HeifBoxType(p, cc);
+                            Console.WriteLine($"[{label}]        iprp child @{cc}: {ccy} size={ccs}");
+                            if (ccs < 8) break;
+                            cc += ccs;
+                        }
+                    }
+                    if (cs < 8) break;
+                    c += cs;
+                }
+            }
+            if (sz < 8) break;
+            q += sz;
+        }
+    }
+
+    private static string PrintHexS(byte[] b, int n)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < Math.Min(n, b.Length); i++) sb.Append(b[i].ToString("X2")).Append(' ');
+        return sb.ToString();
+    }
+
+    private static void PrintHex(byte[] b, int n)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < Math.Min(n, b.Length); i++) sb.Append(b[i].ToString("X2")).Append(' ');
+        Console.WriteLine(sb.ToString());
+    }
+
+    private static void TestRawPreview()
+    {
+        string arw = @"D:\temp\test-raw\DSC01670.ARW";
+        Check(File.Exists(arw), "preview arw sample present");
+
+        var full16 = RawDecoder.Decode16(arw, halfSize: false);
+        Check(RawDecoder.TryGetInfoHeader(arw, out var hdr), "preview header info");
+        Check(hdr.Width == full16.W && hdr.Height == full16.H, $"preview header dims ({hdr.Width}x{hdr.Height} vs {full16.W}x{full16.H})");
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var p1 = RawDecoder.TryDecodePreview(arw);
+        sw.Stop();
+        Check(p1 is not null, "preview decoded");
+        Check(sw.ElapsedMilliseconds < 1000, $"preview cold < 1000 ms ({sw.ElapsedMilliseconds})");
+        if (p1 is not null)
+        {
+            Check(p1.PixelWidth > 1000 && p1.PixelHeight > 700, $"preview size ({p1.PixelWidth}x{p1.PixelHeight})");
+            double ar1 = p1.PixelWidth / (double)p1.PixelHeight;
+            double ar2 = full16.W / (double)full16.H;
+            Check(Math.Abs(ar1 - ar2) < 0.03, $"preview aspect ({ar1:0.000} vs {ar2:0.000})");
+            var hist = AdjustmentsProcessor.ComputeHistogram(p1);
+            if (hist is not null)
+            {
+                double mean = 0, wsum = 0;
+                for (int i = 0; i < 256; i++) { mean += i * hist.Lum[i]; wsum += hist.Lum[i]; }
+                mean = wsum > 0 ? mean / wsum : 0;
+                Check(mean > 30 && mean < 220, $"preview brightness ({mean:0.#})");
+            }
+        }
+
+        var p2 = RawDecoder.TryDecodePreview(arw);
+        Check(ReferenceEquals(p1, p2), "preview cached hit");
+
+        foreach (var f in new[] { @"D:\temp\test-raw\1150886458.nef", @"D:\temp\test-raw\P1018567.RW2" })
+        {
+            var p = RawDecoder.TryDecodePreview(f);
+            Check(p is not null && p.PixelWidth > 500, $"preview ({Path.GetFileName(f)}) ({p?.PixelWidth}x{p?.PixelHeight})");
+        }
+        Console.WriteLine("raw preview: " + (p1 is null ? "FAIL" : $"{p1.PixelWidth}x{p1.PixelHeight}"));
+    }
+
+    private static void TestHeif()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "imgviewer_heiftest", DateTime.Now.ToString("yyyyMMddHHmmss"));
+        Directory.CreateDirectory(dir);
+
+        Check(HeifDecoder.IsHeif("a.heic") && HeifDecoder.IsHeif("b.HEIF") && HeifDecoder.IsHeif("c.hif") && HeifDecoder.IsHeif("d.avif"), "heif ext detect");
+        Check(!HeifDecoder.IsHeif("a.jpg") && !HeifDecoder.IsHeif("b.png"), "non-heif rejected");
+
+        var quad = (Func<int, int, (byte, byte, byte)>)((x, y) => x < 64 ? ((byte)200, (byte)30, (byte)30) : ((byte)30, (byte)60, (byte)200));
+
+        string flat = Path.Combine(dir, "flat.heic");
+        EncodeHeic(flat, 128, 64, quad, null);
+        var info = HeifDecoder.GetInfo(flat);
+        Check(info.Width == 128 && info.Height == 64, $"heif info dims ({info.Width}x{info.Height})");
+        Check(info.Orientation == 1, $"heif info orient ({info.Orientation})");
+        var bmp = HeifDecoder.LoadScaled(flat, info, info.Width, info.Height);
+        Check(bmp.PixelWidth == 128 && bmp.PixelHeight == 64, $"heif decode dims ({bmp.PixelWidth}x{bmp.PixelHeight})");
+        double err = CompareToBuffer(bmp, MakeRefBuffer(quad, 128, 64));
+        Check(err < 8.0, $"heif colors match ({err:0.##})");
+        bmp = HeifDecoder.LoadScaled(flat, info, info.Width, info.Height);
+        Check(ReferenceEquals(bmp, HeifDecoder.LoadScaled(flat, info, info.Width, info.Height)), "heif cache hit");
+        var half = HeifDecoder.LoadScaled(flat, info, 64, 32);
+        Check(half.PixelWidth == 64 && half.PixelHeight == 32, $"heif scaled dims ({half.PixelWidth}x{half.PixelHeight})");
+        Check(PhotoMetaReader.Get(flat) is null, "heif without exif has no meta");
+
+        var quadP = (Func<int, int, (byte, byte, byte)>)((x, y) => y < 80 ? ((byte)10, (byte)180, (byte)10) : ((byte)180, (byte)170, (byte)20));
+        string portrait = Path.Combine(dir, "portrait.heic");
+        EncodeHeic(portrait, 96, 160, quadP, BuildExifTiff(6, "TestPhone", "Ultra 15", "2025:06:01 08:30:00", 14, 5, 52, 10, 1, 125, 400));
+        var infoP = HeifDecoder.GetInfo(portrait);
+        Check(infoP.Width == 160 && infoP.Height == 96, $"heif exif-orient info dims ({infoP.Width}x{infoP.Height})");
+        Check(infoP.Orientation == 6, $"heif exif-orient orient ({infoP.Orientation})");
+        var bmpP = HeifDecoder.LoadScaled(portrait, infoP, infoP.Width, infoP.Height);
+        Check(bmpP.PixelWidth == 160 && bmpP.PixelHeight == 96, $"heif exif-orient decode dims ({bmpP.PixelWidth}x{bmpP.PixelHeight})");
+        var bufP = MakeRefBuffer(quadP, 96, 160);
+        double errP = CompareToBuffer(bmpP, RotateBufferCW(bufP, 96, 160));
+        Check(errP < 8.0, $"heif exif-orient rotated colors ({errP:0.##})");
+        var metaP = PhotoMetaReader.Get(portrait);
+        Check(metaP is not null, "heif exif meta found");
+        if (metaP is not null)
+        {
+            Check(metaP.Camera == "TestPhone Ultra 15", $"heif meta camera ({metaP.Camera})");
+            Check(metaP.DateText == "2025-06-01 08:30", $"heif meta date ({metaP.DateText})");
+            Check(metaP.IsoText == "ISO 400", $"heif meta iso ({metaP.IsoText})");
+            Check(metaP.ApertureText == "f/2.8", $"heif meta aperture ({metaP.ApertureText})");
+            Check(metaP.FocalText == "5.2 mm", $"heif meta focal ({metaP.FocalText})");
+            Check(metaP.ShutterText == "1/125 s", $"heif meta shutter ({metaP.ShutterText})");
+            Console.WriteLine("heif meta: " + metaP.Summary);
+        }
+
+        var quadL = (Func<int, int, (byte, byte, byte)>)((x, y) => x < 128 ? ((byte)200, (byte)30, (byte)30) : ((byte)30, (byte)60, (byte)200));
+        string rot = Path.Combine(dir, "container-rot.heic");
+        EncodeHeic(rot, 256, 128, quadL, BuildExifTiff(6, "Container", "RotTest", "2025:01:01 00:00:00", 14, 5, 240, 10, 1, 60, 200));
+        byte[] patched = PatchInsertIrot(File.ReadAllBytes(rot), 1);
+        string rotPatched = Path.Combine(dir, "container-rot-patched.heic");
+        File.WriteAllBytes(rotPatched, patched);
+        DumpBoxes(rot, "orig");
+        DumpBoxes(rotPatched, "patch1");
+        var infoR = HeifDecoder.GetInfo(rotPatched);
+        Check(infoR.Width == 128 && infoR.Height == 256, $"heif irot info dims ({infoR.Width}x{infoR.Height})");
+        var bmpR = HeifDecoder.LoadScaled(rotPatched, infoR, infoR.Width, infoR.Height);
+        Check(bmpR.PixelWidth == 128 && bmpR.PixelHeight == 256, $"heif irot decode dims ({bmpR.PixelWidth}x{bmpR.PixelHeight})");
+        var bufL = MakeRefBuffer(quadL, 256, 128);
+        double errR = CompareToBuffer(bmpR, RotateBufferCCW(bufL, 256, 128));
+        Check(errR < 10.0, $"heif irot container-only rotation ({errR:0.##})");
+        var metaR = PhotoMetaReader.Get(rotPatched);
+        Check(metaR is not null && metaR.Camera == "Container RotTest", $"heif irot meta from exif ({metaR?.Camera})");
+
+        string hif = Path.Combine(dir, "alias.hif");
+        File.Copy(flat, hif, true);
+        var infoH = HeifDecoder.GetInfo(hif);
+        Check(infoH.Width == 128 && infoH.Height == 64, $"heif .hif info dims ({infoH.Width}x{infoH.Height})");
+
+        string bad = Path.Combine(dir, "broken.heic");
+        File.WriteAllBytes(bad, new byte[] { 0, 0, 1, 5 });
+        bool threw = false;
+        try { HeifDecoder.GetInfo(bad); }
+        catch (Exception) { threw = true; }
+        Check(threw, "corrupt heif fails with exception");
+
+        var listed = ImageFolder.List(dir);
+        Check(listed.Count(f => f.EndsWith(".heic", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".hif", StringComparison.OrdinalIgnoreCase)) == 6,
+            $"folder lists heif files ({listed.Count})");
+
+        Console.WriteLine("heif: " + (info.Width) + "x" + (info.Height) + " ok");
+    }
+
+    private static void EncodeHeic(string path, int w, int h, Func<int, int, (byte, byte, byte)> pattern, byte[]? exif, int quality = 90)
+    {
+        using var ctx = new HeifContext();
+        using var img = new HeifImage(w, h, HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
+        img.AddPlane(HeifChannel.Interleaved, w, h, 8);
+        var plane = img.GetPlane(HeifChannel.Interleaved);
+        unsafe
+        {
+            byte* dst = (byte*)plane.Scan0.ToPointer();
+            int stride = plane.Stride;
+            for (int y = 0; y < h; y++)
+            {
+                byte* row = dst + (long)y * stride;
+                for (int x = 0; x < w; x++)
+                {
+                    var (r, g, b) = pattern(x, y);
+                    row[x * 3 + 0] = r;
+                    row[x * 3 + 1] = g;
+                    row[x * 3 + 2] = b;
+                }
+            }
+        }
+        var descriptors = ctx.GetEncoderDescriptors(HeifCompressionFormat.Hevc);
+        if (descriptors.Count == 0) throw new InvalidOperationException("no hevc encoder");
+        var enc = ctx.GetEncoder(descriptors[0]);
+        enc.SetLossyQuality(quality);
+        var handle = ctx.EncodeImageAndReturnHandle(img, enc, new HeifEncodingOptions());
+        ctx.SetPrimaryImage(handle);
+        if (exif is not null) ctx.AddExifMetadata(handle, exif);
+        ctx.WriteToFile(path);
+    }
+
+    private static byte[] MakeRefBuffer(Func<int, int, (byte, byte, byte)> pattern, int w, int h)
+    {
+        var buf = new byte[w * h * 3];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                var (r, g, b) = pattern(x, y);
+                buf[(y * w + x) * 3 + 0] = r;
+                buf[(y * w + x) * 3 + 1] = g;
+                buf[(y * w + x) * 3 + 2] = b;
+            }
+        }
+        return buf;
+    }
+
+    private static double CompareToBuffer(BitmapSource bmp, byte[] refBuf)
+    {
+        int w = bmp.PixelWidth, h = bmp.PixelHeight;
+        var buf = new byte[w * h * 3];
+        bmp.CopyPixels(buf, w * 3, 0);
+        long acc = 0;
+        long n = 0;
+        for (int i = 0; i < w * h; i++)
+        {
+            int o = i * 3;
+            acc += Math.Abs(buf[o] - refBuf[o]) + Math.Abs(buf[o + 1] - refBuf[o + 1]) + Math.Abs(buf[o + 2] - refBuf[o + 2]);
+            n += 3;
+        }
+        return n > 0 ? acc / (double)n : 999;
+    }
+
+    private static byte[] RotateBufferCW(byte[] src, int w, int h)
+    {
+        var dst = new byte[h * w * 3];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int di = (x * h + (h - 1 - y)) * 3;
+                dst[di + 0] = src[(y * w + x) * 3 + 0];
+                dst[di + 1] = src[(y * w + x) * 3 + 1];
+                dst[di + 2] = src[(y * w + x) * 3 + 2];
+            }
+        }
+        return dst;
+    }
+
+    private static byte[] RotateBufferCCW(byte[] src, int w, int h)
+    {
+        var dst = new byte[h * w * 3];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int di = ((w - 1 - x) * h + y) * 3;
+                dst[di + 0] = src[(y * w + x) * 3 + 0];
+                dst[di + 1] = src[(y * w + x) * 3 + 1];
+                dst[di + 2] = src[(y * w + x) * 3 + 2];
+            }
+        }
+        return dst;
+    }
+
+    private static byte[] BuildExifTiff(int orientation, string make, string model, string date,
+        int apertureNum, int apertureDen, int focalNum, int focalDen, int shutterNum, int shutterDen, int iso)
+    {
+        var outb = new List<byte>();
+        var heap = new List<byte>();
+        byte[] makeB = Encoding.ASCII.GetBytes(make);
+        byte[] modelB = Encoding.ASCII.GetBytes(model);
+        byte[] dateB = Encoding.ASCII.GetBytes(date);
+
+        int Put(byte[] b)
+        {
+            int o = heap.Count;
+            heap.AddRange(b);
+            heap.Add(0);
+            return o;
+        }
+        int hMake = Put(Encoding.ASCII.GetBytes(make));
+        int hModel = Put(Encoding.ASCII.GetBytes(model));
+        int hDate = Put(Encoding.ASCII.GetBytes(date));
+        int hShutter = heap.Count; heap.AddRange(new byte[8]);
+        int hAperture = heap.Count; heap.AddRange(new byte[8]);
+        int hFocal = heap.Count; heap.AddRange(new byte[8]);
+        if ((heap.Count & 1) != 0) heap.Add(0);
+        int baseOff = 140;
+
+        void W(byte[] bytes) => outb.AddRange(bytes);
+        void U16(int v) => W(new[] { (byte)v, (byte)(v >> 8) });
+        void U32(int v) => W(new[] { (byte)v, (byte)(v >> 8), (byte)(v >> 16), (byte)(v >> 24) });
+        void Entry(int baseTag, ushort type, int count, int valueOff)
+        {
+            U16(baseTag);
+            U16(type);
+            U32(count);
+            U32(valueOff);
+        }
+
+        W(new byte[] { 0x49, 0x49, 42, 0 });
+        U32(8);
+
+        U16(4);
+        Entry(271, 2, makeB.Length + 1, baseOff + hMake);
+        Entry(272, 2, modelB.Length + 1, baseOff + hModel);
+        Entry(274, 3, 1, orientation);
+        Entry(34665, 4, 1, 62);
+        U32(0);
+
+        U16(6);
+        Entry(306, 2, dateB.Length + 1, baseOff + hDate);
+        Entry(33434, 5, 1, baseOff + hShutter);
+        Entry(33437, 5, 1, baseOff + hAperture);
+        Entry(37386, 5, 1, baseOff + hFocal);
+        Entry(34855, 3, 1, iso);
+        Entry(36867, 2, dateB.Length + 1, baseOff + hDate);
+        U32(0);
+
+        var all = new List<byte>(outb);
+        all.AddRange(heap);
+        int heapStart = outb.Count;
+        all[heapStart + hShutter + 0] = (byte)shutterNum; all[heapStart + hShutter + 1] = (byte)(shutterNum >> 8); all[heapStart + hShutter + 2] = (byte)(shutterNum >> 16); all[heapStart + hShutter + 3] = (byte)(shutterNum >> 24);
+        all[heapStart + hShutter + 4] = (byte)shutterDen; all[heapStart + hShutter + 5] = (byte)(shutterDen >> 8); all[heapStart + hShutter + 6] = (byte)(shutterDen >> 16); all[heapStart + hShutter + 7] = (byte)(shutterDen >> 24);
+        all[heapStart + hAperture + 0] = (byte)apertureNum; all[heapStart + hAperture + 1] = (byte)(apertureNum >> 8); all[heapStart + hAperture + 2] = (byte)(apertureNum >> 16); all[heapStart + hAperture + 3] = (byte)(apertureNum >> 24);
+        all[heapStart + hAperture + 4] = (byte)apertureDen; all[heapStart + hAperture + 5] = (byte)(apertureDen >> 8); all[heapStart + hAperture + 6] = (byte)(apertureDen >> 16); all[heapStart + hAperture + 7] = (byte)(apertureDen >> 24);
+        all[heapStart + hFocal + 0] = (byte)focalNum; all[heapStart + hFocal + 1] = (byte)(focalNum >> 8); all[heapStart + hFocal + 2] = (byte)(focalNum >> 16); all[heapStart + hFocal + 3] = (byte)(focalNum >> 24);
+        all[heapStart + hFocal + 4] = (byte)focalDen; all[heapStart + hFocal + 5] = (byte)(focalDen >> 8); all[heapStart + hFocal + 6] = (byte)(focalDen >> 16); all[heapStart + hFocal + 7] = (byte)(focalDen >> 24);
+        return all.ToArray();
+    }
+
+    private static byte[] PatchInsertIrot(byte[] src, int angleCode)
+    {
+        int meta = FindHeifTopBox(src, "meta");
+        if (meta < 0) throw new InvalidDataException("no meta box");
+        int metaLen = (int)ReadHeifU32(src, meta);
+        if (metaLen > src.Length) throw new InvalidDataException("bad meta size");
+        int metaEnd = meta + metaLen;
+
+        int pitm = FindHeifChild(src, meta + 12, metaEnd, "pitm");
+        if (pitm < 0) throw new InvalidDataException("no pitm");
+        int itemId = ReadHeifU16(src, pitm + 12);
+        if (src[pitm + 8] != 0) itemId = (int)ReadHeifU32(src, pitm + 12);
+
+        int iprp = FindHeifChild(src, meta + 12, metaEnd, "iprp");
+        if (iprp < 0) throw new InvalidDataException("no iprp");
+        int iprpEnd = iprp + (int)ReadHeifU32(src, iprp);
+        int ipco = FindHeifChild(src, iprp + 8, iprpEnd, "ipco");
+        int ipma = FindHeifChild(src, iprp + 8, iprpEnd, "ipma");
+        if (ipco < 0 || ipma < 0) throw new InvalidDataException("no ipco/ipma");
+        int ipcoEnd = ipco + (int)ReadHeifU32(src, ipco);
+        int ipmaEnd = ipma + (int)ReadHeifU32(src, ipma);
+
+        int version = src[ipma + 8];
+        bool bigIds = version != 0;
+        bool bigCounts = (src[ipma + 9] & 1) != 0;
+        if (bigCounts) throw new InvalidDataException("u16 assoc counts unsupported in patch");
+
+        int p = ipma + 12;
+        int count = (int)ReadHeifU32(src, p);
+        p += 4;
+        int insPos = -1;
+        int cntPos = -1;
+        for (int i = 0; i < count; i++)
+        {
+            int id = bigIds ? (int)ReadHeifU32(src, p) : ReadHeifU16(src, p);
+            p += bigIds ? 4 : 2;
+            int n = src[p];
+            cntPos = p;
+            p++;
+            if (id == itemId) insPos = p + n;
+            p += n;
+        }
+        if (insPos < 0) throw new InvalidDataException("primary item not in ipma");
+
+        int propIdx = 0;
+        {
+            int q = ipco + 8;
+            while (q + 8 <= ipcoEnd)
+            {
+                int sz = (int)ReadHeifU32(src, q);
+                if (sz < 8 || q + sz > ipcoEnd) break;
+                propIdx++;
+                q += sz;
+            }
+        }
+        propIdx++;
+
+        byte[] irot = { 0, 0, 0, 9, (byte)'i', (byte)'r', (byte)'o', (byte)'t', (byte)angleCode };
+        int irotLen = irot.Length;
+        int delta = irotLen + 1;
+        var list = new List<byte>(src);
+
+        void BumpSize(int pos, int amount)
+        {
+            int v = (int)ReadHeifU32(list.ToArray(), pos) + amount;
+            list[pos + 0] = (byte)(v >> 24); list[pos + 1] = (byte)(v >> 16); list[pos + 2] = (byte)(v >> 8); list[pos + 3] = (byte)v;
+        }
+
+        BumpSize(ipco, irotLen);
+        BumpSize(ipma, 1);
+        BumpSize(iprp, delta);
+        BumpSize(meta, delta);
+
+        list.InsertRange(ipcoEnd, irot);
+        if (insPos > ipcoEnd) insPos += irotLen;
+        if (cntPos > ipcoEnd) cntPos += irotLen;
+        list.Insert(insPos, (byte)propIdx);
+        list[cntPos]++;
+
+        PatchIlocExtents(list, meta + 12, metaEnd + delta, delta);
+
+        return list.ToArray();
+    }
+
+    private static void PatchIlocExtents(List<byte> d, int start, int end, int delta)
+    {
+        int iloc = start;
+        while (iloc + 8 <= end)
+        {
+            int sz = (int)ReadHeifU32(d.ToArray(), iloc);
+            string ty = HeifBoxType(d.ToArray(), iloc);
+            if (sz < 8 || iloc + sz > end) return;
+            if (ty == "iloc")
+            {
+                byte v = d[iloc + 8];
+                byte b1 = d[iloc + 12];
+                byte b2 = d[iloc + 13];
+                int offSz, lenSz, baseSz, idxSz;
+                if (v == 0) { offSz = b1 >> 4; lenSz = b1 & 15; baseSz = b2 >> 4; idxSz = 0; }
+                else { offSz = b1 >> 4; lenSz = b1 & 15; baseSz = b2 >> 4; idxSz = v >= 2 ? b2 & 15 : 0; }
+                if (Environment.GetEnvironmentVariable("HEIF_DIAG") is not null)
+                    Console.WriteLine($"iloc v={v} offSz={offSz} lenSz={lenSz} baseSz={baseSz} idxSz={idxSz}");
+                int construction = 0;
+                int p = iloc + 14;
+                int itemCnt = ReadHeifU16(d.ToArray(), p);
+                p += 2;
+                for (int i = 0; i < itemCnt; i++)
+                {
+                    if (v == 2) p += 4;
+                    else p += 2;
+                    if (v >= 1)
+                    {
+                        construction = d[p + 1];
+                        p += 2;
+                    }
+                    p += 2;
+                    if (baseSz > 0)
+                    {
+                        long val = ReadHeifN(d, p, baseSz);
+                        if (Environment.GetEnvironmentVariable("HEIF_DIAG") is not null)
+                            Console.WriteLine($"  item @{p} base {val} -> {val + delta}");
+                        WriteHeifN(d, p, baseSz, val + delta);
+                    }
+                    p += baseSz;
+                    int extCnt = ReadHeifU16(d.ToArray(), p);
+                    p += 2;
+                    for (int k = 0; k < extCnt; k++)
+                    {
+                        if (baseSz == 0 && offSz > 0)
+                        {
+                            long val = ReadHeifN(d, p, offSz);
+                            WriteHeifN(d, p, offSz, val + delta);
+                        }
+                        p += idxSz + offSz + lenSz;
+                    }
+                }
+                return;
+            }
+            iloc += sz;
+        }
+    }
+
+    private static long ReadHeifN(List<byte> d, int o, int n)
+    {
+        long v = 0;
+        for (int i = 0; i < n; i++) v = v << 8 | d[o + i];
+        return v;
+    }
+
+    private static void WriteHeifN(List<byte> d, int o, int n, long v)
+    {
+        for (int i = n - 1; i >= 0; i--) { d[o + i] = (byte)v; v >>= 8; }
+    }
+
+    private static int ReadHeifU16(List<byte> d, int o) => d[o] << 8 | d[o + 1];
+    private static int ReadHeifU16(byte[] d, int o) => d[o] << 8 | d[o + 1];
+    private static uint ReadHeifU32(byte[] d, int o) => (uint)(d[o] << 24 | d[o + 1] << 16 | d[o + 2] << 8 | d[o + 3]);
+    private static uint ReadHeifU32(List<byte> d, int o) => (uint)(d[o] << 24 | d[o + 1] << 16 | d[o + 2] << 8 | d[o + 3]);
+
+    private static string HeifBoxType(byte[] d, int p) => $"{(char)d[p + 4]}{(char)d[p + 5]}{(char)d[p + 6]}{(char)d[p + 7]}";
+    private static string HeifBoxType(List<byte> d, int p) => $"{(char)d[p + 4]}{(char)d[p + 5]}{(char)d[p + 6]}{(char)d[p + 7]}";
+
+    private static int FindHeifTopBox(byte[] d, string type)
+    {
+        int p = 0;
+        while (p + 8 <= d.Length)
+        {
+            int sz = (int)ReadHeifU32(d, p);
+            if (sz == 0) sz = d.Length - p;
+            if (sz < 8 || p + sz > d.Length) return -1;
+            if (HeifBoxType(d, p) == type) return p;
+            p += sz;
+        }
+        return -1;
+    }
+
+    private static int FindHeifChild(byte[] d, int start, int end, string type)
+    {
+        int p = start;
+        while (p + 8 <= end)
+        {
+            int sz = (int)ReadHeifU32(d, p);
+            if (sz < 8 || p + sz > end) return -1;
+            if (HeifBoxType(d, p) == type) return p;
+            p += sz;
+        }
+        return -1;
     }
 
     private static BitmapSource MakeChromaNoiseSource(int w, int h, int seed)

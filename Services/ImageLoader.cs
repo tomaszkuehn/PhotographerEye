@@ -23,6 +23,10 @@ public static class ImageLoader
         {
             return Imaging.RawDecoder.GetInfo(path);
         }
+        if (Imaging.HeifDecoder.IsHeif(path))
+        {
+            return Imaging.HeifDecoder.GetInfo(path);
+        }
 
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.None, BitmapCacheOption.OnDemand);
@@ -56,6 +60,10 @@ public static class ImageLoader
         if (IsRaw(path))
         {
             return Imaging.RawDecoder.LoadScaled(path, info, maxWidth, maxHeight);
+        }
+        if (Imaging.HeifDecoder.IsHeif(path))
+        {
+            return Imaging.HeifDecoder.LoadScaled(path, info, maxWidth, maxHeight);
         }
 
         int rawW = info.RotatedQuarter ? info.Height : info.Width;
@@ -103,15 +111,9 @@ public static class ImageLoader
             frame.Freeze();
             if (scale < 1.0 && frame.PixelWidth > 1 && frame.PixelHeight > 1)
             {
-                var t = new ScaleTransform(dw / (double)rawW, dh / (double)rawH);
-                t.Freeze();
-                var tb = new TransformedBitmap();
-                tb.BeginInit();
-                tb.Source = frame;
-                tb.Transform = t;
-                tb.EndInit();
-                tb.Freeze();
-                result = tb;
+                int dw2 = Math.Min(frame.PixelWidth, dw);
+                int dh2 = Math.Min(frame.PixelHeight, dh);
+                result = ScaleTo(frame, dw2, dh2);
             }
             else
             {
@@ -135,7 +137,7 @@ public static class ImageLoader
         return NormalizeDpi(result);
     }
 
-    private static BitmapSource NormalizeDpi(BitmapSource source)
+    internal static BitmapSource NormalizeDpi(BitmapSource source)
     {
         if (Math.Abs(source.DpiX - 96.0) < 0.01 && Math.Abs(source.DpiY - 96.0) < 0.01) return source;
         int w = source.PixelWidth;
@@ -149,7 +151,7 @@ public static class ImageLoader
         return normalized;
     }
 
-    private static BitmapSource ApplyRotation(BitmapSource source, double degrees)
+    internal static BitmapSource ApplyRotation(BitmapSource source, double degrees)
     {
         var t = new RotateTransform(degrees);
         t.Freeze();
@@ -160,5 +162,19 @@ public static class ImageLoader
         rotated.EndInit();
         rotated.Freeze();
         return rotated;
+    }
+
+    internal static BitmapSource ScaleTo(BitmapSource source, int dw, int dh)
+    {
+        if (source.PixelWidth == dw && source.PixelHeight == dh) return source;
+        var t = new ScaleTransform(dw / (double)source.PixelWidth, dh / (double)source.PixelHeight);
+        t.Freeze();
+        var tb = new TransformedBitmap();
+        tb.BeginInit();
+        tb.Source = source;
+        tb.Transform = t;
+        tb.EndInit();
+        tb.Freeze();
+        return tb;
     }
 }

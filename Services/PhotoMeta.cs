@@ -19,7 +19,7 @@ public sealed class PhotoMeta
     public string? ShutterText;
 
     public string Summary =>
-        string.Join("  •  ", new[] { Camera, DateText, FocalText, ApertureText, IsoText, ShutterText }
+        string.Join("  â€˘  ", new[] { Camera, DateText, FocalText, ApertureText, IsoText, ShutterText }
             .Where(s => s is not null).Select(s => s!));
 }
 
@@ -44,7 +44,7 @@ public static class PhotoMetaReader
         if (!File.Exists(path)) return null;
         try
         {
-            return RawDecoder.IsRaw(path) ? ReadRaw(path) : ReadExif(path);
+            return RawDecoder.IsRaw(path) ? ReadRaw(path) : HeifDecoder.IsHeif(path) ? ReadHeif(path) : ReadExif(path);
         }
         catch (Exception ex)
         {
@@ -120,6 +120,147 @@ public static class PhotoMetaReader
             Debug.Log($"META EXIF: {Path.GetFileName(path)} [{ex.GetType().Name}] {ex.Message}");
             return null;
         }
+    }
+
+    private static PhotoMeta? ReadHeif(string path)
+    {
+        try
+        {
+            var block = ImgViewer.Imaging.HeifDecoder.ExifBytes(path);
+            var (_, m) = ParseTiff(block);
+            return Has(m) ? m : null;
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"META HEIF: {Path.GetFileName(path)} [{ex.GetType().Name}] {ex.Message}");
+            return null;
+        }
+    }
+
+    internal static (int Orient, PhotoMeta? Meta) ParseTiff(byte[]? block)
+    {
+        if (block is null || block.Length < 8) return (1, null);
+        byte[] data = block;
+        int start = -1;
+        for (int i = 0; i < Math.Min(16, data.Length - 3); i++)
+        {
+            if ((data[i] == (byte)'I' && data[i + 1] == (byte)'I' && data[i + 2] == 42) ||
+                (data[i] == (byte)'M' && data[i + 1] == (byte)'M' && data[i + 2] == 0))
+            {
+                start = i;
+                break;
+            }
+        }
+        if (start < 0) return (1, null);
+        bool le = data[start] == (byte)'I';
+
+        ushort U16(int o) => le
+            ? (ushort)(data[o] | (data[o + 1] << 8))
+            : (ushort)(data[o] << 8 | data[o + 1]);
+        uint U32(int o) => le
+            ? (uint)(data[o] | data[o + 1] << 8 | data[o + 2] << 16 | data[o + 3] << 24)
+            : (uint)(data[o] << 24 | data[o + 1] << 16 | data[o + 2] << 8 | data[o + 3]);
+
+        var m = new PhotoMeta();
+        int orient = 1;
+        bool inExifIfd = false;
+        int exifIfdOff = -1;
+
+        string? Ascii(int off, int size)
+        {
+            int len = size;
+            int z = Array.IndexOf(data, (byte)0, off, len);
+            if (z >= 0) len = z - off;
+            if (len <= 0) return null;
+            return Encoding.ASCII.GetString(data, off, len);
+        }
+        int first = (int)U32(start + 4);
+        for (int pass = 0; pass < 2 && first > 0; pass++)
+        {
+            int off = start + first;
+            if (off + 2 > data.Length) break;
+            int n = U16(off);
+            for (int i = 0; i < n; i++)
+            {
+                int e = off + 2 + i * 12;
+                if (e + 12 > data.Length) break;
+                ushort tag = U16(e);
+                ushort type = U16(e + 2);
+                uint cnt = U32(e + 4);
+                int unit = type switch { 1 => 1, 2 => 1, 3 => 2, 4 => 4, 5 => 8, 6 => 1, 7 => 1, 8 => 2, 9 => 4, 10 => 8, 11 => 4, 12 => 8, _ => 0 };
+                if (unit == 0) continue;
+                int size = unit * (int)cnt;
+                if (size <= 0) continue;
+                int val = size <= 4 ? e + 8 : (int)U32(e + 8);
+                if (val + size > data.Length) continue;
+
+                switch (tag)
+                {
+                    case 271:
+                        m.Camera = Clean(Ascii(val, size)) ?? m.Camera;
+                        break;
+                    case 272:
+                    {
+                        string model = Clean(Ascii(val, size));
+                        if (!string.IsNullOrEmpty(model))
+                            m.Camera = !string.IsNullOrEmpty(m.Camera) && model.IndexOf(m.Camera, StringComparison.OrdinalIgnoreCase) < 0
+                                ? m.Camera + " " + model
+                                : model;
+                        break;
+                    }
+                    case 274:
+                        if (type == 3) orient = U16(val);
+                        else if (type == 4) orient = (int)U32(val);
+                        break;
+                    case 34665:
+                        if (!inExifIfd) exifIfdOff = (int)U32(val) > 0 ? (int)U32(val) : -1;
+                        break;
+                    case 306:
+                    {
+                        string? s = Clean(Ascii(val, size));
+                        if (s is not null && DateTime.TryParseExact(s, "yyyy:MM:dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var dt))
+                            m.DateText = dt.ToString("yyyy-MM-dd HH:mm");
+                        break;
+                    }
+                    case 36867:
+                    {
+                        string? s = Clean(Ascii(val, size));
+                        if (s is not null && DateTime.TryParseExact(s, "yyyy:MM:dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var dt2))
+                            m.DateText = dt2.ToString("yyyy-MM-dd HH:mm");
+                        break;
+                    }
+                    case 33434 when type == 5:
+                        m.ShutterText = FormatShutter(U32(val) / (double)U32(val + 4));
+                        break;
+                    case 33437 when type == 5:
+                    {
+                        double fn = U32(val) / (double)U32(val + 4);
+                        if (fn > 0.05 && fn < 350) m.ApertureText = "f/" + FormatNumber(fn);
+                        break;
+                    }
+                    case 37386 when type == 5:
+                    {
+                        double fl = U32(val) / (double)U32(val + 4);
+                        if (fl > 0.05 && fl < 6500) m.FocalText = FormatNumber(fl) + " mm";
+                        break;
+                    }
+                    case 34855:
+                    {
+                        int iso = type == 3 ? U16(val) : (int)U32(val);
+                        if (iso > 0 && iso < 1_000_000) m.IsoText = "ISO " + iso.ToString();
+                        break;
+                    }
+                }
+            }
+            if (exifIfdOff > 0)
+            {
+                first = exifIfdOff;
+                exifIfdOff = -1;
+                inExifIfd = true;
+            }
+            else break;
+        }
+        return (orient, Has(m) ? m : null);
     }
 
     private static bool Has(PhotoMeta m) =>

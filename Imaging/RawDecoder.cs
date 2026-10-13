@@ -22,6 +22,8 @@ public static class RawDecoder
 
     private static readonly object DecodeLock = new();
     private static readonly ConcurrentDictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, PreviewEntry> PreviewCache = new(StringComparer.OrdinalIgnoreCase);
+    private const int MaxPreviewEntries = 12;
 
     public static bool IsRaw(string path) =>
         RawExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
@@ -398,6 +400,121 @@ public static class RawDecoder
     {
         var full = Decode16(path, halfSize: false);
         return new ImageInfo(full.W, full.H, 1);
+    }
+
+    public static bool TryGetInfoHeader(string path, out ImageInfo info)
+    {
+        info = default;
+        try
+        {
+            using var r = RawContext.OpenFile(path);
+            int w = r.Width;
+            int h = r.Height;
+            if (w <= 0 || h <= 0)
+            {
+                Debug.Log($"RAW HEADER: {Path.GetFileName(path)} brak wymiarów z nagłówka ({w}x{h})");
+                return false;
+            }
+            info = new ImageInfo(w, h, 1);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"RAW HEADER: {Path.GetFileName(path)} [{ex.GetType().Name}] {ex.Message}");
+            return false;
+        }
+    }
+
+    public static BitmapSource? TryDecodePreview(string path)
+    {
+        if (PreviewCache.TryGetValue(path, out var hit))
+        {
+            hit.Touch();
+            return hit.Bitmap;
+        }
+        try
+        {
+            using var r = RawContext.OpenFile(path);
+            var bmp = BuildPreview(r, path);
+            if (bmp is null) return null;
+            PreviewCache[path] = new PreviewEntry(bmp);
+            EvictPreviews(path);
+            return bmp;
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"RAW PREVIEW: {Path.GetFileName(path)} [{ex.GetType().Name}] {ex.Message}");
+            return null;
+        }
+    }
+
+    private static BitmapSource? BuildPreview(RawContext r, string path)
+    {
+        BitmapSource? best = null;
+        for (int i = 0; i < 4; i++)
+        {
+            try
+            {
+                r.UnpackThumbnail(i);
+            }
+            catch (Exception)
+            {
+                break;
+            }
+            using var t = r.MakeDcrawMemoryThumbnail();
+            var cand = ThumbnailToBitmap(t, path);
+            if (cand is not null && (best is null || (long)cand.PixelWidth * cand.PixelHeight > (long)best.PixelWidth * best.PixelHeight))
+                best = cand;
+        }
+        return best;
+    }
+
+    private static BitmapSource? ThumbnailToBitmap(ProcessedImage t, string path)
+    {
+        if (t.ImageType == ProcessedImageType.Jpeg && t.DataSize > 2048)
+        {
+            var bytes = new byte[t.DataSize];
+            t.AsSpan<byte>().CopyTo(bytes);
+            using var fs = new MemoryStream(bytes);
+            var dec = BitmapDecoder.Create(fs, BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.OnLoad);
+            var frame = dec.Frames[0];
+            frame.Freeze();
+            return frame;
+        }
+        if (t.ImageType == ProcessedImageType.Bitmap && t.Bits == 8 && t.Channels == 3 && t.Width > 0 && t.Height > 0)
+        {
+            int stride = (t.Width * 3 + 3) / 4 * 4;
+            var buffer = new byte[(long)stride * t.Height];
+            var src = t.AsSpan<byte>();
+            for (int y = 0; y < t.Height; y++)
+            {
+                src.Slice(y * t.Width * 3, t.Width * 3).CopyTo(buffer.AsSpan(y * stride, t.Width * 3));
+            }
+            var bmp = BitmapSource.Create(t.Width, t.Height, 96, 96, PixelFormats.Rgb24, null, buffer, stride);
+            bmp.Freeze();
+            return bmp;
+        }
+        Debug.Log($"RAW PREVIEW: {Path.GetFileName(path)} thumb type={t.ImageType} {t.Width}x{t.Height} size={t.DataSize}");
+        return null;
+    }
+
+    private static void EvictPreviews(string keepPath)
+    {
+        var entries = PreviewCache.ToList();
+        if (entries.Count <= MaxPreviewEntries) return;
+        foreach (var e in entries.OrderBy(p => p.Value.LastUse).Take(entries.Count - MaxPreviewEntries))
+        {
+            if (!string.Equals(e.Key, keepPath, StringComparison.OrdinalIgnoreCase))
+                PreviewCache.TryRemove(e.Key, out _);
+        }
+    }
+
+    private sealed class PreviewEntry
+    {
+        public BitmapSource Bitmap;
+        public long LastUse;
+        public PreviewEntry(BitmapSource bmp) { Bitmap = bmp; LastUse = Environment.TickCount64; }
+        public void Touch() => LastUse = Environment.TickCount64;
     }
 
     public static BitmapSource LoadScaled(string path, ImageInfo info, int maxWidth, int maxHeight)
