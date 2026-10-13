@@ -239,6 +239,7 @@ public partial class MainWindow : Window
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
         HintPanel.Visibility = Visibility.Collapsed;
+        StatusRight.Text = "";
         SetStatus("Loading…", error: false);
 
         _ = Task.Run(() => LoadWorkerAsync(path, ct));
@@ -325,9 +326,22 @@ public partial class MainWindow : Window
             _fullDecodeBox = requestedBox;
             string decoded = raw.PixelWidth < info.Width ? $" • decoder: {raw.PixelWidth}×{raw.PixelHeight} px" : "";
             SetStatus($"{Path.GetFileName(path)}  •  {info.Width}×{info.Height} px{decoded}", error: false);
+            UpdateStatusMeta(path);
         }
 
         ReapplyAdjustments(path, info);
+    }
+
+    private void UpdateStatusMeta(string path)
+    {
+        Task.Run(() =>
+        {
+            var meta = PhotoMetaReader.Get(path);
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (IsCurrent(path)) StatusRight.Text = meta?.Summary ?? "";
+            });
+        });
     }
 
     private void ReapplyAdjustments()

@@ -130,8 +130,8 @@
                 BorderThickness="0,1,0,0"
                 Padding="8,3">
             <DockPanel>
-                <TextBlock x:Name="StatusRight" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="" />
-                <TextBlock x:Name="StatusLeft" Foreground="{StaticResource MutedBrush}" Text="Ready" TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="StatusRight" AutomationProperties.AutomationId="StatusRight" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="" />
+                <TextBlock x:Name="StatusLeft" AutomationProperties.AutomationId="StatusLeft" Foreground="{StaticResource MutedBrush}" Text="Ready" TextTrimming="CharacterEllipsis" />
             </DockPanel>
         </Border>
 

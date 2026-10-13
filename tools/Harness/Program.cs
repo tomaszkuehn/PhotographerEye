@@ -154,6 +154,7 @@ internal static class Program
         TestExifRotation();
         TestEyeFile();
         TestChromaNoise();
+        TestPhotoMeta();
 
         Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
         Environment.ExitCode = _fails;
@@ -1495,6 +1496,57 @@ internal static class Program
             }
             double m5 = s5 / (double)c5;
             Check(m5 < 8.0, $"chroma NR gpu vs cpu mean abs diff ({m5:0.##})");
+        }
+    }
+
+    private static void TestPhotoMeta()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "imgviewer_metatest"));
+
+        var wb = new WriteableBitmap(16, 16, 96, 96, PixelFormats.Rgb24, null);
+        var md = new BitmapMetadata("jpg");
+        md.SetQuery("/app1/ifd/{ushort=271}", "TestCam");
+        md.SetQuery("/app1/ifd/{ushort=272}", "TestModel 100");
+        md.SetQuery("/app1/ifd/{ushort=306}", "2026:01:02 03:04:05");
+        md.SetQuery("/app1/ifd/exif/{ushort=33434}", 1uL | (60uL << 32));
+        md.SetQuery("/app1/ifd/exif/{ushort=33437}", 40uL | (10uL << 32));
+        md.SetQuery("/app1/ifd/exif/{ushort=37386}", 50uL | (10uL << 32));
+        string jpg = Path.Combine(dir.FullName, "exif.jpg");
+        var enc = new JpegBitmapEncoder { QualityLevel = 90 };
+        enc.Frames.Add(BitmapFrame.Create(wb, null, md, null));
+        using (var fs = File.Create(jpg)) enc.Save(fs);
+
+        var m = PhotoMetaReader.Get(jpg);
+        Check(m is not null, "jpeg exif meta found");
+        if (m is not null)
+        {
+            Check(m.Camera != null && m.Camera.Contains("TestModel"), $"jpeg meta camera ({m.Camera})");
+            Check(m.DateText == "2026-01-02 03:04", $"jpeg meta date ({m.DateText})");
+            Check(m.ShutterText == "1/60 s", $"jpeg meta shutter ({m.ShutterText})");
+            Check(m.ApertureText == "f/4", $"jpeg meta aperture ({m.ApertureText})");
+            Check(m.FocalText == "5 mm", $"jpeg meta focal ({m.FocalText})");
+            Console.WriteLine("jpeg meta: " + m.Summary);
+        }
+
+        string plain = Path.Combine(dir.FullName, "plain.jpg");
+        var enc2 = new JpegBitmapEncoder { QualityLevel = 90 };
+        enc2.Frames.Add(BitmapFrame.Create(wb));
+        using (var fs = File.Create(plain)) enc2.Save(fs);
+        Check(PhotoMetaReader.Get(plain) is null, "plain jpeg has no meta");
+        Check(PhotoMetaReader.Get(Path.Combine(dir.FullName, "nope.png")) is null, "missing file has no meta");
+
+        foreach (var f in new[] { @"D:\temp\test-raw\DSC01670.ARW", @"D:\temp\test-raw\1150886458.nef", @"D:\temp\test-raw\P1018567.RW2" })
+        {
+            if (!File.Exists(f)) { Check(false, $"meta raw sample present: {f}"); continue; }
+            var r = PhotoMetaReader.Get(f);
+            Check(r is not null, $"raw meta found ({Path.GetFileName(f)})");
+            if (r is null) continue;
+            Check(r.Camera != null && r.Camera.Length > 1, $"raw meta camera ({Path.GetFileName(f)}: {r.Camera})");
+            Check(r.DateText != null && r.DateText[0] == '2', $"raw meta date ({Path.GetFileName(f)}: {r.DateText})");
+            Check(r.ShutterText != null && r.ShutterText.EndsWith(" s"), $"raw meta shutter ({Path.GetFileName(f)}: {r.ShutterText})");
+            Check(r.ApertureText == null || (r.ApertureText.StartsWith("f/") && r.ApertureText.Length > 2), $"raw meta aperture ({Path.GetFileName(f)}: {r.ApertureText})");
+            Check(r.FocalText == null || (r.FocalText.EndsWith(" mm") && double.Parse(r.FocalText.Split(' ')[0]) > 0), $"raw meta focal ({Path.GetFileName(f)}: {r.FocalText})");
+            Console.WriteLine($"{Path.GetFileName(f)} meta: {r.Summary}");
         }
     }
 
