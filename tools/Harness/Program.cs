@@ -1206,6 +1206,38 @@ internal static class Program
             double evalAbove = curveState.Eval(2.0);
             Check(evalBelow <= 0.0 + 1e-12 && evalAbove >= curveState.KnotPairs()[2][1] - 1e-12, "camera tone curve extension below/above");
 
+            var camCur = new CameraToneCurve(new[]
+            {
+                new double[] { 0.011, 0.028 }, new double[] { 0.046, 0.09 }, new double[] { 0.18, 0.44 },
+                new double[] { 0.203, 0.494 }, new double[] { 0.27, 0.6 }, new double[] { 0.526, 0.803 }
+            });
+            var camNeut = PhotoOps.GetToneLut(0, 0, 0, true, null, camCur);
+            var camNeutRef = camCur.SceneLut;
+            bool camNeutSame = true;
+            for (int i = 0; i < PhotoOps.ToneEvN; i++)
+                if (Math.Abs(camNeut[i] - camNeutRef[i]) > 1e-6) { camNeutSame = false; break; }
+            Check(camNeutSame, "camera tone lut neutral == SceneLut");
+
+            int evMid = (int)Math.Round((0.0 - PhotoOps.ToneEvMin) / (PhotoOps.ToneEvMax - PhotoOps.ToneEvMin) * (PhotoOps.ToneEvN - 1));
+            double evStep = (PhotoOps.ToneEvMax - PhotoOps.ToneEvMin) / (PhotoOps.ToneEvN - 1);
+            double lutAt(float[] l, int idx) => l[idx];
+            double midN = lutAt(camNeut, evMid), hiN = lutAt(camNeut, evMid + (int)Math.Round(0.7 / evStep));
+            double loN = lutAt(camNeut, evMid - (int)Math.Round(0.7 / evStep));
+            var camCon = PhotoOps.GetToneLut(0.6, 0, 0, true, null, camCur);
+            var camWhi = PhotoOps.GetToneLut(0, 0.6, 0, true, null, camCur);
+            var camBla = PhotoOps.GetToneLut(0, 0, 0.6, true, null, camCur);
+            double midC = lutAt(camCon, evMid), spanC = lutAt(camCon, evMid + (int)Math.Round(0.7 / evStep)) - lutAt(camCon, evMid - (int)Math.Round(0.7 / evStep));
+            Check(Math.Abs(midC - midN) < 0.005 && spanC > (hiN - loN) * 1.15,
+                $"camera tone contrast increases slope around grey ({spanC:0.####} vs {hiN - loN:0.####}, grey {midC:0.####})");
+            double hiW = lutAt(camWhi, evMid + (int)Math.Round(1.0 / evStep));
+            double hiW1 = lutAt(camWhi, evMid);
+            Check(hiW > hiN + 0.02 && hiW1 > midN, $"camera tone whites brighten highlights ({hiW:0.####} > {hiN:0.####})");
+            double loB = lutAt(camBla, evMid - (int)Math.Round(2.5 / evStep));
+            Check(loB > lutAt(camNeut, evMid - (int)Math.Round(2.5 / evStep)) + 0.005, $"camera tone blacks lift shadows ({loB:0.####})");
+            for (int i = 1; i < PhotoOps.ToneEvN; i++)
+                if (camCon[i] < camCon[i - 1] - 1e-5 || camWhi[i] < camWhi[i - 1] - 1e-5 || camBla[i] < camBla[i - 1] - 1e-5)
+                { Check(false, "camera tone knob luts stay monotone"); break; }
+
             var undo1 = st with { Exposure = 0 };
             var undo2 = st with { Exposure = -1.5 };
             var stateWithHist = st with { History = new List<EyeState> { undo1, undo2 }, HistoryPos = 1, BaseEv = 2.58 };

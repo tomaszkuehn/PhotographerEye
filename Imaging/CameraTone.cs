@@ -108,17 +108,50 @@ public sealed class CameraToneCurve
         get
         {
             if (_lut is not null) return _lut;
-            var lut = new float[PhotoOps.ToneEvN];
-            for (int i = 0; i < lut.Length; i++)
-            {
-                double ev = PhotoOps.ToneEvMin + (PhotoOps.ToneEvMax - PhotoOps.ToneEvMin) * i / (PhotoOps.ToneEvN - 1);
-                double yl = PhotoOps.ToneGrey * Math.Pow(2.0, ev);
-                double o = Eval(yl);
-                lut[i] = (float)(o < 0.0 ? 0.0 : o > 1.0 ? 1.0 : o);
-            }
-            _lut = lut;
-            return lut;
+            _lut = BuildSceneLut(0.0, 0.0, 0.0);
+            return _lut;
         }
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(double, double, double), float[]> _knobLuts = new();
+
+    public float[] GetSceneLut(double contrast, double whites, double blacks)
+    {
+        double c = Math.Clamp(contrast, -1.0, 1.0);
+        double w = Math.Clamp(whites, -1.0, 1.0);
+        double b = Math.Clamp(blacks, -1.0, 1.0);
+        if (Math.Abs(c) <= 0.0005 && Math.Abs(w) <= 0.0005 && Math.Abs(b) <= 0.0005) return SceneLut;
+        return _knobLuts.GetOrAdd((c, w, b), _ => BuildSceneLut(c, w, b));
+    }
+
+    private float[] BuildSceneLut(double c, double w, double b)
+    {
+        var lut = new float[PhotoOps.ToneEvN];
+        double slope = c >= 0.0 ? 1.0 + 0.55 * c : 1.0 + 0.4 * c;
+        double wl0 = PhotoOps.ToneGrey * Math.Pow(2.0, 2.9);
+        double wl = PhotoOps.ToneGrey * Math.Pow(2.0, 2.9 - 1.6 * w);
+        double pre = (1.0 + PhotoOps.ToneGrey / wl) / (1.0 + PhotoOps.ToneGrey / wl0);
+        for (int i = 0; i < lut.Length; i++)
+        {
+            double ev = PhotoOps.ToneEvMin + (PhotoOps.ToneEvMax - PhotoOps.ToneEvMin) * i / (PhotoOps.ToneEvN - 1);
+            double y = PhotoOps.ToneGrey * Math.Pow(2.0, ev * slope) * pre;
+            double o = Eval(y);
+            o = o > 1.0 ? 1.0 : o;
+            if (b < 0.0)
+            {
+                double k = -b * 0.035;
+                double e = 0.004;
+                double Soft(double v) => ((v - k) + Math.Sqrt((v - k) * (v - k) + e * e)) * 0.5;
+                o = (Soft(o) - Soft(0.0)) / (Soft(1.0) - Soft(0.0));
+            }
+            else if (b > 0.0)
+            {
+                double k = b * 0.03;
+                o = k + (1.0 - k) * o;
+            }
+            lut[i] = (float)(o < 0.0 ? 0.0 : o > 1.0 ? 1.0 : o);
+        }
+        return lut;
     }
 }
 

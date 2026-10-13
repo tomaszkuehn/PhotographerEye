@@ -212,7 +212,7 @@ public static class PhotoOps
     public static float[] GetToneLut(double contrast, double whites, double blacks, bool scene, ManualStretchMap? manual = null, CameraToneCurve? cameraTone = null)
     {
         float[] baseLut = scene && cameraTone is not null
-            ? cameraTone.SceneLut
+            ? cameraTone.GetSceneLut(contrast, whites, blacks)
             : BuildToneLutCached(Math.Clamp(contrast, -1.0, 1.0), Math.Clamp(whites, -1.0, 1.0), Math.Clamp(blacks, -1.0, 1.0), scene);
         if (manual is null || !manual.HasEffect) return baseLut;
         double c = Math.Clamp(contrast, -1.0, 1.0);
