@@ -67,7 +67,7 @@ public sealed class HistogramOverlay : FrameworkElement
     public HistogramOverlay()
     {
         SnapsToDevicePixels = true;
-        ToolTip = "Przeciągnij punkt na histogramie — ręczne rozciągnięcie tonów (podwójny klik — usuń punkty)";
+        ToolTip = "Drag a point on the histogram — manual tone stretch (double-click — remove points)";
     }
 
     protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer() =>

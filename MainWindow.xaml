@@ -32,13 +32,13 @@
                             Orientation="Horizontal"
                             shell:WindowChrome.IsHitTestVisibleInChrome="True">
                     <Button x:Name="BtnWinMin" Content="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                            Width="34" Height="26" Click="OnWinMinimizeClick" ToolTip="Minimalizuj"
+                            Width="34" Height="26" Click="OnWinMinimizeClick" ToolTip="Minimize"
                             Background="Transparent" BorderThickness="0" Foreground="{StaticResource ForegroundBrush}" />
                     <Button x:Name="BtnWinMax" Content="&#xE739;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                            Width="34" Height="26" Click="OnWinMaximizeClick" ToolTip="Maksymalizuj"
+                            Width="34" Height="26" Click="OnWinMaximizeClick" ToolTip="Maximize"
                             Background="Transparent" BorderThickness="0" Foreground="{StaticResource ForegroundBrush}" />
                     <Button x:Name="BtnWinClose" Content="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                            Width="34" Height="26" Click="OnWinCloseClick" ToolTip="Zamknij"
+                            Width="34" Height="26" Click="OnWinCloseClick" ToolTip="Close"
                             Background="Transparent" BorderThickness="0" Foreground="{StaticResource ForegroundBrush}" />
                 </StackPanel>
                 <TextBlock x:Name="TitleText"
@@ -66,20 +66,20 @@
                         Margin="8,0,0,0"
                         Style="{StaticResource ToolButton}"
                         Click="OnSettingsClick"
-                        ToolTip="Ustawienia">
+                        ToolTip="Settings">
                     <Button.ContextMenu>
                         <ContextMenu Placement="Bottom" StaysOpen="False">
-                            <MenuItem x:Name="MnuAbout" Header="O aplikacji…" Click="OnAboutClick" />
+                            <MenuItem x:Name="MnuAbout" Header="About…" Click="OnAboutClick" />
                         </ContextMenu>
                     </Button.ContextMenu>
                 </Button>
                 <WrapPanel>
                 <Button x:Name="BtnOpen" Content="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26"
-                        Style="{StaticResource ToolButton}" Click="OnOpenClick" ToolTip="Otwórz (Ctrl+O)" />
+                        Style="{StaticResource ToolButton}" Click="OnOpenClick" ToolTip="Open (Ctrl+O)" />
 
                 <TextBlock x:Name="CounterText" VerticalAlignment="Center" Margin="5,0" MinWidth="52" TextAlignment="Center" Text="&#x2013; / &#x2013;" />
                 <Button x:Name="BtnSave" Content="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" IsEnabled="False"
-                        Style="{StaticResource ToolButton}" Click="OnSaveClick" ToolTip="Zapisz zmodyfikowane zdjęcie (Ctrl+S)" />
+                        Style="{StaticResource ToolButton}" Click="OnSaveClick" ToolTip="Save modified photo (Ctrl+S)" />
 
                 <Border Style="{StaticResource ToolSeparator}" />
 
@@ -88,12 +88,12 @@
                 <TextBlock x:Name="ZoomLabel" VerticalAlignment="Center" MinWidth="46" TextAlignment="Right" Margin="0,0,4,0" Text="100 %" />
                 <Button x:Name="BtnZoomIn" Content="+" Style="{StaticResource ToolButton}" Click="OnZoomInClick" />
                 <Button x:Name="BtnFit" Content="&#xE9A9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
-                        Style="{StaticResource ToolButton}" Click="OnFitClick" ToolTip="Dopasuj do okna (0)" />
+                        Style="{StaticResource ToolButton}" Click="OnFitClick" ToolTip="Fit to window (0)" />
                 <Button x:Name="Btn100" Content="100 %" Margin="5,0,0,0" Style="{StaticResource ToolButton}" Click="On100Click" />
 
                 <Border Style="{StaticResource ToolSeparator}" />
 
-                <TextBlock Text="Cienie" Style="{StaticResource ToolLabel}" />
+                <TextBlock Text="Shadows" Style="{StaticResource ToolLabel}" />
                 <Slider x:Name="ShadowSlider" Width="90" VerticalAlignment="Center" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" v:PhotoshopSlider.Enable="True" />
                 <TextBlock x:Name="ShadowValue" Width="48" Margin="5,0,0,0" VerticalAlignment="Center" Text="0" TextAlignment="Right" />
 
@@ -107,13 +107,13 @@
                         PreviewMouseLeftButtonDown="OnComparePress"
                         MouseLeftButtonUp="OnCompareRelease"
                         LostMouseCapture="OnCompareLostCapture"
-                        ToolTip="Przytrzymaj — podgląd oryginału bez korekt (spacja)" />
+                        ToolTip="Hold — view original without edits (Space)" />
                 <Button x:Name="BtnMono" Content="&#xE792;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
                         Style="{StaticResource ToolButton}" Click="OnMonoToggleClick"
-                        ToolTip="Czarno-białe: dokumentalny / Tri-X 400 (B — trzy stany)" />
+                        ToolTip="Black &amp; white: documentary / Tri-X 400 (B — three states)" />
                 <Button x:Name="BtnPanel" Content="&#xE9E9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
                         Style="{StaticResource ToolButton}" Click="OnPanelToggleClick"
-                        ToolTip="Panel korekt — ekspozycja, kontrast, balans bieli, nasycenie, clarity, dehaze, odszumianie (E)" />
+                        ToolTip="Adjustments panel — exposure, contrast, white balance, saturation, clarity, dehaze, denoise (E)" />
                 </WrapPanel>
             </DockPanel>
         </Border>
@@ -125,7 +125,7 @@
                 Padding="8,3">
             <DockPanel>
                 <TextBlock x:Name="StatusRight" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="" />
-                <TextBlock x:Name="StatusLeft" Foreground="{StaticResource MutedBrush}" Text="Gotowy" TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="StatusLeft" Foreground="{StaticResource MutedBrush}" Text="Ready" TextTrimming="CharacterEllipsis" />
             </DockPanel>
         </Border>
 
@@ -143,7 +143,7 @@
                     Style="{StaticResource EdgeButton}"
                     Visibility="Collapsed"
                     Click="OnPrevClick"
-                    ToolTip="Poprzedni obraz (&#x2190;)" />
+                    ToolTip="Previous image (&#x2190;)" />
             <Button x:Name="BtnEdgeRight"
                     Content="&#x203A;"
                     HorizontalAlignment="Right"
@@ -151,7 +151,7 @@
                     Style="{StaticResource EdgeButton}"
                     Visibility="Collapsed"
                     Click="OnNextClick"
-                    ToolTip="Następny obraz (&#x2192;)" />
+                    ToolTip="Next image (&#x2192;)" />
             <Grid x:Name="HistHost"
                   Width="250" Height="130"
                   HorizontalAlignment="Right" VerticalAlignment="Top"
@@ -169,7 +169,7 @@
                             Margin="0,0,4,0"
                             Style="{StaticResource ToolButton}"
                             Click="OnHistResetClick"
-                            ToolTip="Usuń punkty rozciągania histogramu" />
+                            ToolTip="Remove histogram stretch points" />
                     <Button x:Name="BtnHistClose"
                             Width="18" Height="18"
                             Content="&#x2715;"
@@ -178,7 +178,7 @@
                             MinWidth="0"
                             Style="{StaticResource ToolButton}"
                             Click="OnHistCloseClick"
-                            ToolTip="Zamknij histogram" />
+                            ToolTip="Close histogram" />
                 </StackPanel>
             </Grid>
             <Border x:Name="HintPanel"
@@ -186,9 +186,9 @@
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center">
                 <StackPanel>
-                    <TextBlock Text="Otwórz obraz" FontSize="22" Foreground="{StaticResource ForegroundBrush}" HorizontalAlignment="Center" />
+                    <TextBlock Text="Open an image" FontSize="22" Foreground="{StaticResource ForegroundBrush}" HorizontalAlignment="Center" />
                     <TextBlock Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"
-                                Text="Ctrl+O — dialog Otwórz, przeciągnij plik z Eksploratora;&#x0a;strzałki ←/→ — następny/poprzedni, rolka myszy — zoom, przeciągnij myszką — przesuwanie;&#x0a;1 — 100 %, 0 — dopasuj, R — reset korekt, E — panel korekt, Ctrl+S — zapis zmodyfikowanego zdjęcia" TextAlignment="Center" />
+                                Text="Ctrl+O — open dialog, or drag a file from Explorer;&#x0a;←/→ arrows — next/previous, mouse wheel — zoom, drag — pan;&#x0a;1 — 100 %, 0 — fit, R — reset edits, E — adjustments panel, Ctrl+S — save modified photo" TextAlignment="Center" />
                  </StackPanel>
              </Border>
              </Grid>
@@ -215,57 +215,57 @@
                                      MinWidth="0"
                                      Style="{StaticResource ToolButton}"
                                      Click="OnResetClick"
-                                     ToolTip="Reset wszystkich korekt" />
-                             <TextBlock Text="Korekty" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                     ToolTip="Reset all edits" />
+                             <TextBlock Text="Adjustments" FontWeight="SemiBold" VerticalAlignment="Center" />
                          </DockPanel>
                      </Border>
                      <ScrollViewer VerticalScrollBarVisibility="Auto">
                          <StackPanel Margin="12,8,12,12">
                           <StackPanel Margin="0,2,0,0">
                               <Grid>
-                                  <TextBlock Text="Ekspozycja" />
+                                  <TextBlock Text="Exposure" />
                                   <TextBlock x:Name="ExpValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0.00" />
                               </Grid>
                               <Slider x:Name="ExpSlider" Minimum="-5" Maximum="5" SmallChange="0.05" LargeChange="0.25" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Kontrast" />
+                                  <TextBlock Text="Contrast" />
                                   <TextBlock x:Name="ContrastValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="ContrastSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Światła" />
+                                  <TextBlock Text="Highlights" />
                                   <TextBlock x:Name="HighlightsValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="HighlightsSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Cienie" />
+                                  <TextBlock Text="Shadows" />
                                   <TextBlock x:Name="PanelShadowValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="PanelShadowSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Biel" />
+                                  <TextBlock Text="Whites" />
                                   <TextBlock x:Name="WhitesValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="WhitesSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Czerń" />
+                                  <TextBlock Text="Blacks" />
                                   <TextBlock x:Name="BlacksValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="BlacksSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Balans bieli" />
+                                  <TextBlock Text="White balance" />
                                   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                       <Button x:Name="BtnWbPicker"
                                               Width="18" Height="18"
@@ -277,7 +277,7 @@
                                               Margin="0,0,6,0"
                                               Style="{StaticResource ToolButton}"
                                               Click="OnWbPickerClick"
-                                              ToolTip="Punkt bieli — kliknij neutralny obszar zdjęcia (pipeta)" />
+                                              ToolTip="White point — click a neutral area of the photo (eyedropper)" />
                                       <TextBlock x:Name="TempValue" Foreground="{StaticResource MutedBrush}" Text="0" />
                                   </StackPanel>
                               </Grid>
@@ -292,14 +292,14 @@
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Nasycenie" />
+                                  <TextBlock Text="Saturation" />
                                   <TextBlock x:Name="SatValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="SatSlider" Value="0" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Wyostrzenie" />
+                                  <TextBlock Text="Sharpening" />
                                   <TextBlock x:Name="SharpenValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="SharpenSlider" Minimum="0" Maximum="150" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
@@ -313,14 +313,14 @@
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Odszumianie" />
+                                  <TextBlock Text="Denoise" />
                                   <TextBlock x:Name="DenoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="DenoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
-                                  <TextBlock Text="Redukcja szumu kolorów" />
+                                  <TextBlock Text="Color noise reduction" />
                                   <TextBlock x:Name="ColorNoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="ColorNoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />

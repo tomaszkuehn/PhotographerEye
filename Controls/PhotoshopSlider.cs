@@ -84,7 +84,7 @@ public static class PhotoshopSlider
             _slider.IsMoveToPointEnabled = true;
             _slider.Focusable = true;
             if (_slider.ToolTip is null)
-                _slider.ToolTip = "Klik na torze ustawia wartość; przeciągnij etykietę/wartość, aby regulować precyzyjnie (Shift ×10, Ctrl/Alt ×0,1); dwuklik wartości, aby wpisać liczbę.";
+                _slider.ToolTip = "Click the track to set the value; drag the label/value to fine-tune (Shift x10, Ctrl/Alt x0.1); double-click the value to type a number.";
             _slider.PreviewKeyDown += OnKeyDown;
             DiscoverTargets();
         }

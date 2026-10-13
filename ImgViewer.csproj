@@ -12,7 +12,7 @@
     <AssemblyTitle>PhotographerEye</AssemblyTitle>
     <Product>PhotographerEye</Product>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
-    <Version>0.98</Version>
+    <Version>0.99</Version>
     <NeutralLanguage>pl-PL</NeutralLanguage>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

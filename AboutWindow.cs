@@ -12,7 +12,7 @@ public sealed class AboutWindow : Window
 {
     public AboutWindow()
     {
-        Title = "PhotographerEye — O aplikacji";
+        Title = "PhotographerEye — About";
         Width = 420;
         SizeToContent = SizeToContent.Height;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -36,7 +36,7 @@ public sealed class AboutWindow : Window
         });
         panel.Children.Add(new TextBlock
         {
-            Text = $"Przeglądarka obrazów JPG/PNG  •  wersja {version?.Major ?? 1}.{version?.Minor ?? 0}",
+            Text = $"JPG/PNG image viewer  •  version {version?.Major ?? 1}.{version?.Minor ?? 0}",
             Foreground = muted,
             Margin = new Thickness(0, 4, 0, 2),
             HorizontalAlignment = HorizontalAlignment.Center
@@ -50,7 +50,7 @@ public sealed class AboutWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center
         });
 
-        panel.Children.Add(MakeLabel("Autor:"));
+        panel.Children.Add(MakeLabel("Author:"));
         panel.Children.Add(new TextBlock { Text = "Tomasz Kuehn", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 1, 0, 0) });
 
         panel.Children.Add(MakeLabel("E-mail:"));
@@ -61,7 +61,7 @@ public sealed class AboutWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Licencja: użytek prywatny, niekomercyjny.\nZakaz modyfikacji i redystrybucji (LICENSE).",
+            Text = "License: private, non-commercial use.\nModification and redistribution prohibited (LICENSE).",
             Foreground = muted,
             Margin = new Thickness(0, 14, 0, 0),
             TextWrapping = TextWrapping.Wrap

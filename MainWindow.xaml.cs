@@ -157,7 +157,7 @@ public partial class MainWindow : Window
 
         if (_files.Count == 0)
         {
-            SetStatus("Folder nie zawiera obrazów (jpg, jpeg, png)", error: true);
+            SetStatus("No images in folder (jpg, jpeg, png)", error: true);
             CounterText.Text = "– / –";
             _index = -1;
             BtnEdgeLeft.Visibility = Visibility.Collapsed;
@@ -206,7 +206,7 @@ public partial class MainWindow : Window
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
         HintPanel.Visibility = Visibility.Collapsed;
-        SetStatus("Wczytywanie…", error: false);
+        SetStatus("Loading…", error: false);
 
         _ = Task.Run(() => LoadWorkerAsync(path, ct));
     }
@@ -260,7 +260,7 @@ public partial class MainWindow : Window
             await Dispatcher.BeginInvoke(() =>
             {
                 if (!IsCurrent(path)) return;
-                SetStatus($"Błąd: {ex.Message}", error: true);
+                SetStatus($"Error: {ex.Message}", error: true);
             });
         }
     }
@@ -277,7 +277,7 @@ public partial class MainWindow : Window
         if (isFull)
         {
             _fullDecodeBox = requestedBox;
-            string decoded = raw.PixelWidth < info.Width ? $" • dekoder: {raw.PixelWidth}×{raw.PixelHeight} px" : "";
+            string decoded = raw.PixelWidth < info.Width ? $" • decoder: {raw.PixelWidth}×{raw.PixelHeight} px" : "";
             SetStatus($"{Path.GetFileName(path)}  •  {info.Width}×{info.Height} px{decoded}", error: false);
         }
 
@@ -340,7 +340,7 @@ public partial class MainWindow : Window
             {
                 await Dispatcher.BeginInvoke(() =>
                 {
-                    if (IsCurrent(path)) SetStatus($"Błąd: {ex.Message}", error: true);
+                    if (IsCurrent(path)) SetStatus($"Error: {ex.Message}", error: true);
                 });
             }
         });
@@ -357,7 +357,11 @@ public partial class MainWindow : Window
         double g = GammaSlider.Value;
         var manual = HistogramPanel.Snapshot();
 
-        if (raw16 is null && AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null)
+        bool neutralRaw = raw16 is not null && Math.Abs(s) <= 0.0001 && Math.Abs(g - 1.0) < 0.0005 &&
+            !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null;
+        if (raw16 is not null
+                ? neutralRaw
+                : AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null)
         {
             _applyCts?.Cancel();
             Viewer.SetSource(raw, info.DisplaySize);
@@ -458,7 +462,7 @@ public partial class MainWindow : Window
         HistogramPanel.ClearManualStretch();
         UpdateSaveState();
         ReapplyAdjustments();
-        SetStatus("Punkty rozciągania histogramu usunięte", error: false);
+        SetStatus("Histogram stretch points removed", error: false);
     }
 
     private void OnManualStretchChanged(object? sender, EventArgs e)
@@ -513,12 +517,12 @@ public partial class MainWindow : Window
         {
             Viewer.SetSource(_baseBitmap, info.DisplaySize);
             UpdateHistogram(_currentPath, _baseBitmap);
-            SetStatus("Porównanie — oryginał bez korekt", error: false);
+            SetStatus("Compare — original without edits", error: false);
         }
         else
         {
             ReapplyAdjustments();
-            SetStatus("Gotowy", error: false);
+            SetStatus("Ready", error: false);
         }
     }
 
@@ -624,8 +628,8 @@ public partial class MainWindow : Window
             InitialDirectory = dir,
             FileName = $"{baseName}_eye",
             DefaultExt = "jpg",
-            Filter = "JPG (jakość 90%)|*.jpg|TIFF 16-bit|*.tif",
-            Title = "Zapisz zdjęcie"
+            Filter = "JPG (quality 90%)|*.jpg|TIFF 16-bit|*.tif",
+            Title = "Save Photo"
         };
         Debug.Log("SAVE-DIALOG: opening");
         var ok = dialog.ShowDialog(this);
@@ -665,7 +669,7 @@ public partial class MainWindow : Window
                     var info = ImageLoader.GetInfo(path);
                     var full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
                     var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
-                    if (processed is null) throw new InvalidOperationException("Nie udało się przetworzyć obrazu");
+                    if (processed is null) throw new InvalidOperationException("Failed to process image");
                     SaveEncoded(processed, dest, tiff);
                     Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={processed.PixelWidth}x{processed.PixelHeight} manual={manual} mono={_monoMode:D} tiff16={tiff}");
                 }
@@ -688,7 +692,7 @@ public partial class MainWindow : Window
                 Debug.Log($"SAVE ERROR: [{ex.GetType().Name}] {ex.Message}\n{ex.StackTrace}");
                 Dispatcher.BeginInvoke(() =>
                 {
-                    if (IsCurrent(path)) SetStatus($"Błąd zapisu: {ex.Message}", error: true);
+                    if (IsCurrent(path)) SetStatus($"Save error: {ex.Message}", error: true);
                     Mouse.OverrideCursor = null;
                 });
             }
@@ -853,8 +857,8 @@ public partial class MainWindow : Window
     {
         var dlg = new OpenFileDialog
         {
-            Title = "Otwórz obraz",
-            Filter = "Obrazy|*.jpg;*.jpeg;*.png|RAW|*.rw2;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.cr2;*.cr3;*.crw;*.orf;*.raf;*.pef;*.ptx;*.dng;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.mos;*.erf;*.kdc;*.dcr;*.mef;*.rwl|Wszystkie pliki|*.*",
+            Title = "Open Image",
+            Filter = "Images|*.jpg;*.jpeg;*.png|RAW|*.rw2;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.cr2;*.cr3;*.crw;*.orf;*.raf;*.pef;*.ptx;*.dng;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.mos;*.erf;*.kdc;*.dcr;*.mef;*.rwl|All files|*.*",
             CheckFileExists = true
         };
         if (dlg.ShowDialog(this) == true)
@@ -913,7 +917,7 @@ public partial class MainWindow : Window
         bool open = RightPanel.Visibility != Visibility.Visible;
         RightPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         BtnPanel.Foreground = (Brush)FindResource(open ? "AccentBrush" : "ForegroundBrush");
-        SetStatus(open ? "Panel korekt — otwarty (E)" : "Panel korekt — zamknięty", error: false);
+        SetStatus(open ? "Adjustments panel — open (E)" : "Adjustments panel — closed", error: false);
     }
 
     private PhotoAdjustments? PanelExtras()
@@ -977,8 +981,8 @@ public partial class MainWindow : Window
         _wbPicking = !_wbPicking;
         Mouse.OverrideCursor = _wbPicking ? Cursors.Cross : null;
         SetStatus(_wbPicking
-            ? "Pipeta punktu bieli — kliknij neutralny obszar zdjęcia (Esc — anuluj)"
-            : "Pipeta punktu bieli — anulowana", error: false);
+            ? "White point eyedropper — click a neutral area of the photo (Esc — cancel)"
+            : "White point eyedropper — cancelled", error: false);
     }
 
     private void OnViewerPickClick(object sender, MouseButtonEventArgs e)
@@ -1014,12 +1018,12 @@ public partial class MainWindow : Window
                 {
                     double t = PhotoOps.WbTemperatureFromSample(sr / n, sg / n, sb / n);
                     TempSlider.Value = Math.Clamp(t * 100.0, TempSlider.Minimum, TempSlider.Maximum);
-                    SetStatus($"Balans bieli z punktu bieli — temperatura {(int)Math.Round(TempSlider.Value)}", error: false);
+                    SetStatus($"White balance from white point — temperature {(int)Math.Round(TempSlider.Value)}", error: false);
                     return;
                 }
             }
         }
-        SetStatus("Punkt bieli — próbkowanie poza obrazem", error: true);
+        SetStatus("White point — sampled outside the image", error: true);
     }
 
     private void OnPanelSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -1082,9 +1086,9 @@ public partial class MainWindow : Window
         ReapplyAdjustments();
         SetStatus(_monoMode switch
         {
-            MonoMode.Documentary => "Czarno-białe (styl dokumentalny)",
-            MonoMode.TriX => "Czarno-białe (Tri-X 400, ziarno)",
-            _ => "Kolor — korekty bieżące"
+            MonoMode.Documentary => "Black & white (documentary)",
+            MonoMode.TriX => "Black & white (Tri-X 400, grain)",
+            _ => "Color — current edits"
         }, error: false);
     }
 
@@ -1120,7 +1124,7 @@ public partial class MainWindow : Window
         UpdateMonoButton();
         if (!silent)
         {
-            SetStatus("Korekty przywrócone do wartości domyślnych", error: false);
+            SetStatus("Adjustments reset to defaults", error: false);
             ReapplyAdjustments();
         }
     }
@@ -1241,7 +1245,7 @@ public partial class MainWindow : Window
         {
             _wbPicking = false;
             Mouse.OverrideCursor = null;
-            SetStatus("Pipeta punktu bieli — anulowana", error: false);
+            SetStatus("White point eyedropper — cancelled", error: false);
             if (e.Key != Key.Escape) return;
             e.Handled = true;
             return;

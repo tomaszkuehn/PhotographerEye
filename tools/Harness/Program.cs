@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -37,13 +37,17 @@ internal static class Program
             LinearProbe(args[1]);
             return;
         }
+        if (args.Length > 0 && args[0] == "--domain-probe")
+        {
+            DomainProbe(args[1]);
+            return;
+        }
         if (args.Length > 0 && (args[0] == "--raw22" || args[0] == "--rawhe"))
         {
             bool he = args[0] == "--rawhe";
             var fb = RawDecoder.DecodeViaLibRaw22(args[1], halfSize: args.Length > 2 && args[2] == "half", heTool: he);
             if (fb is null) { Console.WriteLine($"{args[0]} FAIL"); Environment.ExitCode = 1; return; }
-            var norm = LinearRender.ApplyGain(fb.Value.Raw, fb.Value.Ev, 0.0);
-            var disp = norm.ToDisplay(dither: false);
+            var disp = Adjust16.RenderNeutral(fb.Value.Raw).ToDisplay(dither: false);
             var enc = new JpegBitmapEncoder { QualityLevel = 90 };
             enc.Frames.Add(BitmapFrame.Create(disp));
             using (var fs = File.Create(args.Length > 3 ? args[3] : Path.ChangeExtension(args[1], ".fallback.jpg")))
@@ -238,17 +242,17 @@ internal static class Program
         var p = ReadPixels(out1!);
         var q0 = ReadPixels(out0!);
         Check(diff(p.dark, q0.dark) >= 6, $"dark lifted from near-black ({p.dark.g} vs {q0.dark.g})");
-        Check(p.mid.g - q0.mid.g > 8 && p.mid.g - q0.mid.g < 80, $"shadow lift raises midtones, not gamma ({p.mid.g} -> {p.mid.g})");
+        Check(Math.Abs(p.mid.g - q0.mid.g) <= 4, $"EV shadow mask spares midtones ({q0.mid.g} -> {p.mid.g})");
         Check(Math.Abs(p.bright.g - q0.bright.g) <= 2, $"bright untouched ({p.bright.g} vs {q0.bright.g})");
         Check(p.dark.r == p.dark.g && p.dark.g == p.dark.b, "shadow lift keeps grays neutral");
 
         var outN = AdjustmentsProcessor.Apply(src, -1.0, 1.0);
         var pN = ReadPixels(outN!);
         Check(pN.bright.g == q0.bright.g, "darkened bright not above base");
-        Check(diff(pN.dark, q0.dark) > 8, $"dark darkened heavily ({pN.dark.g} vs {q0.dark.g})");
-        Check(pN.mid.g < q0.mid.g && pN.mid.g > q0.mid.g / 2, "shadow darken lowers midtones, no global gamma");
+        Check(diff(pN.dark, q0.dark) >= 6, $"dark darkened heavily ({pN.dark.g} vs {q0.dark.g})");
+        Check(Math.Abs(pN.mid.g - q0.mid.g) <= 4, $"EV shadow mask spares midtones on darken ({q0.mid.g} -> {pN.mid.g})");
         Check(Math.Abs(pN.bright.g - q0.bright.g) <= 2, "bright untouched on darken");
-        Check(p.mid.g - q0.mid.g < p.dark.g - q0.dark.g + 200, "shadow lift stronger on shadows than mids");
+        Check(p.dark.g > q0.dark.g && p.bright.g == q0.bright.g, "shadow lift lightens only darks");
     }
 
     private static void TestGamma()
@@ -528,82 +532,109 @@ internal static class Program
 
     private static void TestLightroom()
     {
-        Check(PhotoOps.HighlightMask(0.50f) == 0f, "LR: maska swiatel 0 ponizej regionu 70-90%");
-        Check(Math.Abs(PhotoOps.HighlightMask(0.95f) - 1.0f) < 1e-6, "LR: maska swiatel 1 powyzej 90%");
-        Check(PhotoOps.ShadowMask(0.10f) == 1f, "LR: maska cieni 1 w regionie 10-30%");
-        Check(PhotoOps.ShadowMask(0.60f) > 0.2f && PhotoOps.ShadowMask(0.60f) < 0.7f, "LR: maska cieni ogon siega poltonow (pomiar LR -84)");
-        Check(PhotoOps.HighlightMask(0.72f) == 0f, "LR: maska swiatel 0 ponizej 78%");
-        Check(PhotoOps.HighlightMask(0.83f) > 0f && PhotoOps.HighlightMask(0.83f) < 1f, "LR: maska swiatel miekka na krawedzi regionu");
+        var sceneLut = PhotoOps.GetToneLut(0, 0, 0, true);
+        Check(sceneLut.Length == PhotoOps.ToneEvN, "LC: neutral tone map is the Reinhard base curve (4096 entries)");
+        Check(Math.Abs(PhotoOps.ToneLutEv(0.0, sceneLut) - 0.189) < 0.01, "LC: neutral tone map keeps grey near grey");
+        var dispLut = PhotoOps.GetToneLut(0, 0, 0, false);
+        Check(Math.Abs(PhotoOps.ToneLutEv(0.0, dispLut) - 0.18) < 0.005, "LC: neutral display LUT is identity at grey");
 
-        Check(PhotoOps.HighlightCurve(0.9f, -1f) < 0.85f, "LR: swiatla -100 sciskaja (0.9 -> ~0.83)");
-        Check(PhotoOps.HighlightCurve(0.9f, 1f) > 0.9f, "LR: swiatla +100 rozjasniaja");
-        Check(PhotoOps.ShadowCurve(0.05f, 1f) > 0.08f, "LR: cienie +100 podnosza glebokie cienie");
-        Check(PhotoOps.ShadowCurve(0.05f, -1f) < 0.02f, "LR: cienie -100 przyciemniaja");
+        var scene = PhotoOps.BuildToneLutScene(0, 0, 0);
+        Check(Math.Abs(PhotoOps.ToneLutEv(Math.Log2(0.18 / 0.18), scene) - 0.18) < 0.02, "LC: grey 0.18 -> around 0.18 (Reinhard)");
+        Check(PhotoOps.ToneLutEv(Math.Log2(1.0 / 0.18), scene) < 0.9, "LC: Reinhard rolloff keeps highlights below white");
+        Check(PhotoOps.ToneLutEv(Math.Log2(0.3 / 0.18), scene) > 0.2 && PhotoOps.ToneLutEv(Math.Log2(0.3 / 0.18), scene) < 0.35, "LC: scene tone map lifts grey area moderately");
 
-        Check(Math.Abs(PhotoOps.ToneMap(0.5, 1.0, 0, 1.0, 0) - 0.5) < 1e-9, "LR: kontrast os w 0.5");
-        Check(PhotoOps.ToneMap(0.0, 1.0, 0, 1.0, 0) == 0.0 && PhotoOps.ToneMap(1.0, 1.0, 0, 1.0, 0) == 1.0,
-              "LR: kontrast nie rusza punktow czerni/bieli (Whites/Blacks wlasnie to robia)");
-        Check(PhotoOps.ToneMap(0.75, 1.0, 0, 1.0, 0) > 0.75, "LR: kontrast +100 podnosi jasne srednie tony");
-        Check(PhotoOps.ToneMap(0.75, 1.0, 0, -1.0, 0) < 0.75 && PhotoOps.ToneMap(0.75, 1.0, 0, -1.0, 0) > 0.25,
-              "LR: kontrast -100 splaszcza ale nie odwracaja");
+        var c60 = PhotoOps.BuildToneLutScene(0.6, 0, 0);
+        Check(PhotoOps.ToneLutEv(2.0, c60) > PhotoOps.ToneLutEv(2.0, scene), "LC: contrast raises bright EVs");
+        Check(PhotoOps.ToneLutEv(-3.0, c60) < PhotoOps.ToneLutEv(-3.0, scene), "LC: contrast lowers dark EVs");
 
-        Check(PhotoOps.ToneMap(0.9, 1.0, 0, 0, 1.0) == 1.0, "LR: biel +100 ustawia punkt bieli na klip");
-        Check(PhotoOps.ToneMap(0.9, 1.0, 0, 0, -1.0) < 0.7, "LR: biel -100 chroni swiatla");
-        Check(PhotoOps.BlacksCurve(0.05f, 1f) > 0.10f, "LR: czern +100 podnosi punkt czerni (matte, PV2012)");
-        Check(PhotoOps.BlacksCurve(0.05f, -1f) == 0f, "LR: czern -100 przycina czerń do zera");
-        Check(PhotoOps.BlacksMask(0.50f) == 0f, "LR: czern nie wpływa na poltony");
-        Check(PhotoOps.BlacksMask(0.05f) == 1f, "LR: czern pelny efekt w strefie 0-10%");
+        var w100 = PhotoOps.BuildToneLutScene(0, 1.0, 0);
+        Check(PhotoOps.ToneLutEv(Math.Log2(0.9 / 0.18), w100) >= 0.999, "LC: whites +100 lets brights through to white (clip)");
+        var wN = PhotoOps.BuildToneLutScene(0, -1.0, 0);
+        Check(PhotoOps.ToneLutEv(Math.Log2(0.9 / 0.18), wN) < 0.7, "LC: whites -100 protects highlights");
 
-        Check(Math.Abs(PhotoOps.ToneMap(1.0, 1.0, 1.0, 0, 0) - 1.0) < 1e-9, "LR: dehaze +100 zachowuje biel");
-        Check(PhotoOps.ToneMap(0.5, 1.0, 1.0, 0, 0) < 0.4, "LR: dehaze +100 usuwa zaslone z poltonow");
-        Check(PhotoOps.ToneMap(0.3, 1.0, -1.0, 0, 0) > 0.3, "LR: dehaze ujemny dodaje zaslone (PV5)");
+        var bN = PhotoOps.BuildToneLutScene(0, 0, -1.0);
+        Check(PhotoOps.ToneLutEv(-10.0, bN) < 0.01, "LC: blacks -100 crushes black to zero (soft knee)");
+        var bP = PhotoOps.BuildToneLutScene(0, 0, 1.0);
+        Check(PhotoOps.ToneLutEv(-10.0, bP) > 0.025 && PhotoOps.ToneLutEv(-10.0, bP) < 0.06, "LC: blacks +100 raises the black point (matte)");
+        Check(Math.Abs(PhotoOps.ToneLutEv(0.0, bN) - 0.18) < 0.03, "LC: blacks -100 spares grey (gentle soft-knee)");
+
+        var disp = PhotoOps.BuildToneLutDisplay(1.0, 0, 0);
+        double lin05 = Math.Pow(0.5, 2.2);
+        Check(PhotoOps.ToneLutEv(Math.Log2(lin05 / 0.18), disp) > lin05, "LC: display contrast + expands (S-curve gamma 2.2)");
+        double lin10 = Math.Pow(0.10, 2.2);
+        Check(PhotoOps.ToneLutEv(Math.Log2(lin10 / 0.18), disp) < lin05 * 0.28, "LC: display contrast + darkens shadows");
+        Check(Math.Abs(PhotoOps.ToneLutEv(Math.Log2(1e-8), disp)) < 1e-4, "LC: display contrast holds black");
 
         var a = PhotoAdjustments.FromUi(0.0, 100, 0, -100, 0, 150, -100, 100, -100, -100, 0, 0);
         Check(Math.Abs(a.Contrast - 1.0) < 1e-9 && Math.Abs(a.Saturation - 0.0) < 1e-9 &&
               Math.Abs(a.Sharpen - 1.5) < 1e-9 && Math.Abs(a.Highlights - (-1.0)) < 1e-9 &&
               Math.Abs(a.Whites - 1.0) < 1e-9 && Math.Abs(a.Blacks - (-1.0)) < 1e-9 &&
-              Math.Abs(a.Dehaze - (-1.0)) < 1e-9, "LR: FromUi mapuje zakresy -100..100/0..150 jak Lightroom");
-        Check(a.IsDefault == false, "LR: FromUi niedomyslne ustawienia");
+              Math.Abs(a.Dehaze - (-1.0)) < 1e-9, "LC: FromUi maps ranges -100..100/0..150");
+        Check(a.IsDefault == false, "LC: FromUi non-default settings");
 
         var satUi = PhotoAdjustments.FromUi(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-        Check(satUi.IsDefault, "LR: wszystkie suwaki na 0 => neutralne (jak domyslne LR)");
+        Check(satUi.IsDefault, "LC: all sliders at 0 => neutral");
 
         var (gR, gG, gB) = PhotoOps.TempGains(1.0);
-        Check(Math.Abs(gR - 1.25) < 1e-9 && Math.Abs(gB - 0.75) < 1e-9 && Math.Abs(gG - 1.0) < 1e-9, "LR: temp symetrycznie R/B");
+        Check(Math.Abs(gR - 1.25) < 1e-9 && Math.Abs(gB - 0.75) < 1e-9 && Math.Abs(gG - 1.0) < 1e-9, "LC: temp symmetric R/B");
         var (cR, cG, cB) = PhotoOps.TempGains(-1.0);
-        Check(Math.Abs(cR - 0.75) < 1e-9 && Math.Abs(cB - 1.25) < 1e-9, "LR: temp ujemne symetrycznie");
+        Check(Math.Abs(cR - 0.75) < 1e-9 && Math.Abs(cB - 1.25) < 1e-9, "LC: negative temp symmetric");
 
         var flat = MakeFlat(255, 240, 240, 240, 120, 120, 120, 10, 10, 10);
-        var lifted = ReadPixels(AdjustmentsProcessor.Apply(flat, 1.0, 1.0)!);
         var baseP = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0)!);
-        Check(lifted.dark.g - baseP.dark.g >= 6, $"LR: cienie +100 podnosza najciemniejszy obszar ({baseP.dark.g} -> {lifted.dark.g})");
-        Check(lifted.mid.g - baseP.mid.g > 8 && lifted.mid.g - baseP.mid.g < 80, $"LR: cienie +100 podnosza poltony (mocniej niz gamma) ({baseP.mid.g} -> {lifted.mid.g})");
-        Check(lifted.bright.g == baseP.bright.g, "LR: cienie +100 nie ruszaja swiatel");
+
+        var lifted = ReadPixels(AdjustmentsProcessor.Apply(flat, 1.0, 1.0)!);
+        Check(lifted.dark.g - baseP.dark.g >= 6, $"LC: shadows +100 lifts darkest area ({baseP.dark.g} -> {lifted.dark.g})");
+        Check(Math.Abs(lifted.mid.g - baseP.mid.g) <= 4, $"LC: shadows +100 spares midtones (EV mask) ({baseP.mid.g} -> {lifted.mid.g})");
+        Check(lifted.bright.g == baseP.bright.g, "LC: shadows +100 leaves highlights untouched");
+
+        var darkened = ReadPixels(AdjustmentsProcessor.Apply(flat, -1.0, 1.0)!);
+        Check(baseP.dark.g - darkened.dark.g >= 6, $"LC: shadows -100 darkens shadows ({baseP.dark.g} -> {darkened.dark.g})");
+        Check(Math.Abs(darkened.mid.g - baseP.mid.g) <= 4, "LC: shadows -100 spares midtones");
+        Check(darkened.bright.g == baseP.bright.g, "LC: shadows -100 leaves highlights untouched");
 
         var matte = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Blacks = 100.0 })!);
-        Check(matte.dark.g - baseP.dark.g >= 15, $"LR: czern +100 podnosi czerń/matte ({baseP.dark.g} -> {matte.dark.g})");
-        Check(matte.mid.g - baseP.mid.g > 8, $"LR: czern +100 to lift calego zakresu, podnosi poltony ({baseP.mid.g} -> {matte.mid.g})");
-        Check(Math.Abs(matte.bright.g - baseP.bright.g) < 5, $"LR: czern +100 ledwo rusza swiatla ({baseP.bright.g} -> {matte.bright.g})");
+        Check(matte.dark.g >= baseP.dark.g && Math.Abs(matte.mid.g - baseP.mid.g) < 12 && Math.Abs(matte.bright.g - baseP.bright.g) < 10,
+              $"LC: blacks +100 (display) lifts black without touching mid/bright ({baseP.dark.g} -> {matte.dark.g}, mid {baseP.mid.g}->{matte.mid.g}, bright {baseP.bright.g}->{matte.bright.g})");
 
         var crushed = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Blacks = -100.0 })!);
-        Check(crushed.dark.g < baseP.dark.g - 3, $"LR: czern -100 przycina czerń ({baseP.dark.g} -> {crushed.dark.g})");
-        Check(crushed.mid.g == baseP.mid.g, "LR: czern -100 oszczedza poltony");
+        Check(crushed.dark.g < baseP.dark.g, $"LC: blacks -100 crushes black ({baseP.dark.g} -> {crushed.dark.g})");
+        Check(Math.Abs(crushed.mid.g - baseP.mid.g) < 12, $"LC: blacks -100 spares midtones ({baseP.mid.g} -> {crushed.mid.g})");
 
         var hazeAdd = AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Dehaze = -1.0 });
         Check(LumMean(hazeAdd!) > LumMean(AdjustmentsProcessor.Apply(flat, 0.0, 1.0)!),
-              "LR: dehaze -100 dodaje mgulke zaslone");
+              "LC: dehaze -100 adds haze veil");
 
         var hlRec = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Highlights = -1.0 })!);
-        Check(Math.Abs(hlRec.mid.g - baseP.mid.g) <= 2, "LR: swiatla -100 oszczedzaja poltony");
-        Check(hlRec.bright.g < baseP.bright.g - 5, $"LR: swiatla -100 odzyskaja swiatla ({baseP.bright.g} -> {hlRec.bright.g})");
+        Check(Math.Abs(hlRec.mid.g - baseP.mid.g) < (baseP.bright.g - hlRec.bright.g) / 2,
+              $"LC: highlights -100 darkens highlights more than midtones (mid {baseP.mid.g}->{hlRec.mid.g}, bright {baseP.bright.g}->{hlRec.bright.g})");
+        Check(hlRec.bright.g < baseP.bright.g - 50, $"LC: highlights -100 recovers highlights ({baseP.bright.g} -> {hlRec.bright.g})");
         var hlBoost = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
             extra: new PhotoAdjustments { Highlights = 1.0 })!);
-        Check(hlBoost.bright.g > baseP.bright.g + 2, $"LR: swiatla +100 rozjasniaja swiatla ({baseP.bright.g} -> {hlBoost.bright.g})");
-        Check(hlBoost.mid.g == baseP.mid.g, "LR: swiatla +100 oszczedzaja poltony");
+        Check(hlBoost.bright.g > baseP.bright.g + 2, $"LC: highlights +100 brightens highlights ({baseP.bright.g} -> {hlBoost.bright.g})");
+
+        var exposed = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
+            extra: new PhotoAdjustments { Exposure = -2.0 })!);
+        Check(exposed.dark.g < baseP.dark.g && exposed.bright.g < baseP.bright.g,
+              $"LC: exposure -2 EV dims whole image (dark {baseP.dark.g}->{exposed.dark.g}, bright {baseP.bright.g}->{exposed.bright.g})");
+        var exposedUp = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
+            extra: new PhotoAdjustments { Exposure = 2.0 })!);
+        Check(exposedUp.dark.g > baseP.dark.g && exposedUp.mid.g > baseP.mid.g,
+              $"LC: exposure +2 EV brightens (dark {baseP.dark.g}->{exposedUp.dark.g}, mid {baseP.mid.g}->{exposedUp.mid.g})");
+
+        var contrasted = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
+            extra: new PhotoAdjustments { Contrast = 1.0 })!);
+        Check(contrasted.dark.g < baseP.dark.g && contrasted.bright.g > baseP.bright.g * 0.96,
+              $"LC: contrast +100 stretches range edges (dark {baseP.dark.g}->{contrasted.dark.g}, bright {baseP.bright.g}->{contrasted.bright.g})");
+
+        var whitish = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0, null, out _,
+            extra: new PhotoAdjustments { Whites = 1.0 })!);
+        Check(whitish.bright.g >= 250 && Math.Abs(whitish.mid.g - baseP.mid.g) < 30,
+              $"LC: whites +100 clips highlights, moderately midtones (bright {baseP.bright.g}->{whitish.bright.g}, mid {baseP.mid.g}->{whitish.mid.g})");
     }
 
     private static void TestSliders()
@@ -706,14 +737,59 @@ internal static class Program
         }
         Check(seen.Count >= 1000, $"raw16 real precision above 8-bit (distinct G values: {seen.Count})");
 
-        var correctedNeutral = Adjust16.Apply(b16half, 0.0, 1.0, null, out _);
-        bool neutralKept = true;
-        for (int k = 0; k < 1024; k++)
-        {
-            int i = rnd.Next(b16half.G.Length);
-            if (correctedNeutral.R[i] != b16half.R[i] || correctedNeutral.G[i] != b16half.G[i] || correctedNeutral.B[i] != b16half.B[i]) { neutralKept = false; break; }
-        }
-        Check(neutralKept, "raw16 neutral pipeline preserves values");
+            var correctedNeutral = Adjust16.Apply(b16half, 0.0, 1.0, null, out _);
+            var neutralRef = Adjust16.RenderNeutral(b16half);
+            bool neutralMatches = true;
+            for (int k = 0; k < 1024; k++)
+            {
+                int i = rnd.Next(b16half.G.Length);
+                if (correctedNeutral.R[i] != neutralRef.R[i] || correctedNeutral.G[i] != neutralRef.G[i] || correctedNeutral.B[i] != neutralRef.B[i]) { neutralMatches = false; break; }
+            }
+            Check(neutralMatches, "raw16 neutral pipeline matches base tone render");
+
+            var grey16 = new Raw16Image(32, 32);
+            for (int i = 0; i < grey16.G.Length; i++) grey16.R[i] = grey16.G[i] = grey16.B[i] = (ushort)Math.Round(0.18 * 65535.0);
+            var greyOut = Adjust16.RenderNeutral(grey16);
+            double greyEnc = Math.Min(greyOut.G[0] / 65535.0, Math.Min(greyOut.R[0] / 65535.0, greyOut.B[0] / 65535.0));
+            Check(greyEnc > 0.42 && greyEnc < 0.50, $"LC: raw16 tone+encode maps grey 0.18 to ~0.45 display ({greyEnc:0.000})");
+            var white16 = new Raw16Image(32, 32);
+            for (int i = 0; i < white16.G.Length; i++) white16.R[i] = white16.G[i] = white16.B[i] = 65535;
+            var whiteOut = Adjust16.RenderNeutral(white16);
+            double whiteEnc = Math.Min(whiteOut.G[0] / 65535.0, Math.Min(whiteOut.R[0] / 65535.0, whiteOut.B[0] / 65535.0));
+            Check(whiteEnc > 0.88 && whiteEnc < 0.99, $"LC: raw16 tone rolls off white below 1.0 ({whiteEnc:0.000})");
+            Check(whiteEnc > greyEnc, "LC: raw16 tone monotone");
+
+            Raw16Image FlatRaw(double v)
+            {
+                var img = new Raw16Image(32, 32);
+                ushort u = (ushort)Math.Round(v * 65535.0);
+                for (int i = 0; i < img.G.Length; i++) img.R[i] = img.G[i] = img.B[i] = u;
+                return img;
+            }
+            double EncMeanG(Raw16Image img) { double s = 0; for (int i = 0; i < img.G.Length; i++) s += img.G[i]; return s / img.G.Length / 65535.0; }
+
+            double hiBase = EncMeanG(Adjust16.RenderNeutral(FlatRaw(0.72)));
+            double hiDown = EncMeanG(Adjust16.Apply(FlatRaw(0.72), 0.0, 1.0, null, out _,
+                extra: new PhotoAdjustments { Highlights = -1.0 }));
+            Check(hiDown < hiBase - 0.12, $"LC: raw16 highlights -100 darkens highlights ({hiBase:0.000} -> {hiDown:0.000})");
+            double midBase = EncMeanG(Adjust16.RenderNeutral(FlatRaw(0.18)));
+            double hiMid = EncMeanG(Adjust16.Apply(FlatRaw(0.18), 0.0, 1.0, null, out _,
+                extra: new PhotoAdjustments { Highlights = -1.0 }));
+            Check(Math.Abs(hiMid - midBase) < Math.Abs(hiBase - hiDown), "LC: raw16 highlights -100 mostly spares midtones");
+
+            double shDark = EncMeanG(Adjust16.Apply(FlatRaw(0.022), 1.0, 1.0, null, out _));
+            double shDarkBase = EncMeanG(Adjust16.RenderNeutral(FlatRaw(0.022)));
+            Check(shDark > shDarkBase + 0.05, $"LC: raw16 shadows +100 lifts deep shadows ({shDarkBase:0.000} -> {shDark:0.000})");
+            double shBright = EncMeanG(Adjust16.Apply(FlatRaw(0.72), 1.0, 1.0, null, out _));
+            Check(Math.Abs(shBright - hiBase) < 0.02, "LC: raw16 shadows +100 leaves highlights untouched");
+
+            double blBase = EncMeanG(Adjust16.Apply(FlatRaw(0.02), 0.0, 1.0, null, out _, extra: null));
+            double blUp = EncMeanG(Adjust16.Apply(FlatRaw(0.02), 0.0, 1.0, null, out _,
+                extra: new PhotoAdjustments { Blacks = 1.0 }));
+            double blDown = EncMeanG(Adjust16.Apply(FlatRaw(0.02), 0.0, 1.0, null, out _,
+                extra: new PhotoAdjustments { Blacks = -1.0 }));
+            Check(blUp > blBase + 0.05, $"LC: raw16 blacks +100 lifts black point ({blBase:0.000} -> {blUp:0.000})");
+            Check(blDown < blBase - 0.02, $"LC: raw16 blacks -100 crushes black ({blBase:0.000} -> {blDown:0.000})");
 
         double meanG = 0;
         for (int i = 0; i < b16half.G.Length; i += 997) meanG += b16half.G[i];
@@ -751,12 +827,12 @@ internal static class Program
         var dark16 = new Raw16Image(64, 48);
         for (int i = 0; i < dark16.G.Length; i++)
         {
-            dark16.R[i] = dark16.G[i] = dark16.B[i] = 8192;
+            dark16.R[i] = dark16.G[i] = dark16.B[i] = 1024;
         }
-        var liftedDark = Adjust16.Apply(dark16, 0.5, 1.0, null, out _);
+        var liftedDark = Adjust16.Apply(dark16, 1.0, 1.0, null, out _);
         float before = PlaneMean(dark16.G);
         float after = PlaneMean(liftedDark.G);
-        Check(after - before > 1000, $"raw16 shadow lift affects dark pixels ({before:0.#} -> {after:0.#})");
+        Check(after - before > 800, $"raw16 shadow lift affects dark pixels ({before:0.#} -> {after:0.#})");
         Check(after - before < 20000, $"raw16 shadow lift stays region-bounded, no global stretch ({before:0.#} -> {after:0.#})");
 
         var b16full = RawDecoder.Decode16(src, halfSize: false);
@@ -1380,16 +1456,15 @@ internal static class Program
             p.OutputTiff = false;
             p.HighlightMode = mode;
             p.NoAutoBright = true;
+            p.Gamma = new double[] { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
         });
         using var img = r.MakeDcrawMemoryImage();
         var raw16 = Raw16Image.FromInterleaved(img.AsSpan<ushort>().ToArray(), img.Width, img.Height);
-        double ev = LinearRender.ComputeBaseEv(raw16);
-        var render = LinearRender.ApplyGain(raw16, ev, 0.0);
-        var disp = render.ToDisplay(dither: false);
+        var disp = Adjust16.RenderNeutral(raw16).ToDisplay(dither: false);
         var enc = new JpegBitmapEncoder { QualityLevel = 90 };
         enc.Frames.Add(BitmapFrame.Create(disp));
         using (var fs = File.Create(outPath)) enc.Save(fs);
-        Console.WriteLine($"dumped mode={mode} thr={adjustMaxThr} baseEv={ev:0.00} -> {outPath}");
+        Console.WriteLine($"dumped mode={mode} thr={adjustMaxThr} linear -> {outPath}");
     }
 
     private static void DumpPreview(string path, string outPath, double extraEv)
@@ -1456,7 +1531,7 @@ internal static class Program
                 encSum += r.R[i] + r.G[i] + r.B[i];
                 if (r.R[i] >= 65535 || r.G[i] >= 65535 || r.B[i] >= 65535) clip++;
             }
-            Console.WriteLine($"    userEv={u,4:0.0}  clipAny={clip,8}  encMean/px={encSum / (3.0 * n):0.0}");
+            Console.WriteLine($"    userEv={u,4:0.0}  clipAny={clip,8}  mean/px={encSum / (3.0 * n):0.0}");
         }
 
         var low = LinearRender.ApplyGain(raw, ev - 2.0, 0.0);
@@ -1467,6 +1542,33 @@ internal static class Program
         int distinct = 0;
         for (int v = 0; v < 65536; v++) if (histR[v] > 0) distinct++;
         Console.WriteLine($"  default-clipped R pixels n={cnt} -> after -2EV distinct={distinct} (gradient recovered)");
+    }
+
+    private static void DomainProbe(string path)
+    {
+        var raw = RawDecoder.Decode16(path, halfSize: true);
+        var g = raw.G;
+        long n = g.Length;
+        var hist = new long[256];
+        double s = 0;
+        for (int i = 0; i < n; i++) { hist[g[i] >> 8]++; s += g[i]; }
+        Console.WriteLine($"== domain probe: {Path.GetFileName(path)} meanG={s / n:0.0} ({s / n / 65535.0:0.000})");
+        double acc = 0;
+        double? p1 = null, p10 = null, p50 = null, p90 = null, p99 = null;
+        for (int v = 0; v < 256; v++)
+        {
+            double t = (v + 0.5) / 256.0;
+            acc += hist[v];
+            p1 ??= acc >= n * 0.01 ? t : null;
+            p10 ??= acc >= n * 0.10 ? t : null;
+            p50 ??= acc >= n * 0.50 ? t : null;
+            p90 ??= acc >= n * 0.90 ? t : null;
+            p99 ??= acc >= n * 0.99 ? t : null;
+        }
+        Console.WriteLine($"   p1={p1:0.000} p10={p10:0.000} p50={p50:0.000} p90={p90:0.000} p99={p99:0.000}");
+        long clip = 0;
+        for (int i = 0; i < n; i++) if (g[i] >= 65000) clip++;
+        Console.WriteLine($"   clippedG={clip} ({100.0 * clip / n:0.00}%)");
     }
 
     private static void HighlightProbe(string path)

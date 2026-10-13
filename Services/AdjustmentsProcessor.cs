@@ -45,21 +45,25 @@ public static class AdjustmentsProcessor
         var buffer = new byte[(long)stride * h];
         baseSource.CopyPixels(buffer, stride, 0);
 
+        bool shadow = Math.Abs(shadowLift) > 0.0001;
+        bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
+
         if (extra is not null && !extra.IsDefault)
         {
             if (extra.Denoise > 0.0005) PhotoOps.ApplyDenoise(buffer, w, h, extra.Denoise);
             if (extra.ColorNoise > 0.0005) PhotoOps.ApplyChromaDenoise(buffer, w, h, extra.ColorNoise);
             PhotoOps.ApplyColorPoints(buffer, extra);
-            if (Math.Abs(extra.Blacks) > 0.0005) PhotoOps.ApplyBlacks(buffer, extra.Blacks);
             if (Math.Abs(extra.Highlights) > 0.0005) PhotoOps.ApplyRegionCurve(buffer, extra.Highlights, highlight: true);
+            if (shadow) PhotoOps.ApplyRegionCurve(buffer, shadowLift, highlight: false);
             if (Math.Abs(extra.Clarity) > 0.0005) PhotoOps.ApplyClarity(buffer, w, h, extra.Clarity);
             if (extra.Sharpen > 0.0005) PhotoOps.ApplySharpen(buffer, w, h, extra.Sharpen);
+            PhotoOps.ApplyTone(buffer, extra);
+        }
+        else if (shadow)
+        {
+            PhotoOps.ApplyRegionCurve(buffer, shadowLift, highlight: false);
         }
 
-        bool shadow = Math.Abs(shadowLift) > 0.0001;
-        bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
-
-        if (shadow) PhotoOps.ApplyRegionCurve(buffer, shadowLift, highlight: false);
         if (hasGamma) ApplyGamma(buffer, gamma);
         if (manual is not null && manual.HasEffect) ApplyManual(buffer, manual);
         switch (mono)

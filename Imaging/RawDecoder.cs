@@ -118,9 +118,9 @@ public static class RawDecoder
     private static InvalidOperationException HeNotSupported()
     {
         return new InvalidOperationException(
-            "Nikon NEF High Efficiency (HE/HE*): nie udało się zdekodować. Wariant HE jest zwykle obsługiwany (dekoder TicoRAW z forka LibRaw); " +
-            "wariant HE* (wyższa jakość) nie jest obsługiwany. Zmień w aparacie kompresję NEF na bezstratną (Lossless compressed) " +
-            "lub konwertuj pliki do DNG (Adobe DNG Converter).");
+            "Nikon NEF High Efficiency (HE/HE*): failed to decode. The HE variant is usually supported (TicoRAW decoder from the LibRaw fork); " +
+            "the HE* variant (higher quality) is not supported. Set your camera's NEF compression to Lossless compressed " +
+            "or convert files to DNG (Adobe DNG Converter).");
     }
 
     private static bool IsLikelyGarbageDecode(Raw16Image img)
@@ -154,19 +154,19 @@ public static class RawDecoder
             p.OutputTiff = false;
             p.HighlightMode = 2;
             p.NoAutoBright = true;
+            p.Gamma = new double[] { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
         });
         using var img = r.MakeDcrawMemoryImage();
 
         if (img.ImageType != ProcessedImageType.Bitmap || img.Bits != 16 || img.Channels != 3)
-            throw new InvalidOperationException($"LibRaw: nieoczekiwany format wyjściowy ({img.ImageType}, {img.Bits} bit, {img.Channels} kanal.)");
+            throw new InvalidOperationException($"LibRaw: unexpected output format ({img.ImageType}, {img.Bits} bit, {img.Channels} channels)");
 
         int w = img.Width;
         int h = img.Height;
         var raw16 = Raw16Image.FromInterleaved(img.AsSpan<ushort>().ToArray(), w, h);
         double ev = 0.0;
-        var normalized = LinearRender.ApplyGain(raw16, ev, 0.0);
-        var display = normalized.ToDisplay(dither: true);
-        Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp hl=2 baseEv={ev:0.00}");
+        var display = Adjust16.RenderNeutral(raw16).ToDisplay(dither: true);
+        Debug.Log($"RAW DECODE16: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp linear hl=2 baseEv={ev:0.00}");
         return (raw16, display, ev);
     }
 
@@ -185,7 +185,7 @@ public static class RawDecoder
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = exe,
-                Arguments = $"-w -H 2 -W -6{(halfSize ? " -h" : "")} \"{tin}\"",
+                Arguments = $"-w -H 2 -W -6 -g 1 1{(halfSize ? " -h" : "")} \"{tin}\"",
                 UseShellExecute = false,
                 RedirectStandardError = true,
                 CreateNoWindow = true,
@@ -203,9 +203,8 @@ public static class RawDecoder
             if (packed is null) return null;
             var raw16 = Raw16Image.FromInterleaved(packed, w, h);
             double ev = 0.0;
-            var normalized = LinearRender.ApplyGain(raw16, ev, 0.0);
-            var display = normalized.ToDisplay(dither: true);
-            Debug.Log($"RAW DECODE{(heTool ? "HE" : "22")}: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp hl=2 baseEv={ev:0.00}");
+            var display = Adjust16.RenderNeutral(raw16).ToDisplay(dither: true);
+            Debug.Log($"RAW DECODE{(heTool ? "HE" : "22")}: {Path.GetFileName(path)} half={halfSize} {w}x{h} 16bpp linear hl=2 baseEv={ev:0.00}");
             return (raw16, display, ev);
         }
         catch (Exception ex)
