@@ -15,10 +15,11 @@ public sealed class PhotoMeta
     public string? DateText;
     public string? FocalText;
     public string? ApertureText;
+    public string? IsoText;
     public string? ShutterText;
 
     public string Summary =>
-        string.Join("  •  ", new[] { Camera, DateText, FocalText, ApertureText, ShutterText }
+        string.Join("  •  ", new[] { Camera, DateText, FocalText, ApertureText, IsoText, ShutterText }
             .Where(s => s is not null).Select(s => s!));
 }
 
@@ -73,6 +74,7 @@ public static class PhotoMetaReader
             if (o.Timestamp > 0) m.DateText = DateTimeOffset.FromUnixTimeSeconds(o.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
             if (o.FocalLength > 0.05 && o.FocalLength < 6500) m.FocalText = FormatNumber(o.FocalLength) + " mm";
             if (o.Aperture > 0.05 && o.Aperture < 350) m.ApertureText = "f/" + FormatNumber(o.Aperture);
+            if (o.IsoSpeed > 0.5 && o.IsoSpeed < 1_000_000) m.IsoText = "ISO " + ((int)Math.Round(o.IsoSpeed)).ToString();
             m.ShutterText = FormatShutter(o.Shutter);
             return Has(m) ? m : null;
         }
@@ -109,6 +111,7 @@ public static class PhotoMetaReader
             if (TryRational(md.GetQuery("/app1/ifd/exif/{ushort=33434}"), out double shutter)) m.ShutterText = FormatShutter(shutter);
             if (TryRational(md.GetQuery("/app1/ifd/exif/{ushort=33437}"), out double fn) && fn > 0.05 && fn < 350) m.ApertureText = "f/" + FormatNumber(fn);
             if (TryRational(md.GetQuery("/app1/ifd/exif/{ushort=37386}"), out double fl) && fl > 0.05 && fl < 6500) m.FocalText = FormatNumber(fl) + " mm";
+            if (TryInt(md.GetQuery("/app1/ifd/exif/{ushort=34855}"), out int iso) && iso > 0 && iso < 1_000_000) m.IsoText = "ISO " + iso.ToString();
 
             return Has(m) ? m : null;
         }
@@ -121,7 +124,45 @@ public static class PhotoMetaReader
 
     private static bool Has(PhotoMeta m) =>
         m.Camera is not null || m.DateText is not null || m.FocalText is not null ||
-        m.ApertureText is not null || m.ShutterText is not null;
+        m.ApertureText is not null || m.IsoText is not null || m.ShutterText is not null;
+
+    private static bool TryInt(object? v, out int val)
+    {
+        val = 0;
+        try
+        {
+            switch (v)
+            {
+                case ushort u:
+                    val = u;
+                    return true;
+                case short s:
+                    val = s;
+                    return true;
+                case uint ui:
+                    val = (int)ui;
+                    return true;
+                case int i:
+                    val = i;
+                    return true;
+                case byte by:
+                    val = by;
+                    return true;
+                case double d:
+                    val = (int)d;
+                    return true;
+                case float f:
+                    val = (int)f;
+                    return true;
+                case byte[] b when b.Length >= 2:
+                    val = BitConverter.ToUInt16(b, 0);
+                    if (b.Length >= 4 && val == 0) val = (int)BitConverter.ToUInt32(b, 0);
+                    return true;
+            }
+        }
+        catch (Exception) { }
+        return false;
+    }
 
     private static string? Clean(string s)
     {

@@ -5,7 +5,7 @@ Portable przeglądarka zdjęć JPG/JPEG/PNG oraz RAW dla Windows (WPF, .NET 8, p
 ## Funkcje
 
 - Podgląd obrazów z folderu, nawigacja (strzałki, Home/End); strzałki ←/→ przełączają zdjęcia zawsze — nawet gdy fokus jest na suwaku (edycja tekstu ma wyższy priorytet)
-- Pasek dolny po prawej: metadane pliku, gdy znane — model aparatu, data, ogniskowa, przesłona, czas naświetlania (LibRaw dla RAW, EXIF dla JPG/PNG/TIFF); wczytywane w tle po doładowaniu obrazu, bez danych w pliku pasek pozostaje pusty
+- Pasek dolny po prawej: metadane pliku, gdy znane — model aparatu, data, ogniskowa, przesłona, ISO, czas naświetlania (LibRaw dla RAW, EXIF dla JPG/PNG/TIFF); wczytywane w tle po doładowaniu obrazu, bez danych w pliku pasek pozostaje pusty
 - Zoom 10–400%: rolka myszy, `+`/`-`, `1` — 100%, `0`/przycisk „Dopasuj" — dopasuj do okna, dwuklik — przełączanie fit/100%
 - Pan: przeciąganie myszką (gdy obraz większy od okna); obraz zawsze wyśrodkowany i nieucięty
 - Korekcja cieni −100…+100 (maska tonalna nad czernią, podnosi głębokie cienie i oszczędza półtony; pipeline liniowy sRGB) i gamma 0.50–2.00 (LUT środkowych tonów)
@@ -88,7 +88,7 @@ E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
 - `Imaging/PhotoOps.cs` — regionowe maski EV cieni/świateł (log-luminancja sceny), LUT-y balansu bieli/dehaze, tonemap luminancji (scenowa Reinhard dla RAW — zawsze aktywna jako proces bazowy, display S-curve gamma 2.2 dla JPG), saturacja, clarity/wyostrzenie (unsharp), odszumianie i szum kolorów (parametry chroma NR: `ChromaDenoiseParams` — jeden zestaw dla CPU/GPU/JPG), pomiar temperatury z próbki
 - `Imaging/ManualStretch.cs` — mapa punktów rozciągania w EV sceny (składana do LUT tonemap przed kodowaniem sRGB)
 - `Services/ImageFolder.cs`, `Services/SettingsStore.cs` — lista plików, ustawienia
-- `Services/PhotoMeta.cs` — metadane pliku do paska dolnego (`PhotoMetaReader.Get`, w cache): RAW przez LibRaw (`ImageParams`/`ImageOtherParams` — tylko nagłówek, bez dekompresji), reszta przez EXIF `BitmapDecoder` (Make/Model, DateTimeOriginal, ExposureTime/FNumber/FocalLength); brak danych → pusta etykieta
+- `Services/PhotoMeta.cs` — metadane pliku do paska dolnego (`PhotoMetaReader.Get`, w cache): RAW przez LibRaw (`ImageParams`/`ImageOtherParams` — tylko nagłówek, bez dekompresji), reszta przez EXIF `BitmapDecoder` (Make/Model, DateTimeOriginal, ExposureTime/FNumber/FocalLength/ISO); brak danych → pusta etykieta
 - `tools/Harness/` — testy logiki
 - `scripts/` — testy E2E UIA i pomoce
 

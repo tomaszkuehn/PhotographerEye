@@ -1511,6 +1511,7 @@ internal static class Program
         md.SetQuery("/app1/ifd/exif/{ushort=33434}", 1uL | (60uL << 32));
         md.SetQuery("/app1/ifd/exif/{ushort=33437}", 40uL | (10uL << 32));
         md.SetQuery("/app1/ifd/exif/{ushort=37386}", 50uL | (10uL << 32));
+        md.SetQuery("/app1/ifd/exif/{ushort=34855}", (ushort)400);
         string jpg = Path.Combine(dir.FullName, "exif.jpg");
         var enc = new JpegBitmapEncoder { QualityLevel = 90 };
         enc.Frames.Add(BitmapFrame.Create(wb, null, md, null));
@@ -1525,6 +1526,7 @@ internal static class Program
             Check(m.ShutterText == "1/60 s", $"jpeg meta shutter ({m.ShutterText})");
             Check(m.ApertureText == "f/4", $"jpeg meta aperture ({m.ApertureText})");
             Check(m.FocalText == "5 mm", $"jpeg meta focal ({m.FocalText})");
+            Check(m.IsoText == "ISO 400", $"jpeg meta iso ({m.IsoText})");
             Console.WriteLine("jpeg meta: " + m.Summary);
         }
 
@@ -1546,6 +1548,7 @@ internal static class Program
             Check(r.ShutterText != null && r.ShutterText.EndsWith(" s"), $"raw meta shutter ({Path.GetFileName(f)}: {r.ShutterText})");
             Check(r.ApertureText == null || (r.ApertureText.StartsWith("f/") && r.ApertureText.Length > 2), $"raw meta aperture ({Path.GetFileName(f)}: {r.ApertureText})");
             Check(r.FocalText == null || (r.FocalText.EndsWith(" mm") && double.Parse(r.FocalText.Split(' ')[0]) > 0), $"raw meta focal ({Path.GetFileName(f)}: {r.FocalText})");
+            Check(r.IsoText == null || (r.IsoText.StartsWith("ISO ") && int.Parse(r.IsoText.Substring(4)) > 0), $"raw meta iso ({Path.GetFileName(f)}: {r.IsoText})");
             Console.WriteLine($"{Path.GetFileName(f)} meta: {r.Summary}");
         }
     }
