@@ -36,12 +36,13 @@ public static partial class Adjust16
         ct.ThrowIfCancellationRequested();
 
         bool shadow = Math.Abs(shadowLift) > 0.0001;
+        bool curveDehaze = extra is not null && cameraTone is not null && Math.Abs(extra.Dehaze) > 0.0005;
 
         if (extra is not null && !extra.IsDefault)
         {
             if (extra.Denoise > 0.0005) ApplyDenoise16(img, w, h, extra.Denoise, opts);
             if (extra.ColorNoise > 0.0005) ApplyChromaDenoise16(img, w, h, extra.ColorNoise, opts);
-            ApplyWbDehaze16(img, extra, opts);
+            ApplyWbDehaze16(img, extra, opts, wbOnly: curveDehaze);
             if (Math.Abs(extra.Highlights) > 0.0005) ApplyRegionCurve16(img, extra.Highlights, highlight: true, opts);
             if (shadow) ApplyRegionCurve16(img, shadowLift, highlight: false, opts);
             if (Math.Abs(extra.Clarity) > 0.0005) ApplyClarity16(img, w, h, extra.Clarity, opts);
@@ -53,6 +54,13 @@ public static partial class Adjust16
         }
 
         ApplyTone16(img, extra ?? new PhotoAdjustments(), manual, opts, cameraTone);
+        if (curveDehaze)
+        {
+            var dz = GetChannelLut(1.0, Math.Clamp(extra!.Dehaze, -1.0, 1.0));
+            ApplyChannelLut16(img.R, dz, opts);
+            ApplyChannelLut16(img.G, dz, opts);
+            ApplyChannelLut16(img.B, dz, opts);
+        }
         ApplySaturation16(img, extra ?? new PhotoAdjustments(), opts);
         EncodeSrgb16(img, opts);
 
@@ -470,10 +478,11 @@ public static partial class Adjust16
         return (ushort)(i < 0 ? 0 : i > 65535 ? 65535 : i);
     }
 
-    private static (ushort[] R, ushort[] G, ushort[] B) BuildChannelLuts16(PhotoAdjustments a)
+    private static (ushort[] R, ushort[] G, ushort[] B) BuildChannelLuts16(PhotoAdjustments a, double? dehaze = null)
     {
         var (gR, gG, gB) = PhotoOps.TempGains(a.Temperature);
-        return (GetChannelLut(gR, a.Dehaze), GetChannelLut(gG, a.Dehaze), GetChannelLut(gB, a.Dehaze));
+        double dz = dehaze ?? a.Dehaze;
+        return (GetChannelLut(gR, dz), GetChannelLut(gG, dz), GetChannelLut(gB, dz));
     }
 
     private static ushort[] GetChannelLut(double tempGain, double dehaze)
@@ -495,9 +504,9 @@ public static partial class Adjust16
         return lut;
     }
 
-    private static void ApplyWbDehaze16(Raw16Image img, PhotoAdjustments a, ParallelOptions opts)
+    private static void ApplyWbDehaze16(Raw16Image img, PhotoAdjustments a, ParallelOptions opts, bool wbOnly = false)
     {
-        var luts = BuildChannelLuts16(a);
+        var luts = wbOnly ? BuildChannelLuts16(a, 0.0) : BuildChannelLuts16(a);
         ushort[] lutR = luts.R, lutG = luts.G, lutB = luts.B;
         ApplyChannelLut16(img.R, lutR, opts);
         ApplyChannelLut16(img.G, lutG, opts);

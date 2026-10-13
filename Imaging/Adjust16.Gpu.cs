@@ -152,12 +152,13 @@ public static partial class Adjust16
 
         bool shadow = Math.Abs(shadowLift) > 0.0001;
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
+        bool curveDehaze = cameraTone is not null && extra is not null && Math.Abs(extra.Dehaze) > 0.0005;
 
         if (extra is not null && !extra.IsDefault)
         {
             if (extra.Denoise > 0.0005) BlurMix(d, b, w, h, extra.Denoise, chroma: false, ct);
             if (extra.ColorNoise > 0.0005) BlurMix(d, b, w, h, extra.ColorNoise, chroma: true, ct);
-            ColorLut(d, b, w, h, extra, ct);
+            ColorLut(d, b, w, h, extra, ct, wbOnly: curveDehaze);
             if (Math.Abs(extra.Highlights) > 0.0005) RegionCurve(d, b, w, h, extra.Highlights, highlight: true, ct);
             if (shadow) RegionCurve(d, b, w, h, shadowLift, highlight: false, ct);
             if (Math.Abs(extra.Clarity) > 0.0005) Detail(d, b, w, h, extra.Clarity, sharpen: false, ct);
@@ -169,6 +170,11 @@ public static partial class Adjust16
         }
 
         Tone(d, b, w, h, extra ?? new PhotoAdjustments(), manual, cameraTone, ct);
+        if (curveDehaze)
+        {
+            using var db = d.AllocateReadOnlyBuffer(ToIntLut(GetChannelLut(1.0, Math.Clamp(extra!.Dehaze, -1.0, 1.0))));
+            d.For(w, h, new Lut3Kernel(b.R, b.G, b.B, db, w, h));
+        }
         Sat(d, b, w, h, extra ?? new PhotoAdjustments(), ct);
         EncodeLut(d, b, w, h, ct);
         if (hasGamma)
@@ -220,9 +226,9 @@ public static partial class Adjust16
         d.For(w, h, new BlurVIntKernel(tmp, dst, w, h, r, window));
     }
 
-    private static void ColorLut(GraphicsDevice d, GpuBufs b, int w, int h, PhotoAdjustments a, CancellationToken ct)
+    private static void ColorLut(GraphicsDevice d, GpuBufs b, int w, int h, PhotoAdjustments a, CancellationToken ct, bool wbOnly = false)
     {
-        var luts = BuildChannelLuts16(a);
+        var luts = wbOnly ? BuildChannelLuts16(a, 0.0) : BuildChannelLuts16(a);
         using var br = d.AllocateReadOnlyBuffer(ToIntLut(luts.R));
         using var bg = d.AllocateReadOnlyBuffer(ToIntLut(luts.G));
         using var bb = d.AllocateReadOnlyBuffer(ToIntLut(luts.B));

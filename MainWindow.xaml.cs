@@ -1538,6 +1538,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Key is Key.Left or Key.Right && Keyboard.Modifiers == ModifierKeys.None &&
+            Keyboard.FocusedElement is not System.Windows.Controls.Primitives.TextBoxBase)
+        {
+            Navigate(e.Key == Key.Left ? -1 : 1);
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.FocusedElement is Slider) return;
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase) return;
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase) return;

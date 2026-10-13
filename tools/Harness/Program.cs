@@ -695,6 +695,57 @@ internal static class Program
         Check(disabled is null, "gpu wyłączony -> fallback CPU");
         Console.WriteLine($"gpu status: {Adjust16.GpuStatus}");
 
+        var ramp = new Raw16Image(2048, 2048);
+        for (int x = 0; x < 2048; x++)
+        {
+            double lin = 0.002 + 0.898 * x / 2047.0;
+            ushort u = (ushort)Math.Clamp(Math.Round(lin * 65535.0), 0, 65535);
+            for (int y = 0; y < 2048; y++) { ramp.R[y * 2048 + x] = u; ramp.G[y * 2048 + x] = u; ramp.B[y * 2048 + x] = u; }
+        }
+        var rampNeutral = Adjust16.RenderNeutral(ramp, cam);
+        var rampDh = Adjust16.Apply(ramp, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Dehaze = 0.2 }, cameraTone: cam);
+        var rampDhNeg = Adjust16.Apply(ramp, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Dehaze = -0.2 }, cameraTone: cam);
+        int row = 1024;
+        double midNeutral = 0, midDh = 0, midDhNeg = 0;
+        for (int x = 768; x < 1280; x++)
+        {
+            midNeutral += rampNeutral.G[row * 2048 + x] / 65535.0;
+            midDh += rampDh.G[row * 2048 + x] / 65535.0;
+            midDhNeg += rampDhNeg.G[row * 2048 + x] / 65535.0;
+        }
+        midNeutral /= 512; midDh /= 512; midDhNeg /= 512;
+        Check(Math.Abs(midDh - midNeutral) < 0.09, $"camera dehaze +20 moderate at midtone ({midDh:0.###} vs {midNeutral:0.###})");
+        Check(Math.Abs(midDhNeg - midNeutral) < 0.09, $"camera dehaze -20 moderate at midtone ({midDhNeg:0.###} vs {midNeutral:0.###})");
+        var jpegLutPos = PhotoOps.BuildChannelLuts(new PhotoAdjustments { Dehaze = 0.2 });
+        var jpegLutNeg = PhotoOps.BuildChannelLuts(new PhotoAdjustments { Dehaze = -0.2 });
+        double sumG = 0, sumN = 0; long cntG = 0;
+        for (int x = 0; x < 2048; x++)
+        {
+            byte n8 = (byte)Math.Clamp(Math.Round(rampNeutral.G[row * 2048 + x] / 257.0), 0, 255);
+            double jPos = jpegLutPos.G[n8] / 255.0;
+            double jNeg = jpegLutNeg.G[n8] / 255.0;
+            sumG += Math.Abs(rampDh.G[row * 2048 + x] / 65535.0 - jPos);
+            sumN += Math.Abs(rampDhNeg.G[row * 2048 + x] / 65535.0 - jNeg);
+            cntG++;
+        }
+        double mA = sumG / cntG, mB = sumN / cntG;
+        Check(mA < 0.025, $"camera dehaze +20 matches JPEG-path response (mean {mA:0.###})");
+        Check(mB < 0.025, $"camera dehaze -20 matches JPEG-path response (mean {mB:0.###})");
+        var rampDhGpu = Adjust16.TryApplyGpu(ramp, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Dehaze = 0.2 }, cameraTone: cam);
+        Check(rampDhGpu is not null, "gpu camera dehaze run");
+        if (rampDhGpu is not null)
+        {
+            long s4 = 0; long c4 = 0;
+            for (int i = 0; i < rampDh.R.Length; i += 3)
+            {
+                s4 += Math.Max(Math.Abs(rampDh.R[i] - rampDhGpu.R[i]),
+                    Math.Max(Math.Abs(rampDh.G[i] - rampDhGpu.G[i]), Math.Abs(rampDh.B[i] - rampDhGpu.B[i])));
+                c4++;
+            }
+            double m4 = s4 / (double)c4;
+            Check(m4 < 8.0, $"gpu vs cpu camera dehaze mean abs diff ({m4:0.##})");
+        }
+
         static Raw16Image MakeFlat(double v)
         {
             var img = new Raw16Image(8, 8);
