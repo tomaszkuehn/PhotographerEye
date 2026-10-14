@@ -259,6 +259,7 @@ public partial class MainWindow : Window
                 ct.ThrowIfCancellationRequested();
                 if (preview is not null)
                 {
+                    info = RawDecoder.AlignToPreview(info, preview);
                     await Dispatcher.BeginInvoke(() =>
                     {
                         if (IsCurrent(path)) SetBase(path, info, preview, isFull: false, new Size(preview.PixelWidth, preview.PixelHeight));

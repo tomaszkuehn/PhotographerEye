@@ -144,7 +144,7 @@ public static class PhotoMetaReader
         int start = -1;
         for (int i = 0; i < Math.Min(16, data.Length - 3); i++)
         {
-            if ((data[i] == (byte)'I' && data[i + 1] == (byte)'I' && data[i + 2] == 42) ||
+            if ((data[i] == (byte)'I' && data[i + 1] == (byte)'I' && (data[i + 2] == 42 || data[i + 3] == 0 && data[i + 2] == (byte)'U')) ||
                 (data[i] == (byte)'M' && data[i + 1] == (byte)'M' && data[i + 2] == 0))
             {
                 start = i;
@@ -201,7 +201,7 @@ public static class PhotoMetaReader
                         break;
                     case 272:
                     {
-                        string model = Clean(Ascii(val, size));
+                        string? model = Clean(Ascii(val, size));
                         if (!string.IsNullOrEmpty(model))
                             m.Camera = !string.IsNullOrEmpty(m.Camera) && model.IndexOf(m.Camera, StringComparison.OrdinalIgnoreCase) < 0
                                 ? m.Camera + " " + model
@@ -263,9 +263,9 @@ public static class PhotoMetaReader
         return (orient, Has(m) ? m : null);
     }
 
-    private static bool Has(PhotoMeta m) =>
-        m.Camera is not null || m.DateText is not null || m.FocalText is not null ||
-        m.ApertureText is not null || m.IsoText is not null || m.ShutterText is not null;
+    private static bool Has(PhotoMeta? m) =>
+        m?.Camera is not null || m?.DateText is not null || m?.FocalText is not null ||
+        m?.ApertureText is not null || m?.IsoText is not null || m?.ShutterText is not null;
 
     private static bool TryInt(object? v, out int val)
     {
@@ -305,7 +305,7 @@ public static class PhotoMetaReader
         return false;
     }
 
-    private static string? Clean(string s)
+    private static string? Clean(string? s)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
         s = s.Trim('\0').Trim();

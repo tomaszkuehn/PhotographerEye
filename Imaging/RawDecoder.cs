@@ -415,13 +415,45 @@ public static class RawDecoder
                 Debug.Log($"RAW HEADER: {Path.GetFileName(path)} brak wymiarów z nagłówka ({w}x{h})");
                 return false;
             }
-            info = new ImageInfo(w, h, 1);
+            int orient = ReadExifOrientation(path);
+            if (orient is 5 or 6 or 7 or 8)
+            {
+                (w, h) = (h, w);
+                Debug.Log($"RAW ORIENT: {Path.GetFileName(path)} EXIF {orient} -> display {w}x{h}");
+            }
+            info = new ImageInfo(w, h, orient);
             return true;
         }
         catch (Exception ex)
         {
             Debug.Log($"RAW HEADER: {Path.GetFileName(path)} [{ex.GetType().Name}] {ex.Message}");
             return false;
+        }
+    }
+
+    public static ImageInfo AlignToPreview(ImageInfo info, BitmapSource preview)
+    {
+        if (preview is null || info.Width <= 0 || info.Height <= 0) return info;
+        double a1 = info.Width / (double)info.Height;
+        double a2 = preview.PixelWidth / (double)preview.PixelHeight;
+        if (Math.Abs(a1 - a2) / Math.Min(a1, a2) < 0.02) return info;
+        int orient = info.RotatedQuarter ? info.Orientation : 6;
+        return new ImageInfo(info.Height, info.Width, orient);
+    }
+
+    public static int ReadExifOrientation(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            int cap = (int)Math.Min(fs.Length, 1024L * 1024);
+            var buf = new byte[cap];
+            if (fs.Read(buf, 0, cap) < 10) return 0;
+            return PhotoMetaReader.ParseTiff(buf).Orient;
+        }
+        catch (Exception)
+        {
+            return 0;
         }
     }
 
@@ -435,8 +467,14 @@ public static class RawDecoder
         try
         {
             using var r = RawContext.OpenFile(path);
-            var bmp = BuildPreview(r, path);
+            var best = BuildPreview(r, path);
+            var bmp = best.Bmp;
             if (bmp is null) return null;
+            if (!best.Oriented)
+            {
+                var rot = Rotated(bmp, ReadExifOrientation(path));
+                if (rot is not null) bmp = rot;
+            }
             PreviewCache[path] = new PreviewEntry(bmp);
             EvictPreviews(path);
             return bmp;
@@ -448,9 +486,23 @@ public static class RawDecoder
         }
     }
 
-    private static BitmapSource? BuildPreview(RawContext r, string path)
+    private static BitmapSource? Rotated(BitmapSource bmp, int orient)
+    {
+        double deg = orient switch
+        {
+            3 or 4 => 180.0,
+            6 => 90.0,
+            5 or 8 => 270.0,
+            _ => 0.0
+        };
+        if (deg <= 0) return bmp;
+        return ImageLoader.ApplyRotation(bmp, deg);
+    }
+
+    private static (BitmapSource? Bmp, bool Oriented) BuildPreview(RawContext r, string path)
     {
         BitmapSource? best = null;
+        bool bestOriented = false;
         for (int i = 0; i < 4; i++)
         {
             try
@@ -462,14 +514,17 @@ public static class RawDecoder
                 break;
             }
             using var t = r.MakeDcrawMemoryThumbnail();
-            var cand = ThumbnailToBitmap(t, path);
+            var (cand, oriented) = ThumbnailToBitmap(t, path);
             if (cand is not null && (best is null || (long)cand.PixelWidth * cand.PixelHeight > (long)best.PixelWidth * best.PixelHeight))
+            {
                 best = cand;
+                bestOriented = oriented;
+            }
         }
-        return best;
+        return (best, bestOriented);
     }
 
-    private static BitmapSource? ThumbnailToBitmap(ProcessedImage t, string path)
+    private static (BitmapSource? Bmp, bool Oriented) ThumbnailToBitmap(ProcessedImage t, string path)
     {
         if (t.ImageType == ProcessedImageType.Jpeg && t.DataSize > 2048)
         {
@@ -478,8 +533,21 @@ public static class RawDecoder
             using var fs = new MemoryStream(bytes);
             var dec = BitmapDecoder.Create(fs, BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.OnLoad);
             var frame = dec.Frames[0];
+            int orient = 1;
+            if (frame.Metadata is BitmapMetadata md)
+            {
+                try
+                {
+                    orient = Convert.ToInt32(md.GetQuery("/app1/ifd/{ushort=274}") ?? 1);
+                }
+                catch (Exception)
+                {
+                    orient = 1;
+                }
+            }
             frame.Freeze();
-            return frame;
+            var rot = Rotated(frame, orient);
+            return (rot ?? (BitmapSource)frame, true);
         }
         if (t.ImageType == ProcessedImageType.Bitmap && t.Bits == 8 && t.Channels == 3 && t.Width > 0 && t.Height > 0)
         {
@@ -492,10 +560,10 @@ public static class RawDecoder
             }
             var bmp = BitmapSource.Create(t.Width, t.Height, 96, 96, PixelFormats.Rgb24, null, buffer, stride);
             bmp.Freeze();
-            return bmp;
+            return (bmp, false);
         }
         Debug.Log($"RAW PREVIEW: {Path.GetFileName(path)} thumb type={t.ImageType} {t.Width}x{t.Height} size={t.DataSize}");
-        return null;
+        return (null, false);
     }
 
     private static void EvictPreviews(string keepPath)

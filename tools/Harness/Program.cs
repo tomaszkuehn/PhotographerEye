@@ -134,6 +134,11 @@ internal static class Program
             DumpMode(args[1], args[2], int.Parse(args[3]), args.Length > 4 ? float.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture) : 0.75f);
             return;
         }
+        if (args.Length > 0 && args[0] == "--raworient")
+        {
+            RawOrientProbe(args[1]);
+            return;
+        }
         if (args.Length > 0 && args[0] == "--exif6")
         {
             MakeExifJpegBySplice(args[1], args[2], 6);
@@ -1729,6 +1734,34 @@ internal static class Program
             var p = RawDecoder.TryDecodePreview(f);
             Check(p is not null && p.PixelWidth > 500, $"preview ({Path.GetFileName(f)}) ({p?.PixelWidth}x{p?.PixelHeight})");
         }
+
+        string nef8 = @"D:\temp\test-raw\6365669250.nef";
+        Check(RawDecoder.ReadExifOrientation(arw) == 1, "arw exif orientation 1");
+        Check(RawDecoder.ReadExifOrientation(nef8) == 8, "nef8 exif orientation 8");
+        var full8 = RawDecoder.Decode16(nef8, halfSize: false);
+        RawDecoder.TryGetInfoHeader(nef8, out var hdr8);
+        Check(hdr8.Width == full8.W && hdr8.Height == full8.H, $"nef8 header dims display ({hdr8.Width}x{hdr8.Height} vs {full8.W}x{full8.H})");
+        var p8 = RawDecoder.TryDecodePreview(nef8);
+        if (p8 is not null)
+        {
+            Check(p8.PixelHeight > p8.PixelWidth, $"nef8 preview portrait ({p8.PixelWidth}x{p8.PixelHeight})");
+            double a8 = full8.W / (double)full8.H;
+            double a8p = p8.PixelWidth / (double)p8.PixelHeight;
+            Check(Math.Abs(a8 - a8p) < 0.03, $"nef8 preview aspect ({a8p:0.000} vs {a8:0.000})");
+        }
+        var al8 = RawDecoder.AlignToPreview(hdr8, RawDecoder.TryDecodePreview(nef8));
+        Check(al8.Width == full8.W && al8.Height == full8.H, $"nef8 aligned dims ({al8.Width}x{al8.Height} vs {full8.W}x{full8.H})");
+
+        string nefBe = @"D:\temp\test-raw\DSC_1007.NEF";
+        if (File.Exists(nefBe))
+        {
+            Check(RawDecoder.ReadExifOrientation(nefBe) == 8, "nef-be exif orientation 8");
+            RawDecoder.TryGetInfoHeader(nefBe, out var hdrBe);
+            var fullBe = RawDecoder.Decode16(nefBe, halfSize: false);
+            Check(hdrBe.Width == fullBe.W && hdrBe.Height == fullBe.H, $"nef-be header dims ({hdrBe.Width}x{hdrBe.Height} vs {fullBe.W}x{fullBe.H})");
+        }
+        else Check(false, "nef-be sample present");
+
         Console.WriteLine("raw preview: " + (p1 is null ? "FAIL" : $"{p1.PixelWidth}x{p1.PixelHeight}"));
     }
 
@@ -2338,6 +2371,25 @@ internal static class Program
         var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
         src.Freeze();
         return src;
+    }
+
+    private static void RawOrientProbe(string path)
+    {
+        int orient = RawDecoder.ReadExifOrientation(path);
+        RawDecoder.TryGetInfoHeader(path, out var hdr);
+        var full = RawDecoder.Decode16(path, halfSize: false);
+        var prev = RawDecoder.TryDecodePreview(path);
+        Console.WriteLine($"file={path}");
+        Console.WriteLine($"  exif-orient={orient}");
+        Console.WriteLine($"  header={hdr.Width}x{hdr.Height} orient={hdr.Orientation}");
+        Console.WriteLine($"  full16={full.W}x{full.H}");
+        if (prev is not null)
+        {
+            Console.WriteLine($"  preview={prev.PixelWidth}x{prev.PixelHeight}");
+            var al = RawDecoder.AlignToPreview(hdr, prev);
+            Console.WriteLine($"  aligned={al.Width}x{al.Height} orient={al.Orientation}");
+        }
+        else Console.WriteLine("  preview=null");
     }
 
     private static void MakeExifJpegBySplice(string src, string dst, ushort orientation)
