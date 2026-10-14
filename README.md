@@ -1,106 +1,106 @@
 # PhotographerEye
 
-Portable przeglądarka zdjęć JPG/JPEG/PNG, HEIC/HEIF/AVIF oraz RAW dla Windows (WPF, .NET 8, pojedynczy plik `.exe`), z korekcją tonów (cienie, gamma, rozciąganie histogramu) i zapisem zmodyfikowanych zdjęć.
+Portable JPG/JPEG/PNG, HEIC/HEIF/AVIF and RAW photo viewer for Windows (WPF, .NET 8, single `.exe`), with tone correction (shadows, gamma, histogram stretch) and saving of edited photos.
 
-## Funkcje
+## Features
 
-- Podgląd obrazów z folderu, nawigacja (strzałki, Home/End); strzałki ←/→ przełączają zdjęcia zawsze — nawet gdy fokus jest na suwaku (edycja tekstu ma wyższy priorytet)
-- Szybki podgląd RAW: wbudowana miniatura aparatu (LibRaw, największa z listy miniatur) pojawia się w ~0,3 s przy otwarciu i przełączaniu strzałkami, zanim dojdzie pełny dekod 16-bit; miniatura jest od razu obracana wg orientacji EXIF (tag 274 — z miniatury JPEG lub pliku), a wymiary czytane z nagłówka RAW (bez dekompresji) z zamianą osi dla orientacji pionowej — proporcje i dopasowanie do okna są właściwe od pierwszej klatki; miniatury sąsiadów (±1) są wstępnie dekodowane w tle (cache podglądów działa)
-- Pasek dolny po prawej: metadane pliku, gdy znane — model aparatu, data, ogniskowa, przesłona, ISO, czas naświetlania (LibRaw dla RAW, własny parser TIFF dla HEIC/HEIF/AVIF, EXIF `BitmapDecoder` dla JPG/PNG/TIFF); wczytywane w tle po doładowaniu obrazu, bez danych w pliku pasek pozostaje pusty
-- Zdjęcia HEIF — HEIC/HEIF/HIF (iPhone i innych) oraz AVIF — dekodowane wprost z pliku przez wbudowany LibHeif (LibHeifSharp + libheif z libde265/libx265/aom, bez zależności od WIC/Store), pełna rozdzielczość wejściowa do wszystkich korekt; orientacja z transformacji kontenera (`irot`/`imir`/`clap`, stosowane przez dekoder) ma pierwszeństwo, orientacja EXIF stosowana tylko przy jej braku; brak obsługi plików zaszyfrowanych (Apple `.HEIC` z zaszyfrowanymi zdjęciami wymaga wcześniejszego odszyfrowania), 10-bit HDR (HDR/SDR renderują się z konwersją do 8 bit)
-- Zoom 10–400%: rolka myszy, `+`/`-`, `1` — 100%, `0`/przycisk „Dopasuj" — dopasuj do okna, dwuklik — przełączanie fit/100%
-- Pan: przeciąganie myszką (gdy obraz większy od okna); obraz zawsze wyśrodkowany i nieucięty
-- Korekcja cieni −100…+100 (maska tonalna nad czernią, podnosi głębokie cienie i oszczędza półtony; pipeline liniowy sRGB) i gamma 0.50–2.00 (LUT środkowych tonów)
-- Suwaki w stylu Photoshopa: klik na torze ustawia wartość w klikniętym miejscu; przeciąganie **etykiety lub liczby** obok suwaka reguluje precyzyjnie (Shift ×10 szybciej, Ctrl/Alt ×0,1 dokładniej); **dwuklik liczby** pozwala wpisać dokładną wartość; Shift+strzałki — duży krok, Ctrl+strzałki — najmniejszy (0,01 EV); dwuklik na torze lub przycisk ♻ resetuje korektę
-- Porównanie z oryginałem: przytrzymaj przycisk „Porównaj" lub spację (podgląd bez korekt; puszczenie wraca)
-- Podgląd plików RAW: RW2 (Panasonic), NEF/NRW (Nikon), ARW/SRF/SR2 (Sony), CR2/CR3/CRW (Canon), ORF (Olympus), RAF (Fuji), PEF (Pentax), DNG i inne — wbudowany LibRaw: demosaikacja, balans bieli z aparatu, auto-flip orientacji; **rekonstrukcja prześwietleń** (tryb mieszany LibRaw + neutralizacja odcięcia: spalone kanały są odbudowywane, a piksele przy odcięciu odbarwiane do bieli — prześwietlone tło nie wpada w magenta/fiolet), dekodowanie **16 bit na kanał** (48 bpp — natywna głębia czujnika 12/14 bit przeskalowana do pełnego zakresu 0–65535, bez utraty stopni), podgląd ekranowy z ditheringiem Bayera 4×4; **podgląd i wszystkie korekty działają zawsze na pełnej rozdzielczości** (wyświetlanie skalowane w oknie); zapis edycji przez dialog (JPG 90% / TIFF 16-bit) w pełnej rozdzielczości RAW. **Krzywa tonalna aparatu dla Sony**: dla plików ARW/SRF/SR2 aplikacja liczy punkt startowy z osadzonego w pliku podglądu JPEG — dopasowanie kwantylowe rozkładu luminancji sceny (surowej, po balansie bieli) do rozkładu wyświetlanej luminancji podglądu aparatu daje monotoniczną krzywą sceny w EV (32 węzły, czernie zachowane, ramię prześwietleń kontynuowane z końcowego odcinka), która zastępuje domyślną mapę tonalną w procesie bazowym (CPU i GPU); ekspozycja/balans bieli działają pod krzywą jak w aparacie; dopasowanie weryfikują bramki (zgodność proporcji, liczba par, rozrzut, korelacja rangowa, błąd na próbie kontrolnej lepszy od domyślnej mapy i w granicach RMS) — niespełnione bramki (m.in. podgląd w innej formie, brak podglądu, nietypowe pliki) wracają do autoekspozycji percentylowej; krzywa jest zapisywana w odcisku `.eye` (pole `ToneCurve`) i sesji jak `BaseEv`, a przycisk Reset przyjmuje nowy punkt wyjścia. **Autoekspozycja startowa (pozostałe RAW)**: z liniowej sceny liczy się normalizacja ekspozycji (dcraw-podobny percentyl 99,5% luminancji → ~0.93 zakresu, w EV), dzięki czemu RAW otwiera się poprawnie naświetlony, bez wyblakłych/sciemniałych suwaków; wartość jest zapisywana w odcisku `.eye` (pole `BaseEv`) i sesji, a stare zapisy (bez tego pola) rendują się jak dotychczas — przycisk Reset przyjmuje nowy punkt wyjścia
-- Panel korekt (pionowy pasek po prawej, przycisk suwaków lub klawisz `E`) — model tonalny w **scenie liniowej**: obraz RAW pracuje w **scenie liniowej** (LibRaw z wyłączoną gamma), proces bazowy to tonemap **rozszerzony Reinhard** na luminancji (LUT EV −14…+10 wokół szarości 0.18; whites przesuwają punkt bieli, blacks = miękkie kolano/podniesienie czerni, kontrast = nachylenie w EV) z kodowaniem sRGB na końcu; dla JPG/PNG S-krzywa w domenie gamma 2.2 (identity przy neutralnych); **ekspozycja** (±5 EV) jako gain `2^EV` przed regionami, **światła/cienie** jako delta gainy w log-luminancji (maski smoothstep w EV wokół szarości: cienie poniżej +0.3 EV, światła powyżej −1 EV, współczynniki 1.7); prześwietlenia przy tonemapie są desaturowane do luminancji (bez magenty); **balans bieli** (temperatura ±100, symetryczne R/B w liniowym) z **pipetą punktu bieli**, **clarity** (±100: lokalny kontrast duży-promieniowy z wagą półtonów), **nasycenie** (±100: 0 neutralne, −100 cz.-b., po tonemapie), **wyostrzenie** (0–150), **dehaze** (±100 odejmowanie mgły na wartościach liniowych — dla RAW z krzywą aparatu stosowany za tonemapem w domenie wyświetlania, więc suwak reaguje tak samo jak dla JPG/PNG), **odszumianie** i **redukcja szumu kolorów** (0–100, zachowuje luminancję i odcień; promień 1–4 px i maks. dwa przebiegi dla mocnych ustawień); pliki `.eye` z wersji 0.93 (stara skala nasycenia 0–200%) konwertowane automatycznie
-- Przyspieszanie korekt na GPU: operacje edycji RAW (odszumianie, szum kolorów, clarity, wyostrzenie, światła, cienie, balans bieli/kontrast/nasycenie, krzywe) liczone na karcie graficznej przez DirectCompute (ComputeSharp) — wynik niemal identyczny z CPU (średnia różnica ~0.03 na 65535), kilkukrotnie szybciej na ciężkim zestawie korekt. Sprzętowe GPU wykrywane przy starcie (preferowana karta dyskretna o największej pamięci); przy braku GPU — lub po ustawieniu `PHOTOGRAPHEREYE_GPU=0` — przetwarzanie odbywa się wyłącznie na CPU (automatyczny fallback). Status akceleracji pokazany w „O aplikacji…".
-- Overlay histogramu (luminancja + nakładki R/G/B) liczony z finalnego podglądu; pokazywany tylko przy otwartym panelu Adjustments (otwarciu towarzyszy świeży przelicz), chowany przy zmianie obrazu; skala znormalizowana do 99. percentyla zliczeń binów (piki clippingu przycinane przy górze, reszta pozostaje czytelna), wypełnienia kanałów domykane wzdłuż podstawy
-- Ręczne rozciąganie histogramu: przeciągnij punkt na histogramie — część po jednej stronie punktu ściska się, po drugiej rozciąga; punkty są **zakotwiczone w EV sceny** (log-luminancja względem szarości 0.18) i wchodzą do LUT tonemap **przed kodowaniem sRGB**; mapy odcinkowo-liniowe w EV z zakotwiczonymi końcami zakresu, punkty zachowują monotoniczność; dodawanie kolejnych punktów kolejnymi chwytami; punkty usuwa: podwójny klik na histogramie, przycisk resetu (♻) przy krzyżyku overlayu, `R`/Reset. Przełącznik (⤮) przy krzyżyku wybiera tryb: **przekładanie na suwaki** (domyślnie — koniec przeciągnięcia przelicza knot na wartości Exposure/Highlights/Shadows/Whites/Blacks wg EV knotu i czyści punkty, kolejne przeciągnięcia kumulują się w suwakach) albo **niezależna krzywa** (knoty zostają krzywą EV i wchodzą do LUT tonemap przed kodowaniem sRGB, więc suwaki działają spójnie pod nią — ekspozycja +1 EV przesuwa scenę o dokładnie 1 EV pod niezmienioną krzywą)
-- Undo/Redo korekt (Ctrl+Z / Ctrl+Y albo przyciski ⟲/⟳): historia ostatnich **10** stanów per obraz; commit po ciszy 600 ms przy suwakach i natychmiast na zakończeniu przechwytywania histogramu, przełączeniu B&W i reszcie akcji zmieniających edycję; przesunięcie undo obcina możliwe redo. Historia jest zapisywana w pliku `.eye` obok aktualnego stanu (pola `History`/`HistoryPos`) — wraca po ponownym otwarciu zdjęcia z zapisanym odciskiem, a między zdjęciami trzyma ją sesja in-memory
-- Czarno-białe w fotograficznym stylu dokumentalnym: szybki przełącznik trzy-stanowy — przycisk na pasku lub klawisz `B`: kolor → **dokumentalny** (konwersja panchromatyczna z lekką przewagą czerwieni — jak filtr żółto-czerwony: jasna skóra, przyciemniony błękit + filmowa krzywa S: głębokie czernie, wyraziste środki, miękkie rolloff świecidełek) → **Tri-X 400** (emulacja: mocniejsza krzywa i ziarno filmowe o stałym wzorcu per obraz, widoczne głównie w półtonach); histogram pokazuje wynik; reset przy zmianie obrazu; zapis uwzględnia tryb
-- Kompaktowy ciemny interfejs: jedna linia narzędzi od minimalnej szerokości okna (980 px)
-- Własny pasek tytułowy: czarny, o obniżonej wysokości, z przyciskami minimalizacji/maksymalizacji/zamknięcia
-- Dekodowanie zawsze w pełnej rozdzielczości (JPG/PNG i RAW); gotowe obrazy trzymane w krótkim cache, skalowanie wyłącznie przy wyświetlaniu
-- Strzałki przesuwania obrazów na lewym/prawym brzegu okna
-- Symbol ustawień (⚙) w prawym górnym rogu → „O aplikacji…" (autor, e-mail, GitHub, licencja)
-- Reset korekt automatycznie przy przełączeniu obrazu oraz ręcznie: `R`, przycisk „Reset", podwójny klik na suwak (lub na histogram — czyści punkty rozciągania)
-- Pamięć korekt w sesji: ustawienia suwaków są zapamiętywane per zdjęcie podczas przeglądania folderu — cofnięcie się do zdjęcia przywraca suwaki i renduje je z powrotem (stan bieżącej sesji wygrywa z zapisanym plikiem `.eye`; `.eye` pozostaje trwałym zapisem, tworzonym przy zapisie zdjęcia)
-- Zapis zmodyfikowanego zdjęcia (Ctrl+S lub przycisk zapisu na pasku) przez dialog **Zapisz zdjęcie** — wybór lokalizacji i nazwy (podpowiedź `<obecna nazwa>_eye`, wybrany format dodaje rozszerzenie) oraz formatu: **JPG (jakość 90%)** lub **TIFF 16-bit** (bezstratny 48 bpp RGB, realne wartości 16-bit z dekodowania RAW — bez kwantyzacji do 8 bit, bez kompresji — czytniki: WIC/Photoshop/GIMP); zapis w pełnej rozdzielczości źródła z włączonymi korektami (cienie, gamma, punkty rozciągania, tryb czarno-biały, panel korekt; JPG/PNG z rozmiaru zdekodowanego, RAW z natywnych wymiarów czujnika, np. 4624×3088 z RW2); przy obrazie powstaje plik-odcisk `<nazwa>.eye` z parametrami korekt, wczytywany automatycznie przy ponownym otwarciu; przycisk aktywny tylko gdy któraś korekta jest aktywna
-- Drag & drop pliku, otwieranie przez argument CLI, `Ctrl+O`
-- Ustawienia zapisywane w `%AppData%\PhotographerEye\settings.json`
+- Folder image browsing, navigation (arrows, Home/End); the ←/→ arrows switch photos always — even when a slider has focus (text editing takes priority)
+- Fast RAW preview: the built-in camera thumbnail (LibRaw, largest of the thumbnail list) appears in ~0.3 s on open and arrow-key switching, before the full 16-bit decode lands; the thumbnail is rotated immediately per EXIF orientation (tag 274 — from the JPEG thumbnail or the file), and dimensions read from the RAW header (no decompression) swap axes for portrait orientation — aspect ratio and fit-to-window are correct from the first frame; neighbor thumbnails (±1) are pre-decoded in the background (preview cache active)
+- Bottom bar, right side: file metadata when known — camera model, date, focal length, aperture, ISO, shutter speed (LibRaw for RAW, own TIFF parser for HEIC/HEIF/AVIF, `BitmapDecoder` EXIF for JPG/PNG/TIFF); loaded in the background after the image arrives, stays empty when the file has no data
+- HEIF photos — HEIC/HEIF/HIF (iPhone and others) and AVIF — decoded straight from the file by the bundled LibHeif (LibHeifSharp + libheif with libde265/libx265/aom, no WIC/Store dependency), full input resolution into all corrections; container-transform orientation (`irot`/`imir`/`clap`, applied by the decoder) takes precedence, EXIF orientation applied only when absent; no support for encrypted files (Apple `.HEIC` with encrypted photos needs prior decryption), 10-bit HDR (HDR/SDR render with 8-bit conversion)
+- Zoom 10–400%: mouse wheel, `+`/`-`, `1` — 100%, `0`/"Fit" button — fit to window, double-click — fit/100% toggle
+- Pan: mouse drag (when the image is larger than the window); the image is always centered and never cropped
+- Shadow correction −100…+100 (tonal mask above black, lifts deep shadows and spares halftones; linear sRGB pipeline) and gamma 0.50–2.00 (mid-tone LUT)
+- Photoshop-style sliders: clicking the track sets the value at the clicked spot; dragging the **label or number** next to a slider adjusts precisely (Shift ×10 faster, Ctrl/Alt ×0.1 finer); **double-clicking the number** lets you type an exact value; Shift+arrows — big step, Ctrl+arrows — smallest step (0.01 EV); double-click the track or the ♻ button resets the correction
+- Compare with the original: hold the "Compare" button or space (preview without corrections; releasing returns)
+- RAW file preview: RW2 (Panasonic), NEF/NRW (Nikon), ARW/SRF/SR2 (Sony), CR2/CR3/CRW (Canon), ORF (Olympus), RAF (Fuji), PEF (Pentax), DNG and others — bundled LibRaw: demosaicing, camera white balance, orientation auto-flip; **highlight reconstruction** (mixed LibRaw mode + clipping neutralization: burnt channels are rebuilt and clipped pixels desaturated to white — overexposed backgrounds don't shift magenta/violet), **16-bit-per-channel** decoding (48 bpp — native 12/14-bit sensor depth scaled to the full 0–65535 range, no step loss), on-screen preview with 4×4 Bayer dithering; **preview and all corrections always run at full resolution** (display scaled in the window); edit saving via dialog (JPG 90% / 16-bit TIFF) at full RAW resolution. **Camera tone curve for Sony**: for ARW/SRF/SR2 files the app derives the starting point from the JPEG preview embedded in the file — quantile matching of the scene luminance distribution (raw, after white balance) to the camera preview's displayed luminance distribution yields a monotonic scene curve in EV (32 knots, blacks preserved, highlight shoulder continued from the final segment), replacing the default tonal map in the base process (CPU and GPU); exposure/white balance work under the curve as in-camera; the fit is verified by gates (aspect match, pair count, spread, rank correlation, holdout-sample error better than the default map and within RMS) — failed gates (e.g. preview in another form, missing preview, unusual files) fall back to percentile auto-exposure; the curve is stored in the `.eye` fingerprint (the `ToneCurve` field) and session like `BaseEv`, and the Reset button adopts the new starting point. **Starting auto-exposure (other RAWs)**: exposure normalization is computed from the linear scene (dcraw-like 99.5th luminance percentile → ~0.93 of range, in EV), so RAW opens correctly exposed with no washed-out/darkened sliders; the value is stored in the `.eye` fingerprint (the `BaseEv` field) and session, and old saves (without the field) render as before — the Reset button adopts the new starting point
+- Corrections panel (vertical bar on the right, slider button or the `E` key) — tonal model in the **linear scene**: RAW images work in the **linear scene** (LibRaw with gamma off), the base process is an **extended Reinhard** tonemap on luminance (EV LUT −14…+10 around 0.18 gray; whites shift the white point, blacks = soft knee/black lift, contrast = slope in EV) with sRGB encoding at the end; for JPG/PNG an S-curve in the gamma 2.2 domain (identity at neutral); **exposure** (±5 EV) as `2^EV` gain before the regions, **highlights/shadows** as delta gains on log-luminance (smoothstep masks in EV around gray: shadows below +0.3 EV, highlights above −1 EV, factors 1.7); highlights are desaturated to luminance at tonemap time (no magenta); **white balance** (temperature ±100, symmetric R/B in linear) with a **white-point eyedropper**, **clarity** (±100: large-radius local contrast with halftone weighting), **saturation** (±100: 0 neutral, −100 B&W, after tonemap), **sharpening** (0–150), **dehaze** (±100 haze subtraction on linear values — for RAWs with a camera curve applied after the tonemap in the display domain, so the slider responds just like for JPG/PNG), **denoise** and **color noise reduction** (0–100, preserves luminance and hue; radius 1–4 px and up to two passes at strong settings); `.eye` files from version 0.93 (old 0–200% saturation scale) convert automatically
+- GPU-accelerated corrections: RAW edit operations (denoise, color noise, clarity, sharpening, highlights, shadows, white balance/contrast/saturation, curves) computed on the graphics card via DirectCompute (ComputeSharp) — result nearly identical to CPU (mean difference ~0.03 out of 65535), several times faster on a heavy correction set. Hardware GPU detected at startup (largest-memory discrete card preferred); with no GPU — or with `PHOTOGRAPHEREYE_GPU=0` — processing runs on CPU only (automatic fallback). Acceleration status shown in "About…"
+- Histogram overlay (luminance + R/G/B overlays) computed from the final preview; shown only with the Adjustments panel open (opening triggers a fresh compute), hidden on image change; scale normalized to the 99th percentile of bin counts (clipping peaks trimmed at the top, the rest stays readable), channel fills closed along the baseline
+- Manual histogram stretch: drag a point on the histogram — the part on one side of the point compresses, on the other stretches; points are **anchored in scene EV** (log-luminance relative to 0.18 gray) and enter the tonemap LUT **before sRGB encoding**; piecewise-linear maps in EV with pinned range ends, points keep monotonicity; more points added with further grabs; points removed by: double-clicking the histogram, the reset (♻) button at the overlay's ×, `R`/Reset. The toggle (⤮) at the × selects the mode: **bake into sliders** (default — end of drag converts the knot into Exposure/Highlights/Shadows/Whites/Blacks values per the knot's EV and clears the points, further drags accumulate into the sliders) or an **independent curve** (knots stay as an EV curve entering the tonemap LUT before sRGB encoding, so sliders work consistently under it — +1 EV exposure shifts the scene by exactly 1 EV under the unchanged curve)
+- Adjustment Undo/Redo (Ctrl+Z / Ctrl+Y or the ⟲/⟳ buttons): history of the last **10** states per image; commit after 600 ms of slider silence and immediately on histogram-grab end, B&W toggle and other edit-changing actions; undoing past a point truncates possible redo. History is stored in the `.eye` file next to the current state (the `History`/`HistoryPos` fields) — returns when reopening a photo with a saved fingerprint, and an in-memory session holds it between photos
+- Documentary-style black & white: fast three-state toggle — toolbar button or the `B` key: color → **documentary** (panchromatic conversion with a slight red bias — like a yellow-red filter: bright skin, darkened blues + filmic S-curve: deep blacks, crisp mids, soft highlight rolloff) → **Tri-X 400** (emulation: stronger curve and fixed-pattern film grain per image, visible mostly in halftones); the histogram shows the result; reset on image change; saving honors the mode
+- Compact dark UI: single toolbar line from the minimum window width (980 px)
+- Custom title bar: black, reduced height, with minimize/maximize/close buttons
+- Always full-resolution decoding (JPG/PNG and RAW); finished images held in a short cache, scaling only for display
+- Image navigation arrows on the left/right window edges
+- Settings icon (⚙) top-right → "About…" (author, e-mail, GitHub, license)
+- Automatic edit reset on image switch, and manual: `R`, the "Reset" button, double-click a slider (or the histogram — clears stretch points)
+- Session edit memory: slider settings are remembered per photo while browsing a folder — going back to a photo restores the sliders and re-renders them (the current session state wins over the saved `.eye` file; `.eye` remains the durable store, created when the photo is saved)
+- Saving the edited photo (Ctrl+S or the toolbar save button) via the **Save Photo** dialog — location and name choice (suggested `<current name>_eye`, the chosen format appends the extension) and format: **JPG (90% quality)** or **16-bit TIFF** (lossless 48 bpp RGB, real 16-bit values from RAW decoding — no 8-bit quantization, no compression — readers: WIC/Photoshop/GIMP); save at full source resolution with corrections applied (shadows, gamma, stretch points, black & white mode, corrections panel; JPG/PNG at decoded size, RAW at native sensor dimensions, e.g. 4624×3088 from RW2); an edit-fingerprint file `<name>.eye` with correction parameters is created next to the image, auto-loaded on reopen; the button is active only when some correction is active
+- Drag & drop a file, opening via CLI argument, `Ctrl+O`
+- Settings stored in `%AppData%\PhotographerEye\settings.json`
 
-## Uruchamianie
+## Running
 
-Portable: `dist\PhotographerEye.exe [plik|folder]` — bez instalacji, .NET wbudowany w plik. Obsługuje też pliki RAW (RW2, NEF, ARW, CR2/CR3, ORF, RAF, DNG…) przez wbudowany LibRaw oraz HEIC/HEIF/HIF/AVIF przez wbudowany LibHeif.
+Portable: `dist\PhotographerEye.exe [file|folder]` — no install, .NET bundled in. Also handles RAW files (RW2, NEF, ARW, CR2/CR3, ORF, RAF, DNG…) via bundled LibRaw and HEIC/HEIF/HIF/AVIF via bundled LibHeif.
 
-## Skróty klawiszowe
+## Keyboard shortcuts
 
-| Klucz | Akcja |
+| Key | Action |
 |---|---|
-| ←/→, PgUp/PgDn | następny/poprzedni obraz |
-| Home/End | pierwszy/ostatni obraz |
-| rolka myszy | zoom (z punktem pod kursorem) |
-| `Shift`+rolka | przesuwanie poziome |
-| `1` / `0` | 100% / dopasuj |
-| `R` | reset korekt |
-| `E` | panel korekt: ekspozycja, kontrast, balans bieli, nasycenie, clarity, dehaze, odszumianie |
-| `B` | czarno-białe: kolor → dokumentalny → Tri-X 400 (pętla) |
-| spacja (przytrzymaj) | podgląd oryginału |
-| `Ctrl+O` | otwórz plik |
-| `Ctrl+S` | zapis zmodyfikowanego zdjęcia |
+| ←/→, PgUp/PgDn | next/previous image |
+| Home/End | first/last image |
+| mouse wheel | zoom (anchored under cursor) |
+| `Shift`+wheel | horizontal pan |
+| `1` / `0` | 100% / fit |
+| `R` | reset edits |
+| `E` | adjustments panel: exposure, contrast, white balance, saturation, clarity, dehaze, denoise |
+| `B` | black & white: color → documentary → Tri-X 400 (loop) |
+| space (hold) | original preview |
+| `Ctrl+O` | open file |
+| `Ctrl+S` | save edited photo |
 
-## Budowanie
+## Building
 
 ```
 dotnet build ImgViewer.csproj -c Release
 dotnet publish ImgViewer.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o dist
 ```
 
-## Testy
+## Tests
 
-Harness logiki (zoom/pan/fit, DPI, korekty, histogram, RAW, HEIC/EXIF, panel korekt):
+Logic harness (zoom/pan/fit, DPI, corrections, histogram, RAW, HEIC/EXIF, corrections panel):
 
 ```
 dotnet run --project tools\Harness\tools.csproj -c Release
 ```
 
-Tryb diagnostyczny auto-stretchu (percentyle kanałów, progi luminancji, wyjście po regulacji):
+Auto-stretch diagnostic mode (channel percentiles, luminance thresholds, post-adjustment output):
 
 ```
-dotnet run --project tools\Harness\tools.csproj -c Release -- obraz1.jpg obraz2.jpg
+dotnet run --project tools\Harness\tools.csproj -c Release -- image1.jpg image2.jpg
 ```
 
-E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
+E2E UIA (requires a running app): `scripts\uia-e2e.ps1 <pid>`
 
-Pojedyncze pliki diagnostycznie (tryby harnessu): `--dump <plik>` (dekod/logika), `--meta <plik>` (metadane), `--raworient <plik>` (orientacja: EXIF, wymiary nagłówka vs pełny dekod, podgląd, `AlignToPreview`), `--raw22 <plik>` / `--rawhe <plik>` (fallback dekodera, JPG wynikowy), `--heif-probe` / `--heif-diag` (HEIC/HEIF/AVIF).
+Single-file diagnostics (harness modes): `--dump <file>` (decode/logic), `--meta <file>` (metadata), `--raworient <file>` (orientation: EXIF, header vs full-decode dimensions, preview, `AlignToPreview`), `--raw22 <file>` / `--rawhe <file>` (decoder fallback, resulting JPG), `--heif-probe` / `--heif-diag` (HEIC/HEIF/AVIF).
 
-## Struktura
+## Structure
 
-- `MainWindow.xaml(.cs)` — toolbar, pasek tytułowy, nawigacja, zapis, odświeżanie widoku, ustawienia
-- `Controls/ImageViewer.cs` — zoom/pan/fit (renderowanie layoutowe, bez transformacji macierzowej)
-- `Controls/HistogramOverlay.cs` — histogram w prawym górnym rogu + interaktywne punkty rozciągania
-- `Controls/PhotoshopSlider.cs` — zachowanie suwaków jak w Photoshopie (klik na torze, precyzyjne przeciąganie etykiety/liczby z modyfikatorami, wpisywanie wartości, kroki strzałkami)
-- `Imaging/RawDecoder.cs` — dekod RAW (LibRaw: 16 bit/kanał **liniowo** (wyłączona gamma LibRaw, `-g 1 1` w fallbacku), mieszany tryb prześwietleń, balans z aparatu, cache par 16-bit + podgląd Bgra32; szybki podgląd RAW: `TryDecodePreview` — największa wbudowana miniatura JPEG/kamera, cache LRU ~12, `TryGetInfoHeader` — wymiary z nagłówka bez dekompresji; orientacja z EXIF (tag 274) stosowana natychmiast dla nagłówka i podglądu, więc RAW-y pionowe od otwarcia mają poprawne proporcje i działa dopasowanie do okna (`AlignToPreview` wyrównuje wymiary do proporcji podglądu dla formatów bez EXIF w kontenerze); podgląd startowy = neutralny proces bazowy: dla Sony krzywa tonalna dopasowana do osadzonego podglądu JPEG (`Imaging/CameraTone.cs`, węzły → LUT EV), w przeciwnym razie normalizacja ekspozycji z percentyla luminancji (99,5% → ~0.93) + tonemap Reinhard + kodowanie sRGB; gdy dekod wewnętrzny zawiedzie lub da śmieci — automatyczny fallback na dołączone narzędzia wiersza poleceń: `thirdparty/libraw22/dcraw_emu.exe` (LibRaw 0.22.2; obsługa m.in. zwykłych NEF z Nikon Z6 III) i `thirdparty/librawhe/dcraw_emu.exe` (fork LibRaw z dekoderem Nikon NEF High Efficiency = TicoRAW/JPEG-XS; dekoduje wariant HE, wariant HE* pozostaje nieobsługiwany — zamiast śmieci aplikacja pokazuje czytelny komunikat)
-- `Services/AdjustmentsProcessor.cs` — pipeline 8-bit dla JPG/PNG: kolejność operacji deweloperskich (LUT balansu bieli+dehaze → regiony EV → clarity/wyostrzenie → tonemap luminancji z ekspozycją) + gamma, ręczna mapa rozciągania, histogram
-- `Imaging/Adjust16.cs` — pipeline RAW na 16 bit/kanał w domenie **sceny liniowej** (LUT balansu bieli+dehaze → regiony świateł/cieni w EV na log-luminancji → clarity/wyostrzenie → tonemap scenowa Reinhard z ekspozycją i anty-desaturacją prześwietleń → saturacja → kodowanie sRGB → gamma/ręczna mapa/mono/grain → histogram); dla RAW z krzywą aparatu dehaze jest stosowany za tonemapem (domena wyświetlania), a WB wchodzi bez dehaze
-- `Imaging/Adjust16.Gpu.cs` — backend GPU (ComputeSharp/DirectCompute) dla `Adjust16`: detekcja sprzętowego GPU (preferencja karty dyskretnej), shadery operacji edycji RAW (w tym ToneKernel — LUT EV), automatyczny fallback do CPU gdy brak GPU lub błąd
-- `Imaging/LinearRender.cs` — liniowe wzmocnienia RAW: ekspozycja w EV + temperatura jako zwykłe mnożenie w przestrzeni sceny liniowej (przed regionami i tonemapą); LUT liniowe→sRGB do kodowania wyświetlania
-- `Imaging/Raw16.cs` — obraz planarny RGB 16-bit, deinterleaving, kwantyzacja z ditheringiem Bayera 4×4, interleaving dla TIFF
-- `Services/EyeFile.cs` — odcisk korekt `.eye` (JSON) obok źródła, auto-aplikacja przy otwarciu; punkty rozciągania zapisywane w EV (`.eye` ze starymi punktami w ułamkach wyświetlania konwertowane przy wczytaniu)
-- `Imaging/PhotoOps.cs` — regionowe maski EV cieni/świateł (log-luminancja sceny), LUT-y balansu bieli/dehaze, tonemap luminancji (scenowa Reinhard dla RAW — zawsze aktywna jako proces bazowy, display S-curve gamma 2.2 dla JPG), saturacja, clarity/wyostrzenie (unsharp), odszumianie i szum kolorów (parametry chroma NR: `ChromaDenoiseParams` — jeden zestaw dla CPU/GPU/JPG), pomiar temperatury z próbki
-- `Imaging/ManualStretch.cs` — mapa punktów rozciągania w EV sceny (składana do LUT tonemap przed kodowaniem sRGB)
-- `Imaging/HeifDecoder.cs` — dekod HEIC/HEIF/AVIF (LibHeif in-proc): `IsHeif`, `GetInfo` z orientacją per zasadom kontener/EXIF, `LoadScaled`/`DecodeFull` z krótkim cache LRU (3), `ExifBytes` do paska metadanych; parser ISOBMFF w pliku (`ContainerHasTransforms`) wykrywa `irot`/`imir`/`clap` w `ipco` (transformacje kontenera są już aplikowane przez libheif, więc EXIF jest wtedy pomijany)
-- `Services/ImageFolder.cs`, `Services/SettingsStore.cs` — lista plików, ustawienia
-- `Services/PhotoMeta.cs` — metadane pliku do paska dolnego (`PhotoMetaReader.Get`, w cache): RAW przez LibRaw (`ImageParams`/`ImageOtherParams` — tylko nagłówek, bez dekompresji), HEIC/HEIF/AVIF przez własny minimalny parser TIFF (`ParseTiff` — LE/BE, IFD0 + ExifIFD: Make/Model, DateTimeOriginal, ExposureTime/FNumber/FocalLength/ISO), reszta przez EXIF `BitmapDecoder`; brak danych → pusta etykieta
-- `tools/Harness/` — testy logiki
-- `scripts/` — testy E2E UIA i pomoce
+- `MainWindow.xaml(.cs)` — toolbar, title bar, navigation, saving, view refresh, settings
+- `Controls/ImageViewer.cs` — zoom/pan/fit (layout rendering, no matrix transforms)
+- `Controls/HistogramOverlay.cs` — top-right histogram + interactive stretch points
+- `Controls/PhotoshopSlider.cs` — Photoshop-like slider behavior (track click, precise label/number dragging with modifiers, value typing, arrow-key steps)
+- `Imaging/RawDecoder.cs` — RAW decoding (LibRaw: 16 bit/channel **linear** (LibRaw gamma off, `-g 1 1` in fallback), mixed highlight mode, camera white balance, 16-bit pair cache + Bgra32 preview; fast RAW preview: `TryDecodePreview` — largest built-in JPEG/camera thumbnail, LRU cache ~12, `TryGetInfoHeader` — header dimensions without decompression; EXIF orientation (tag 274) applied immediately to header and preview, so portrait RAWs have correct proportions from open and fit-to-window works (`AlignToPreview` aligns dimensions to preview aspect for formats without EXIF in the container); starting preview = neutral base process: for Sony a tone curve fitted to the embedded JPEG preview (`Imaging/CameraTone.cs`, knots → EV LUT), otherwise exposure normalization from the luminance percentile (99.5% → ~0.93) + Reinhard tonemap + sRGB encoding; when the internal decode fails or yields garbage — automatic fallback to the bundled command-line tools: `thirdparty/libraw22/dcraw_emu.exe` (LibRaw 0.22.2; handles e.g. plain NEFs from Nikon Z6 III) and `thirdparty/librawhe/dcraw_emu.exe` (LibRaw fork with the Nikon NEF High Efficiency = TicoRAW/JPEG-XS decoder; decodes the HE variant, the HE* variant stays unsupported — instead of garbage the app shows a readable message)
+- `Services/AdjustmentsProcessor.cs` — 8-bit pipeline for JPG/PNG: develop-operation order (white-balance+dehaze LUT → EV regions → clarity/sharpening → luminance tonemap with exposure) + gamma, manual stretch map, histogram
+- `Imaging/Adjust16.cs` — RAW pipeline at 16 bit/channel in the **linear-scene** domain (white-balance+dehaze LUT → highlight/shadow regions in EV on log-luminance → clarity/sharpening → scene Reinhard tonemap with exposure and highlight anti-desaturation → saturation → sRGB encoding → gamma/manual map/mono/grain → histogram); for RAWs with a camera curve dehaze is applied after the tonemap (display domain), and WB enters without dehaze
+- `Imaging/Adjust16.Gpu.cs` — GPU backend (ComputeSharp/DirectCompute) for `Adjust16`: hardware GPU detection (discrete-card preference), RAW edit operation shaders (incl. ToneKernel — EV LUT), automatic CPU fallback when no GPU or on error
+- `Imaging/LinearRender.cs` — linear RAW gains: exposure in EV + temperature as plain multiplication in linear scene space (before regions and tonemap); linear→sRGB LUTs for display encoding
+- `Imaging/Raw16.cs` — planar 16-bit RGB image, deinterleaving, 4×4 Bayer-dithered quantization, interleaving for TIFF
+- `Services/EyeFile.cs` — `.eye` correction fingerprint (JSON) next to the source, auto-applied on open; stretch points stored in EV (`.eye` files with old display-fraction points converted on load)
+- `Imaging/PhotoOps.cs` — EV shadow/highlight region masks (scene log-luminance), white-balance/dehaze LUTs, luminance tonemap (scene Reinhard for RAW — always active as the base process, display gamma-2.2 S-curve for JPG), saturation, clarity/sharpening (unsharp), denoise and color noise (chroma NR params: `ChromaDenoiseParams` — one set for CPU/GPU/JPG), temperature measurement from a sample
+- `Imaging/ManualStretch.cs` — stretch-point map in scene EV (folded into the tonemap LUT before sRGB encoding)
+- `Imaging/HeifDecoder.cs` — HEIC/HEIF/AVIF decoding (in-proc LibHeif): `IsHeif`, `GetInfo` with orientation per container/EXIF rules, `LoadScaled`/`DecodeFull` with a short LRU cache (3), `ExifBytes` for the metadata bar; in-file ISOBMFF parser (`ContainerHasTransforms`) detects `irot`/`imir`/`clap` in `ipco` (container transforms are already applied by libheif, so EXIF is skipped then)
+- `Services/ImageFolder.cs`, `Services/SettingsStore.cs` — file list, settings
+- `Services/PhotoMeta.cs` — file metadata for the bottom bar (`PhotoMetaReader.Get`, cached): RAW via LibRaw (`ImageParams`/`ImageOtherParams` — header only, no decompression), HEIC/HEIF/AVIF via own minimal TIFF parser (`ParseTiff` — LE/BE, IFD0 + ExifIFD: Make/Model, DateTimeOriginal, ExposureTime/FNumber/FocalLength/ISO), the rest via `BitmapDecoder` EXIF; no data → empty label
+- `tools/Harness/` — logic tests
+- `scripts/` — E2E UIA tests and helpers
 
-## Debugowanie
+## Debugging
 
-Ustaw `PHOTOGRAPHEREYE_DEBUG=1`, log: `%TEMP%\photographereye-debug.log`.
+Set `PHOTOGRAPHEREYE_DEBUG=1`, log: `%TEMP%\photographereye-debug.log`.
 
-## Licencja
+## License
 
-Użycie prywatne, niekomercyjne. Zabroniona modyfikacja i redystrybucja — pełne warunki: [LICENSE](LICENSE).
+Private, non-commercial use. Modification and redistribution prohibited — full terms: [LICENSE](LICENSE).

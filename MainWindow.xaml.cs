@@ -364,7 +364,7 @@ public partial class MainWindow : Window
             }
 
             _fullDecodeBox = requestedBox;
-            string decoded = raw.PixelWidth < info.Width ? $"   dekoder: {raw.PixelWidth}×{raw.PixelHeight} px" : "";
+            string decoded = raw.PixelWidth < info.Width ? $"   decoder: {raw.PixelWidth}×{raw.PixelHeight} px" : "";
             SetStatus($"{Path.GetFileName(path)}   {info.Width}×{info.Height} px{decoded}", error: false);
         }
         else
@@ -372,7 +372,7 @@ public partial class MainWindow : Window
             _baseRaw16 = null;
             _baseCurve = null;
             _baseEv = 0.0;
-            SetStatus($"{Path.GetFileName(path)}   podgląd…", error: false);
+            SetStatus($"{Path.GetFileName(path)}   preview…", error: false);
         }
         UpdateStatusMeta(path);
         ReapplyAdjustments(path, info);
@@ -963,7 +963,7 @@ public partial class MainWindow : Window
                 }
                 Dispatcher.BeginInvoke(() =>
                 {
-                    if (IsCurrent(path)) SetStatus($"Zapisano: {Path.GetFileName(dest)} ({(tiff ? "TIFF 16-bit" : "JPG 90%")})", error: false);
+                    if (IsCurrent(path)) SetStatus($"Saved: {Path.GetFileName(dest)} ({(tiff ? "TIFF 16-bit" : "JPG 90%")})", error: false);
                     Mouse.OverrideCursor = null;
                 });
             }

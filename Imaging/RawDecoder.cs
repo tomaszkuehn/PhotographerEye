@@ -152,7 +152,7 @@ public static class RawDecoder
         {
             var he = DecodeViaLibRaw22(path, halfSize, heTool: true);
             if (he is not null) return he.Value;
-            Debug.Log("RAW HE: dekodowanie TicoRAW nie powiodło się (brak fallbacku lub HE*)");
+            Debug.Log("RAW HE: TicoRAW decode failed (no fallback or HE*)");
             throw HeNotSupported();
         }
         try
@@ -160,7 +160,7 @@ public static class RawDecoder
             var s = DecodePairSdcb(path, halfSize, wantCurve);
             if (IsLikelyGarbageDecode(s.Raw))
             {
-                Debug.Log("RAW SDCB: wynik wygląda na śmieci (derror); próba fallbacku libraw22");
+                Debug.Log("RAW SDCB: result looks like garbage (derror); trying libraw22 fallback");
                 var fb = DecodeViaLibRaw22(path, halfSize, heTool: false);
                 if (fb is not null) return fb.Value;
             }
@@ -168,7 +168,7 @@ public static class RawDecoder
         }
         catch (Exception ex)
         {
-            Debug.Log($"RAW SDCB FAIL: [{ex.GetType().Name}] {ex.Message}; próba fallbacku libraw22");
+            Debug.Log($"RAW SDCB FAIL: [{ex.GetType().Name}] {ex.Message}; trying libraw22 fallback");
             var fb = DecodeViaLibRaw22(path, halfSize, heTool: false);
             if (fb is not null) return fb.Value;
             throw;
@@ -412,7 +412,7 @@ public static class RawDecoder
             int h = r.Height;
             if (w <= 0 || h <= 0)
             {
-                Debug.Log($"RAW HEADER: {Path.GetFileName(path)} brak wymiarów z nagłówka ({w}x{h})");
+                Debug.Log($"RAW HEADER: {Path.GetFileName(path)} no dimensions from header ({w}x{h})");
                 return false;
             }
             int orient = ReadExifOrientation(path);
