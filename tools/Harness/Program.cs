@@ -597,7 +597,7 @@ internal static class Program
         string name = Adjust16.GpuDeviceName;
         if (name is null)
         {
-            Console.WriteLine("gpu: brak sprz�towego GPU, test pomini�ty");
+            Console.WriteLine("gpu: brak sprzętowego GPU, test pominięty");
             return;
         }
         Console.WriteLine($"gpu: {name}");
@@ -677,7 +677,7 @@ internal static class Program
         }
 
         var gpuNoop = Adjust16.TryApplyGpu(base16, 0.0, 1.0, null, out _, extra: new PhotoAdjustments());
-        Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obs�uguje CPU)");
+        Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obsługuje CPU)");
 
         var cam = new CameraToneCurve(new[]
         {
@@ -713,7 +713,7 @@ internal static class Program
         Adjust16.GpuEnabled = false;
         var disabled = Adjust16.TryApplyGpu(base16, 0.3, 1.15, null, out _, mono: MonoMode.TriX, extra: extra);
         Adjust16.GpuEnabled = prevEnabled;
-        Check(disabled is null, "gpu wy��czony -> fallback CPU");
+        Check(disabled is null, "gpu wyłączony -> fallback CPU");
         Console.WriteLine($"gpu status: {Adjust16.GpuStatus}");
 
         var ramp = new Raw16Image(2048, 2048);
@@ -895,14 +895,14 @@ internal static class Program
         Check(Near(PhotoshopSlider.Factor(true, false, false), 10.0), "suwak: Shift = szybko 10");
 
         Check(Near(PhotoshopSlider.Quantum(0.05), 0.01), "suwak: kwant EV 0,01");
-        Check(Near(PhotoshopSlider.Quantum(1.0), 1.0), "suwak: kwant liczb ca�kowitych 1");
+        Check(Near(PhotoshopSlider.Quantum(1.0), 1.0), "suwak: kwant liczb całkowitych 1");
 
-        Check(Near(PhotoshopSlider.Snap(0.037, -2, 2, 0.05), 0.04), "suwak: zaokr�glenie EV 0,037->0,04");
-        Check(Near(PhotoshopSlider.Snap(2.7, -100, 100, 1.0), 3.0), "suwak: zaokr�glenie 2,7->3");
-        Check(Near(PhotoshopSlider.Snap(9.9, -5, 5, 1.0), 5.0), "suwak: przyci�cie do maksimum");
+        Check(Near(PhotoshopSlider.Snap(0.037, -2, 2, 0.05), 0.04), "suwak: zaokrąglenie EV 0,037->0,04");
+        Check(Near(PhotoshopSlider.Snap(2.7, -100, 100, 1.0), 3.0), "suwak: zaokrąglenie 2,7->3");
+        Check(Near(PhotoshopSlider.Snap(9.9, -5, 5, 1.0), 5.0), "suwak: przycięcie do maksimum");
 
-        // ekspozycja: pe�ny tor (250 px) = pe�ny zakres 4 EV, krok 0,01 EV
-        Check(Near(PhotoshopSlider.Scrub(0, 250, -2, 2, 0.05, false, false, false), 2.0), "suwak: 250 px = pe�ny zakres");
+        // ekspozycja: pełny tor (250 px) = pełny zakres 4 EV, krok 0,01 EV
+        Check(Near(PhotoshopSlider.Scrub(0, 250, -2, 2, 0.05, false, false, false), 2.0), "suwak: 250 px = pełny zakres");
         Check(Near(PhotoshopSlider.Scrub(0, 100, -2, 2, 0.05, false, false, false), 1.6), "suwak: 100 px = +1,6 EV");
         Check(Near(PhotoshopSlider.Scrub(0, 100, -2, 2, 0.05, false, true, false), 0.16), "suwak: Alt 100 px = +0,16 EV (precyzja)");
         Check(Near(PhotoshopSlider.Scrub(-0.5, 50, -2, 2, 0.05, false, false, true), -0.42), "suwak: Ctrl 50 px od -0,5 = -0,42 EV");
@@ -910,23 +910,23 @@ internal static class Program
         // kontrast: zakres 200, 25 px ~ 20 jednostek, Ctrl -> 2
         Check(Near(PhotoshopSlider.Scrub(0, 25, -100, 100, 1.0, false, false, false), 20), "suwak: kontrast 25 px = +20");
         Check(Near(PhotoshopSlider.Scrub(0, 25, -100, 100, 1.0, false, true, false), 2), "suwak: kontrast Alt 25 px = +2");
-        Check(PhotoshopSlider.Scrub(0, 999, -100, 100, 1.0, false, false, false) == 100, "suwak: kontrast przyci�ty do 100");
+        Check(PhotoshopSlider.Scrub(0, 999, -100, 100, 1.0, false, false, false) == 100, "suwak: kontrast przycięty do 100");
 
-        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, false), 0.05), "suwak: krok strza�ki EV 0,05");
-        Check(Near(PhotoshopSlider.Step(0.05, 0.25, true, false), 0.25), "suwak: Shift+strza�ka EV 0,25");
-        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, true), 0.01), "suwak: Ctrl+strza�ka EV 0,01 (precyzja)");
-        Check(Near(PhotoshopSlider.Step(1.0, 10.0, true, false), 10), "suwak: Shift+strza�ka liczb = 10");
-        Check(Near(PhotoshopSlider.Step(1.0, 10.0, false, true), 1), "suwak: Ctrl+strza�ka liczb = 1 (min. krok)");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, false), 0.05), "suwak: krok strzałki EV 0,05");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, true, false), 0.25), "suwak: Shift+strzałka EV 0,25");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, true), 0.01), "suwak: Ctrl+strzałka EV 0,01 (precyzja)");
+        Check(Near(PhotoshopSlider.Step(1.0, 10.0, true, false), 10), "suwak: Shift+strzałka liczb = 10");
+        Check(Near(PhotoshopSlider.Step(1.0, 10.0, false, true), 1), "suwak: Ctrl+strzałka liczb = 1 (min. krok)");
 
         var slider = new Slider { Minimum = -2, Maximum = 2, SmallChange = 0.05, LargeChange = 0.25 };
-        Check(!PhotoshopSlider.GetEnable(slider), "suwak: domy�lnie wy��czony");
+        Check(!PhotoshopSlider.GetEnable(slider), "suwak: domyślnie wyłączony");
         PhotoshopSlider.SetEnable(slider, true);
-        Check(PhotoshopSlider.GetEnable(slider), "suwak: w��czony po SetEnable");
-        Check(slider.IsMoveToPointEnabled, "suwak: klik na torze ustawia warto�� (Photoshop)");
-        Check(slider.Focusable, "suwak: fokusowalny (strza�ki)");
-        Check(slider.ToolTip is string, "suwak: podpowied� ustawiona");
+        Check(PhotoshopSlider.GetEnable(slider), "suwak: włączony po SetEnable");
+        Check(slider.IsMoveToPointEnabled, "suwak: klik na torze ustawia wartość (Photoshop)");
+        Check(slider.Focusable, "suwak: fokusowalny (strzałki)");
+        Check(slider.ToolTip is string, "suwak: podpowiedź ustawiona");
         PhotoshopSlider.SetEnable(slider, false);
-        Check(!PhotoshopSlider.GetEnable(slider), "suwak: wy��czony po SetEnable(false)");
+        Check(!PhotoshopSlider.GetEnable(slider), "suwak: wyłączony po SetEnable(false)");
     }
 
     private static void TestRaw16()

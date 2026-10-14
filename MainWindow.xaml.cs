@@ -364,15 +364,15 @@ public partial class MainWindow : Window
             }
 
             _fullDecodeBox = requestedBox;
-            string decoded = raw.PixelWidth < info.Width ? $" • decoder: {raw.PixelWidth}×{raw.PixelHeight} px" : "";
-            SetStatus($"{Path.GetFileName(path)}  •  {info.Width}×{info.Height} px{decoded}", error: false);
+            string decoded = raw.PixelWidth < info.Width ? $"   dekoder: {raw.PixelWidth}×{raw.PixelHeight} px" : "";
+            SetStatus($"{Path.GetFileName(path)}   {info.Width}×{info.Height} px{decoded}", error: false);
         }
         else
         {
             _baseRaw16 = null;
             _baseCurve = null;
             _baseEv = 0.0;
-            SetStatus($"{Path.GetFileName(path)}  •  podgląd…", error: false);
+            SetStatus($"{Path.GetFileName(path)}   podgląd…", error: false);
         }
         UpdateStatusMeta(path);
         ReapplyAdjustments(path, info);

@@ -19,7 +19,7 @@ public sealed class PhotoMeta
     public string? ShutterText;
 
     public string Summary =>
-        string.Join("  â€˘  ", new[] { Camera, DateText, FocalText, ApertureText, IsoText, ShutterText }
+        string.Join(" \u2022 ", new[] { Camera, DateText, FocalText, ApertureText, IsoText, ShutterText }
             .Where(s => s is not null).Select(s => s!));
 }
 
