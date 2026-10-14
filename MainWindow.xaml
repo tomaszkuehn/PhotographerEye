@@ -78,7 +78,7 @@
                         Style="{StaticResource ToolButton}" Click="OnOpenClick" ToolTip="Open (Ctrl+O)" />
 
                 <TextBlock x:Name="CounterText" VerticalAlignment="Center" Margin="5,0" MinWidth="52" TextAlignment="Center" Text="&#x2013; / &#x2013;" />
-                <Button x:Name="BtnSave" Content="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" IsEnabled="False"
+                <Button x:Name="BtnSave" AutomationProperties.AutomationId="BtnSave" Content="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" IsEnabled="False"
                         Style="{StaticResource ToolButton}" Click="OnSaveClick" ToolTip="Save modified photo (Ctrl+S)" />
 
                 <Border Style="{StaticResource ToolSeparator}" />
@@ -117,6 +117,15 @@
                 <Button x:Name="BtnMono" Content="&#xE792;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
                         Style="{StaticResource ToolButton}" Click="OnMonoToggleClick"
                         ToolTip="Black &amp; white: documentary / Tri-X 400 (B — three states)" />
+                <Border Style="{StaticResource ToolSeparator}" />
+                <Button x:Name="BtnRotateL" AutomationProperties.AutomationId="BtnRotateL" Content="&#x27F2;" FontFamily="Segoe UI Symbol" FontSize="15" Width="30" Height="26"
+                        Style="{StaticResource ToolButton}" Click="OnRotateLeftClick"
+                        ToolTip="Rotate left 90 degrees" />
+                <Button x:Name="BtnRotateR" AutomationProperties.AutomationId="BtnRotateR" Content="&#x27F3;" FontFamily="Segoe UI Symbol" FontSize="15" Width="30" Height="26" Margin="5,0,0,0"
+                        Style="{StaticResource ToolButton}" Click="OnRotateRightClick"
+                        ToolTip="Rotate right 90 degrees (swaps landscape/portrait)" />
+                <Button x:Name="BtnCrop" AutomationProperties.AutomationId="BtnCrop" Content="Crop" Margin="5,0,0,0" Style="{StaticResource ToolButton}" Click="OnCropClick"
+                        ToolTip="Crop &amp; straighten (C) — drag inside: move, handles: resize, drag outside or Ctrl+drag: rotate, Esc: close" />
                 <Button x:Name="BtnPanel" Content="&#xE9E9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
                         Style="{StaticResource ToolButton}" Click="OnPanelToggleClick"
                         ToolTip="Adjustments panel — exposure, contrast, white balance, saturation, clarity, dehaze, denoise (E)" />
@@ -158,6 +167,7 @@
                     Visibility="Collapsed"
                     Click="OnNextClick"
                     ToolTip="Next image (&#x2192;)" />
+            <v:CropOverlay x:Name="CropOverlay" Visibility="Collapsed" />
             <Grid x:Name="HistHost"
                   Width="250" Height="130"
                   HorizontalAlignment="Right" VerticalAlignment="Top"
@@ -205,9 +215,38 @@
                 <StackPanel>
                     <TextBlock Text="Open an image" FontSize="22" Foreground="{StaticResource ForegroundBrush}" HorizontalAlignment="Center" />
                     <TextBlock Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"
-                                Text="Ctrl+O — open dialog, or drag a file from Explorer;&#x0a;←/→ arrows — next/previous, mouse wheel — zoom, drag — pan;&#x0a;1 — 100 %, 0 — fit, R — reset edits, E — adjustments panel, Ctrl+S — save modified photo" TextAlignment="Center" />
+                                Text="Ctrl+O — open dialog, or drag a file from Explorer;&#x0a;←/→ arrows — next/previous, mouse wheel — zoom, drag — pan;&#x0a;1 — 100 %, 0 — fit, R — reset edits, E — adjustments panel, C — crop, Ctrl+S — save modified photo" TextAlignment="Center" />
                  </StackPanel>
              </Border>
+            <Border x:Name="CropBar"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,0,14"
+                    Background="#F026272D"
+                    BorderBrush="{StaticResource BorderBrushCol}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="10,6"
+                    Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Aspect" Style="{StaticResource ToolLabel}" Margin="0,0,5,0" />
+                    <ComboBox x:Name="CropAspectCombo" Width="100" VerticalAlignment="Center"
+                              AutomationProperties.AutomationId="CropAspectCombo"
+                              SelectionChanged="OnCropAspectChanged">
+                        <ComboBoxItem Content="Original" Tag="original" />
+                        <ComboBoxItem Content="3:2" Tag="3:2" />
+                        <ComboBoxItem Content="4:3" Tag="4:3" />
+                        <ComboBoxItem Content="16:9" Tag="16:9" />
+                        <ComboBoxItem Content="16:10" Tag="16:10" />
+                    </ComboBox>
+                    <Button x:Name="BtnCropReset" AutomationProperties.AutomationId="BtnCropReset" Content="Original frame" Margin="10,0,0,0" Style="{StaticResource ToolButton}"
+                            Click="OnCropResetClick"
+                            ToolTip="Back to original aspect and full size (removes crop and straighten)" />
+                    <Button x:Name="BtnCropDone" AutomationProperties.AutomationId="BtnCropDone" Content="Done" Margin="6,0,0,0" Style="{StaticResource ToolButton}"
+                            Click="OnCropDoneClick"
+                            ToolTip="Close crop mode (Esc)" />
+                </StackPanel>
+            </Border>
              </Grid>
 
              <Border Grid.Column="1" x:Name="RightPanel"

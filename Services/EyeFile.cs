@@ -7,7 +7,7 @@ namespace ImgViewer.Services;
 
 public sealed record EyeState
 {
-    public int Version { get; init; } = 2;
+    public int Version { get; init; } = 3;
     public double BaseEv { get; init; }
     public double[][]? ToneCurve { get; init; }
     public double ShadowLift { get; init; }
@@ -27,6 +27,13 @@ public sealed record EyeState
     public double Dehaze { get; init; }
     public double Denoise { get; init; }
     public double ColorNoise { get; init; }
+    public int Rot90 { get; init; }
+    public double Angle { get; init; }
+    public double CropX { get; init; }
+    public double CropY { get; init; }
+    public double CropW { get; init; } = 1.0;
+    public double CropH { get; init; } = 1.0;
+    public string CropAspect { get; init; } = "original";
     public List<EyeState>? History { get; init; }
     public int? HistoryPos { get; init; }
 }
@@ -51,7 +58,7 @@ public static class EyeFile
         try
         {
             var loaded = JsonSerializer.Deserialize<EyeState>(File.ReadAllText(SidecarPath(imagePath)), JsonOptions);
-            if (loaded is not { Version: 1 or 2 }) return false;
+            if (loaded is not { Version: 1 or 2 or 3 }) return false;
             state = loaded;
             return true;
         }

@@ -16,9 +16,12 @@ public sealed partial class ImageViewer : Grid
     private DpiScale _dpi;
     private bool _isFit = true;
     private bool _dragging;
+    private bool _rotating;
     private Point _lastMouse;
 
     public event EventHandler<double>? ZoomChanged;
+    public event EventHandler? ViewChanged;
+    public event EventHandler<double>? RotateDragged;
 
     public ImageViewer()
     {
@@ -67,6 +70,11 @@ public sealed partial class ImageViewer : Grid
         }
     }
 
+    public Rect ImageRect =>
+        _image.Source is null || _image.Visibility != Visibility.Visible
+            ? Rect.Empty
+            : new Rect(MarginLeft, MarginTop, Math.Max(0, _image.Width), Math.Max(0, _image.Height));
+
     public void SetSource(BitmapSource? source, Size nativeSize)
     {
         if (source is null)
@@ -105,6 +113,7 @@ public sealed partial class ImageViewer : Grid
         _decodedRatio = 1.0;
         _dipPerPx = 1.0;
         _isFit = true;
+        RaiseViewChanged();
         RaiseZoomChanged();
     }
 
@@ -208,6 +217,7 @@ public sealed partial class ImageViewer : Grid
         double oy = h <= vh ? (vh - h) / 2.0 : Math.Clamp(MarginTop, vh - h, 0.0);
         SetMargins(ox, oy);
         ImgViewer.Debug.Log($"CLAMP: vp={vw:0.#}x{vh:0.#} disp={w:0.#}x{h:0.#} margins=({ox:0.#},{oy:0.#})");
+        RaiseViewChanged();
     }
 
     private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -219,8 +229,16 @@ public sealed partial class ImageViewer : Grid
             e.Handled = true;
             return;
         }
-        _dragging = true;
         _lastMouse = e.GetPosition(this);
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            _rotating = true;
+            Cursor = Cursors.SizeWE;
+            _ = CaptureMouse();
+            e.Handled = true;
+            return;
+        }
+        _dragging = true;
         Cursor = Cursors.ScrollAll;
         _ = CaptureMouse();
         e.Handled = true;
@@ -228,6 +246,15 @@ public sealed partial class ImageViewer : Grid
 
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
+        if (_rotating)
+        {
+            Point rp = e.GetPosition(this);
+            double rdx = rp.X - _lastMouse.X;
+            _lastMouse = rp;
+            if (rdx != 0) RotateDragged?.Invoke(this, rdx * 0.35);
+            e.Handled = true;
+            return;
+        }
         if (!_dragging) return;
         Point p = e.GetPosition(this);
         double dx = p.X - _lastMouse.X;
@@ -239,8 +266,9 @@ public sealed partial class ImageViewer : Grid
 
     private void OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (!_dragging) return;
+        if (!_dragging && !_rotating) return;
         _dragging = false;
+        _rotating = false;
         Cursor = Cursors.Arrow;
         if (IsMouseCaptured) ReleaseMouseCapture();
         e.Handled = true;
@@ -248,17 +276,21 @@ public sealed partial class ImageViewer : Grid
 
     private void OnMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if (_image.Source is null) return;
+        WheelFrom(e.GetPosition(this), e.Delta);
         e.Handled = true;
+    }
+
+    public void WheelFrom(Point anchor, double delta)
+    {
+        if (_image.Source is null) return;
 
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
         {
-            Pan(e.Delta * 0.4, 0);
+            Pan(delta * 0.4, 0);
         }
         else
         {
-            double factor = Math.Pow(1.2, e.Delta / 120.0);
-            SetZoom(Zoom * factor, e.GetPosition(this));
+            SetZoom(Zoom * Math.Pow(1.2, delta / 120.0), anchor);
         }
     }
 
@@ -280,6 +312,7 @@ public sealed partial class ImageViewer : Grid
         _dipPerPx = dipPerPx;
         _image.Width = bmp.PixelWidth * dipPerPx;
         _image.Height = bmp.PixelHeight * dipPerPx;
+        RaiseViewChanged();
     }
 
     private double DisplayedWidth => _image.Width;
@@ -308,5 +341,10 @@ public sealed partial class ImageViewer : Grid
     private void RaiseZoomChanged()
     {
         ZoomChanged?.Invoke(this, Zoom);
+    }
+
+    private void RaiseViewChanged()
+    {
+        ViewChanged?.Invoke(this, EventArgs.Empty);
     }
 }

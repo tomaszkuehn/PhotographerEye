@@ -170,6 +170,7 @@ internal static class Program
         TestPhotoExtras();
         TestExifRotation();
         TestEyeFile();
+        TestPhotoGeo();
         TestChromaNoise();
         TestPhotoMeta();
         TestRawPreview();
@@ -1247,18 +1248,29 @@ internal static class Program
                 Sharpen = 30,
                 Dehaze = 12,
                 Denoise = 18,
-                ColorNoise = 24
+                ColorNoise = 24,
+                Rot90 = 1,
+                Angle = 12.5,
+                CropX = 0.125,
+                CropY = 0.25,
+                CropW = 0.5,
+                CropH = 0.75,
+                CropAspect = "3:2"
             };
             EyeFile.Save(img, st);
             Check(File.Exists(side), "eye sidecar created");
             Check(Path.GetFileName(side) == "sidecar_source.eye", "eye sidecar name next to source");
 
-            bool ok = EyeFile.TryLoad(img, out var st2) && st2.Version == 2 &&
+            bool ok = EyeFile.TryLoad(img, out var st2) && st2.Version == 3 &&
                       st2.ShadowLift == 25 && st2.Gamma == 1.4 && st2.Mono == 2 &&
                       st2.Exposure == 0.75 && st2.Contrast == -30 && st2.Temperature == 40 &&
                       st2.Saturation == -15 && st2.Highlights == -25 && st2.Whites == 20 && st2.Blacks == -10 &&
                       st2.Clarity == 41 &&
                       st2.Sharpen == 30 && st2.Dehaze == 12 && st2.Denoise == 18 && st2.ColorNoise == 24 &&
+                      st2.Rot90 == 1 && Math.Abs(st2.Angle - 12.5) < 1e-9 &&
+                      Math.Abs(st2.CropX - 0.125) < 1e-9 && Math.Abs(st2.CropY - 0.25) < 1e-9 &&
+                      Math.Abs(st2.CropW - 0.5) < 1e-9 && Math.Abs(st2.CropH - 0.75) < 1e-9 &&
+                      st2.CropAspect == "3:2" &&
                       st2.Stretch is { Length: 2 } &&
                       Math.Abs(st2.Stretch[0][0] - 0.25) < 1e-9 && Math.Abs(st2.Stretch[0][1] - 0.45) < 1e-9 &&
                       Math.Abs(st2.Stretch[1][0] - 0.7) < 1e-9 && Math.Abs(st2.Stretch[1][1] - 0.66) < 1e-9 &&
@@ -1322,7 +1334,7 @@ internal static class Program
                           histState.History[1].History is null && histState.History[1].HistoryPos is null &&
                           histState.Exposure == stateWithHist.Exposure &&
                           histState.BaseEv == 2.58 &&
-                          histState.Version == 2;
+                          histState.Version == 3;
             Check(histOk, "eye history roundtrip (2 steps, pos, nested entries naked)");
 
             string legacyJson = "{\n  \"Version\": 2,\n  \"ShadowLift\": 10\n}";
@@ -1437,6 +1449,195 @@ internal static class Program
             }
         }
         return (float)(total / Math.Max(1, w * h));
+    }
+
+    private static BitmapSource MakeQuadSource(int w, int h)
+    {
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int o = y * stride + x * 4;
+                bool top = y < h / 2;
+                bool left = x < w / 2;
+                if (top && left) { buf[o] = 0; buf[o + 1] = 0; buf[o + 2] = 200; }
+                else if (top) { buf[o] = 200; buf[o + 1] = 0; buf[o + 2] = 0; }
+                else if (left) { buf[o] = 0; buf[o + 1] = 200; buf[o + 2] = 0; }
+                else { buf[o] = 220; buf[o + 1] = 200; buf[o + 2] = 200; }
+                buf[o + 3] = 255;
+            }
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
+    }
+
+    private static (byte b, byte g, byte r, byte a) Probe(BitmapSource img, int x, int y)
+    {
+        var buf = new byte[4];
+        img.CopyPixels(new Int32Rect(x, y, 1, 1), buf, 4, 0);
+        return (buf[0], buf[1], buf[2], buf[3]);
+    }
+
+    private static long BitmapDiff(BitmapSource a, BitmapSource b)
+    {
+        if (a.PixelWidth != b.PixelWidth || a.PixelHeight != b.PixelHeight) return long.MaxValue;
+        int w = a.PixelWidth;
+        int h = a.PixelHeight;
+        var ba = new byte[(long)w * 4 * h];
+        var bb = new byte[(long)w * 4 * h];
+        a.CopyPixels(ba, w * 4, 0);
+        b.CopyPixels(bb, w * 4, 0);
+        long diff = 0;
+        for (int i = 0; i < ba.Length; i++)
+            diff += Math.Abs(ba[i] - bb[i]);
+        return diff;
+    }
+
+    private static void TestPhotoGeo()
+    {
+        Check(GeoState.Default.IsDefault, "geo default is neutral");
+        var quad = MakeQuadSource(101, 101);
+        var fullBox = new Size(202, 202);
+
+        var (same, sameBox) = PhotoGeo.Apply(quad, fullBox, GeoState.Default);
+        Check(ReferenceEquals(same, quad) && sameBox == fullBox, "geo neutral passthrough");
+
+        var (r1, b1) = PhotoGeo.Apply(quad, fullBox, new GeoState { Rot90 = 1 });
+        Check(r1.PixelWidth == 101 && r1.PixelHeight == 101, "rot90 dims swapped");
+        Check(Math.Abs(b1.Width - 202) < 1e-6 && Math.Abs(b1.Height - 202) < 1e-6, "rot90 native box swapped");
+        var tl = Probe(r1, 0, 0);
+        var tr = Probe(r1, 100, 0);
+        var bl = Probe(r1, 0, 100);
+        Check(tl.g == 200 && tl.r == 0 && tl.b == 0, "rot90 CW: source bottom-left -> top-left");
+        Check(tr.r == 200 && tr.g == 0 && tr.b == 0, "rot90 CW: source top-left -> top-right");
+        Check(bl.r == 200 && bl.g == 200 && bl.b == 220, "rot90 CW: source bottom-right -> bottom-left");
+
+        var (r4, _) = PhotoGeo.Apply(quad, fullBox, new GeoState { Rot90 = 4 });
+        Check(BitmapDiff(r4, quad) == 0, "rot 360 is identity");
+
+        var (c1, b2) = PhotoGeo.Apply(quad, fullBox, new GeoState { CropX = 0, CropY = 0, CropW = 0.5, CropH = 0.5 });
+        Check(c1.PixelWidth == 51 && c1.PixelHeight == 51, "crop dims on 0.5 fraction");
+        Check(Math.Abs(b2.Width - 101) < 1e-6 && Math.Abs(b2.Height - 101) < 1e-6, "crop scales native box");
+        var cc = Probe(c1, 25, 25);
+        Check(cc.r == 200 && cc.g == 0 && cc.b == 0, "crop keeps top-left quadrant");
+
+        var rect = GeoState.RotateCropFractions(0.5, 0.0, 0.5, 1.0, 1);
+        Check(Math.Abs(rect.X) < 1e-9 && Math.Abs(rect.Y - 0.5) < 1e-9 &&
+              Math.Abs(rect.W - 1.0) < 1e-9 && Math.Abs(rect.H - 0.5) < 1e-9, "quarter-turn crop rect preserved");
+        var two = PhotoGeo.Apply(PhotoGeo.Apply(quad, fullBox, new GeoState { CropX = 0.5, CropY = 0, CropW = 0.5, CropH = 1 }).Src, new Size(101, 202),
+            new GeoState { Rot90 = 1 });
+        var one = PhotoGeo.Apply(quad, fullBox, new GeoState { CropX = 0.5, CropY = 0, CropW = 0.5, CropH = 1 }.WithRotation(1));
+        Check(BitmapDiff(two.Src, one.Src) == 0, "crop-then-rotate equals rotate state");
+
+        double inset = PhotoGeo.InsetScale(100, 50, 45);
+        Check(Math.Abs(inset - 0.47140) < 1e-4, "inset scale formula at 45 degrees");
+
+        var (f30, fBox) = PhotoGeo.Apply(quad, fullBox, new GeoState { Angle = 30 });
+        double t30 = PhotoGeo.InsetScale(101, 101, 30);
+        Check(f30.PixelWidth == (int)Math.Round(101 * t30) && f30.PixelHeight == f30.PixelWidth, "free rotate dims = inset");
+        Check(Math.Abs(fBox.Width - 202 * t30) < 1e-6, "free rotate scales native box");
+
+        var halves = MakeHalvesSource(201, 201);
+        var rot25 = PhotoGeo.RotateFree(halves, 25);
+        var rightPx = Probe(rot25, (int)(0.75 * rot25.PixelWidth), rot25.PixelHeight / 2);
+        var leftPx = Probe(rot25, (int)(0.25 * rot25.PixelWidth), rot25.PixelHeight / 2);
+        Check(rightPx.r > 150 && rightPx.g < 50, "CW rotate: top content moves right");
+        Check(leftPx.b > 150 && leftPx.r < 50, "CW rotate: bottom content moves left");
+
+        var block = MakeCenterBlockSource(201, 201, 40);
+        var rot18 = PhotoGeo.RotateFree(block, 18);
+        var mid = Probe(rot18, rot18.PixelWidth / 2, rot18.PixelHeight / 2);
+        Check(Math.Abs(mid.r - 30) <= 3 && Math.Abs(mid.g - 150) <= 3 && Math.Abs(mid.b - 220) <= 3, "rotate keeps center block unblended");
+
+        var img = new Raw16Image(61, 61);
+        for (int y = 0; y < 61; y++)
+            for (int x = 0; x < 61; x++)
+            {
+                int i = y * 61 + x;
+                img.R[i] = (ushort)(y * 61 + x);
+                img.G[i] = (ushort)(y * 61 + x + 20000);
+                img.B[i] = (ushort)(y * 61 + x + 40000);
+            }
+        var c16 = PhotoGeo.Apply(img, new GeoState { CropX = 0.3, CropY = 0.3, CropW = 0.4, CropH = 0.4 });
+        Check(c16.W == 25 && c16.H == 25, "raw16 crop dims");
+        Check(c16.R[0] == 18 * 61 + 18 && c16.R[c16.R.Length - 1] == 42 * 61 + 42, "raw16 crop region values");
+
+        var small = new Raw16Image(3, 5);
+        for (int i = 0; i < small.R.Length; i++) small.R[i] = (ushort)(i + 1);
+        var rot = PhotoGeo.Apply(small, new GeoState { Rot90 = 1 });
+        Check(rot.W == 5 && rot.H == 3, "raw16 rot dims");
+        bool mapOk = true;
+        for (int y = 0; y < 3; y++)
+            for (int x = 0; x < 5; x++)
+                if (rot.R[y * 5 + x] != small.R[(5 - 1 - x) * 3 + y]) mapOk = false;
+        Check(mapOk, "raw16 rot90 CW pixel mapping");
+
+        var block16 = new Raw16Image(201, 201);
+        for (int i = 0; i < block16.R.Length; i++)
+        {
+            int y = i / 201;
+            int x = i % 201;
+            bool inside = Math.Abs(x - 100) <= 20 && Math.Abs(y - 100) <= 20;
+            block16.R[i] = inside ? (ushort)30 : (ushort)10;
+            block16.G[i] = inside ? (ushort)150 : (ushort)10;
+            block16.B[i] = inside ? (ushort)220 : (ushort)10;
+        }
+        var rot16free = PhotoGeo.Apply(block16, new GeoState { Angle = 18 });
+        int ci = rot16free.H / 2 * rot16free.W + rot16free.W / 2;
+        Check(Math.Abs(rot16free.R[ci] - 30) <= 3 && Math.Abs(rot16free.G[ci] - 150) <= 3 && Math.Abs(rot16free.B[ci] - 220) <= 3, "raw16 rotate keeps center block");
+    }
+
+    private static BitmapSource MakeHalvesSource(int w, int h)
+    {
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int o = y * stride + x * 4;
+                if (y < h / 2) buf[o + 2] = 200;
+                else buf[o] = 200;
+                buf[o + 3] = 255;
+            }
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
+    }
+
+    private static BitmapSource MakeCenterBlockSource(int w, int h, int half)
+    {
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        int cx = w / 2;
+        int cy = h / 2;
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int o = y * stride + x * 4;
+                if (Math.Abs(x - cx) <= half && Math.Abs(y - cy) <= half)
+                {
+                    buf[o] = 220;
+                    buf[o + 1] = 150;
+                    buf[o + 2] = 30;
+                }
+                else
+                {
+                    buf[o] = 10;
+                    buf[o + 1] = 10;
+                    buf[o + 2] = 10;
+                }
+                buf[o + 3] = 255;
+            }
+        }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
     }
 
     private static void TestChromaNoise()
