@@ -74,6 +74,8 @@ dotnet run --project tools\Harness\tools.csproj -c Release -- obraz1.jpg obraz2.
 
 E2E UIA (wymaga uruchomionej aplikacji): `scripts\uia-e2e.ps1 <pid>`
 
+Pojedyncze pliki diagnostycznie (tryby harnessu): `--dump <plik>` (dekod/logika), `--meta <plik>` (metadane), `--raworient <plik>` (orientacja: EXIF, wymiary nagłówka vs pełny dekod, podgląd, `AlignToPreview`), `--raw22 <plik>` / `--rawhe <plik>` (fallback dekodera, JPG wynikowy), `--heif-probe` / `--heif-diag` (HEIC/HEIF/AVIF).
+
 ## Struktura
 
 - `MainWindow.xaml(.cs)` — toolbar, pasek tytułowy, nawigacja, zapis, odświeżanie widoku, ustawienia
