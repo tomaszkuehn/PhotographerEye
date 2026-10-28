@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 
 namespace ImgViewer.Imaging;
 
@@ -512,32 +513,69 @@ public static class PhotoOps
         }
     }
 
-    public static unsafe void ApplyRegionCurve(byte[] buffer, double strength, bool highlight)
+    public static void ApplyShadowsHighlights(byte[] buffer, int w, int h, double highlights, double shadows)
     {
-        double v = Math.Clamp(strength, -1.0, 1.0);
-        if (Math.Abs(v) <= 0.0005) return;
+        float hl = (float)Math.Clamp(highlights, -1.0, 1.0);
+        float sh = (float)Math.Clamp(shadows, -1.0, 1.0);
+        if (Math.Abs(hl) <= 0.0005f && Math.Abs(sh) <= 0.0005f) return;
 
-        fixed (byte* p = buffer)
+        int s = ToneRegions.Factor(w, h);
+        int lw = (w + s - 1) / s;
+        int lh = (h + s - 1) / s;
+        var lumEnc = new float[w * h];
+        var logL = new float[w * h];
+        var low = new float[lw * lh];
+        Parallel.For(0, lh, ly =>
         {
-            byte* end = p + buffer.Length;
-            for (byte* q = p; q < end; q += 4)
+            var acc = new float[lw];
+            var cnt = new int[lw];
+            int ye = Math.Min(h, (ly + 1) * s);
+            for (int y = ly * s; y < ye; y++)
             {
-                float lr = q[2];
-                float lg = q[1];
-                float lb = q[0];
-                float lumEnc = (0.2126f * lr + 0.7152f * lg + 0.0722f * lb) / 255.0f;
-                if (lumEnc <= 0.0f) continue;
-                float yl = MathF.Pow(lumEnc, 2.2f);
-                float ev = MathF.Log2(yl / 0.18f);
-                float mask = highlight ? SmoothEV(-1.0f, 2.8f, ev) : 1.0f - SmoothEV(-4.8f, 0.3f, ev);
-                if (mask <= 0.0f) continue;
-                float delta = (float)v * 1.7f * mask * (highlight ? 1.0f : MathF.Sqrt(mask));
-                float g = MathF.Pow(2.0f, delta);
-                q[2] = ClampByte(lr * g);
-                q[1] = ClampByte(lg * g);
-                q[0] = ClampByte(lb * g);
+                int o = y * w * 4;
+                for (int x = 0; x < w; x++, o += 4)
+                {
+                    float le = (0.2126f * buffer[o + 2] + 0.7152f * buffer[o + 1] + 0.0722f * buffer[o]) / 255.0f;
+                    float l = ToneRegions.LogLum(MathF.Pow(le, 2.2f));
+                    lumEnc[y * w + x] = le;
+                    logL[y * w + x] = l;
+                    acc[x / s] += l;
+                    cnt[x / s]++;
+                }
             }
-        }
+            for (int lx = 0; lx < lw; lx++) low[ly * lw + lx] = acc[lx] / Math.Max(cnt[lx], 1);
+        });
+        var grid = ToneRegions.Solve(low, lw, lh, s, w, h);
+
+        Parallel.For(0, h, y =>
+        {
+            int o = y * w * 4;
+            for (int x = 0; x < w; x++, o += 4)
+            {
+                float le = lumEnc[y * w + x];
+                if (le <= 0.0f) continue;
+                float d = ToneRegions.DeltaEv(ToneRegions.Base(grid, x, y, logL[y * w + x]), hl, sh);
+                if (MathF.Abs(d) < 1e-4f) continue;
+                // Gain acts on encoded values (display-referred strength), masks on linear EV.
+                float t0 = ToneRegions.TargetLum(le, d);
+                float scale = t0 / le;
+                float r = buffer[o + 2] * scale;
+                float g = buffer[o + 1] * scale;
+                float b = buffer[o] * scale;
+                float mx = MathF.Max(r, MathF.Max(g, b));
+                if (mx > 255f)
+                {
+                    float o8 = MathF.Min(t0, 1.0f) * 255f;
+                    float t = (mx - 255f) / MathF.Max(mx - o8, 1e-6f);
+                    r += (o8 - r) * t;
+                    g += (o8 - g) * t;
+                    b += (o8 - b) * t;
+                }
+                buffer[o + 2] = ClampByte(r);
+                buffer[o + 1] = ClampByte(g);
+                buffer[o] = ClampByte(b);
+            }
+        });
     }
 
     public static unsafe void ApplySharpen(byte[] buffer, int w, int h, double sharpen)

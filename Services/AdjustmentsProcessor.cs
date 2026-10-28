@@ -53,15 +53,14 @@ public static class AdjustmentsProcessor
             if (extra.Denoise > 0.0005) PhotoOps.ApplyDenoise(buffer, w, h, extra.Denoise);
             if (extra.ColorNoise > 0.0005) PhotoOps.ApplyChromaDenoise(buffer, w, h, extra.ColorNoise);
             PhotoOps.ApplyColorPoints(buffer, extra);
-            if (Math.Abs(extra.Highlights) > 0.0005) PhotoOps.ApplyRegionCurve(buffer, extra.Highlights, highlight: true);
-            if (shadow) PhotoOps.ApplyRegionCurve(buffer, shadowLift, highlight: false);
+            if (shadow || Math.Abs(extra.Highlights) > 0.0005) PhotoOps.ApplyShadowsHighlights(buffer, w, h, extra.Highlights, shadow ? shadowLift : 0.0);
             if (Math.Abs(extra.Clarity) > 0.0005) PhotoOps.ApplyClarity(buffer, w, h, extra.Clarity);
             if (extra.Sharpen > 0.0005) PhotoOps.ApplySharpen(buffer, w, h, extra.Sharpen);
             PhotoOps.ApplyTone(buffer, extra, manual);
         }
         else if (shadow || (manual is { HasEffect: true }))
         {
-            if (shadow) PhotoOps.ApplyRegionCurve(buffer, shadowLift, highlight: false);
+            if (shadow) PhotoOps.ApplyShadowsHighlights(buffer, w, h, 0.0, shadowLift);
             if (manual is { HasEffect: true }) PhotoOps.ApplyTone(buffer, new PhotoAdjustments(), manual);
         }
 

@@ -43,14 +43,13 @@ public static partial class Adjust16
             if (extra.Denoise > 0.0005) ApplyDenoise16(img, w, h, extra.Denoise, opts);
             if (extra.ColorNoise > 0.0005) ApplyChromaDenoise16(img, w, h, extra.ColorNoise, opts);
             ApplyWbDehaze16(img, extra, opts, wbOnly: curveDehaze);
-            if (Math.Abs(extra.Highlights) > 0.0005) ApplyRegionCurve16(img, extra.Highlights, highlight: true, opts);
-            if (shadow) ApplyRegionCurve16(img, shadowLift, highlight: false, opts);
+            if (shadow || Math.Abs(extra.Highlights) > 0.0005) ApplyShadowsHighlights16(img, extra.Highlights, shadow ? shadowLift : 0.0, opts);
             if (Math.Abs(extra.Clarity) > 0.0005) ApplyClarity16(img, w, h, extra.Clarity, opts);
             if (extra.Sharpen > 0.0005) ApplySharpen16(img, w, h, extra.Sharpen, opts);
         }
         else if (shadow)
         {
-            ApplyRegionCurve16(img, shadowLift, highlight: false, opts);
+            ApplyShadowsHighlights16(img, 0.0, shadowLift, opts);
         }
 
         ApplyTone16(img, extra ?? new PhotoAdjustments(), manual, opts, cameraTone);
@@ -182,31 +181,78 @@ public static partial class Adjust16
         });
     }
 
-    private static void ApplyRegionCurve16(Raw16Image img, double strength, bool highlight, ParallelOptions opts)
+    private static void ApplyShadowsHighlights16(Raw16Image img, double highlights, double shadows, ParallelOptions opts)
     {
-        double v = Math.Clamp(strength, -1.0, 1.0);
-        if (Math.Abs(v) <= 0.0005) return;
+        float hl = (float)Math.Clamp(highlights, -1.0, 1.0);
+        float sh = (float)Math.Clamp(shadows, -1.0, 1.0);
+        if (Math.Abs(hl) <= 0.0005f && Math.Abs(sh) <= 0.0005f) return;
 
+        int w = img.W;
+        int h = img.H;
         var pr = img.R;
         var pg = img.G;
         var pb = img.B;
-        ForRange(pr.Length, opts, (s, e) =>
+        int s = ToneRegions.Factor(w, h);
+        int lw = (w + s - 1) / s;
+        int lh = (h + s - 1) / s;
+        var low = new float[lw * lh];
+        ForRange(lh, opts, (ls, le) =>
         {
-            for (int i = s; i < e; i++)
+            var acc = new float[lw];
+            var cnt = new int[lw];
+            for (int ly = ls; ly < le; ly++)
             {
-                float lr = pr[i];
-                float lg = pg[i];
-                float lb = pb[i];
-                float lum = (0.2126f * lr + 0.7152f * lg + 0.0722f * lb) / 65535.0f;
-                if (lum <= 0.0f) continue;
-                float ev = MathF.Log(lum / 0.18f, 2.0f);
-                float mask = highlight ? SmoothEV(-1.0f, 2.8f, ev) : 1.0f - SmoothEV(-4.8f, 0.3f, ev);
-                if (mask <= 0.0f) continue;
-                float delta = (float)v * 1.7f * mask * (highlight ? 1.0f : MathF.Sqrt(mask));
-                float g = MathF.Pow(2.0f, delta);
-                pr[i] = ClampU(lr * g);
-                pg[i] = ClampU(lg * g);
-                pb[i] = ClampU(lb * g);
+                Array.Clear(acc);
+                Array.Clear(cnt);
+                int ye = Math.Min(h, (ly + 1) * s);
+                for (int y = ly * s; y < ye; y++)
+                {
+                    int row = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = row + x;
+                        acc[x / s] += ToneRegions.LogLum((0.2126f * pr[i] + 0.7152f * pg[i] + 0.0722f * pb[i]) / 65535.0f);
+                        cnt[x / s]++;
+                    }
+                }
+                for (int lx = 0; lx < lw; lx++) low[ly * lw + lx] = acc[lx] / Math.Max(cnt[lx], 1);
+            }
+        });
+        var grid = ToneRegions.Solve(low, lw, lh, s, w, h);
+
+        ForRange(h, opts, (ys, ye) =>
+        {
+            for (int y = ys; y < ye; y++)
+            {
+                int row = y * w;
+                for (int x = 0; x < w; x++)
+                {
+                    int i = row + x;
+                    float r = pr[i];
+                    float g = pg[i];
+                    float b = pb[i];
+                    float yl = (0.2126f * r + 0.7152f * g + 0.0722f * b) / 65535.0f;
+                    if (yl <= 0.0f) continue;
+                    float d = ToneRegions.DeltaEv(ToneRegions.Base(grid, x, y, ToneRegions.LogLum(yl)), hl, sh);
+                    if (MathF.Abs(d) < 1e-4f) continue;
+                    float o = ToneRegions.TargetLum(yl, d);
+                    float scale = o / yl;
+                    r *= scale;
+                    g *= scale;
+                    b *= scale;
+                    float mx = MathF.Max(r, MathF.Max(g, b));
+                    if (mx > 65535f)
+                    {
+                        float o16 = o * 65535f;
+                        float t = (mx - 65535f) / MathF.Max(mx - o16, 1e-6f);
+                        r += (o16 - r) * t;
+                        g += (o16 - g) * t;
+                        b += (o16 - b) * t;
+                    }
+                    pr[i] = ClampU(r);
+                    pg[i] = ClampU(g);
+                    pb[i] = ClampU(b);
+                }
             }
         });
     }

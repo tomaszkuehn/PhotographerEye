@@ -29,6 +29,16 @@ internal static class Program
             ProbeDecode(args[1]);
             return;
         }
+        if (args.Length > 0 && args[0] == "--sh-raw")
+        {
+            ShadowsHighlightsRawProbe(args[1], args[2]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--sh")
+        {
+            ShadowsHighlightsProbe(args[1], args[2], double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture), double.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture));
+            return;
+        }
         if (args.Length > 0 && args[0] == "--hl-probe")
         {
             HighlightProbe(args[1]);
@@ -153,6 +163,7 @@ internal static class Program
         TestCentering();
         TestDpiNormalization();
         TestShadows();
+        TestShadowsHighlightsLocal();
         TestGamma();
         TestHistogram();
         TestAutoStretch();
@@ -309,6 +320,114 @@ internal static class Program
         Check(Math.Abs(pN.mid.g - q0.mid.g) <= 4, $"EV shadow mask spares midtones on darken ({q0.mid.g} -> {pN.mid.g})");
         Check(Math.Abs(pN.bright.g - q0.bright.g) <= 2, "bright untouched on darken");
         Check(p.dark.g > q0.dark.g && p.bright.g == q0.bright.g, "shadow lift lightens only darks");
+    }
+
+    private static void TestShadowsHighlightsLocal()
+    {
+        // Bright striped region (lin 0.6 / 0.8) next to a dark textured one (lin 0.008 / 0.016).
+        static Raw16Image Scene(int w, int h)
+        {
+            var img = new Raw16Image(w, h);
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    bool hi = ((x / 2) & 1) == 0;
+                    double v = x < w / 2 ? (hi ? 0.8 : 0.6) : (hi ? 0.016 : 0.008);
+                    ushort u = (ushort)(v * 65535.0);
+                    int i = y * w + x;
+                    img.R[i] = u; img.G[i] = u; img.B[i] = u;
+                }
+            return img;
+        }
+        static double Contrast(Raw16Image img, int x)
+        {
+            int i = img.H / 2 * img.W + x;
+            int a = img.G[i], b = img.G[i + 2];
+            return Math.Abs(a - b) / (double)Math.Max(a + b, 1);
+        }
+
+        var scene = Scene(400, 200);
+        var neutral = Adjust16.Apply(scene, 0.0, 1.0, null, out _);
+        var hlDown = Adjust16.Apply(scene, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Highlights = -1.0 });
+        int bx = 100, dx = 300;
+        double c0 = Contrast(neutral, bx), c1 = Contrast(hlDown, bx);
+        Check(hlDown.G[100 * 400 + bx] < neutral.G[100 * 400 + bx], "SH: highlights -100 darkens bright region");
+        Check(c1 >= 0.8 * c0, $"SH: highlights -100 keeps relative local contrast in bright region ({c0:0.###} -> {c1:0.###})");
+        Check(Math.Abs(hlDown.G[100 * 400 + dx] - neutral.G[100 * 400 + dx]) <= 64, "SH: highlights -100 leaves dark region alone");
+
+        var shUp = Adjust16.Apply(scene, 1.0, 1.0, null, out _);
+        double s0 = Contrast(neutral, dx), s1 = Contrast(shUp, dx);
+        Check(shUp.G[100 * 400 + dx] > neutral.G[100 * 400 + dx], "SH: shadows +100 lifts dark region");
+        // Reference: a global exposure push reaching the same dark level (tone curve/encode shape included).
+        Raw16Image? best = null;
+        int bestErr = int.MaxValue;
+        for (double ev = 0.2; ev <= 3.0; ev += 0.05)
+        {
+            var e = Adjust16.Apply(scene, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Exposure = ev });
+            int err = Math.Abs(e.G[100 * 400 + dx] - shUp.G[100 * 400 + dx]);
+            if (err < bestErr) { bestErr = err; best = e; }
+        }
+        double sE = Contrast(best!, dx);
+        Check(s1 >= 0.85 * sE, $"SH: shadows +100 keeps dark texture like an exposure push ({s0:0.###} -> {s1:0.###}, exposure ref {sE:0.###})");
+        Check(Math.Abs(shUp.G[100 * 400 + bx] - neutral.G[100 * 400 + bx]) <= 64, "SH: shadows +100 leaves bright region alone");
+
+        // Highlights +100 on a gray ramp 0.3..1.0: monotonic, no clipped plateau.
+        int rw = 701;
+        var ramp = new Raw16Image(rw, 4);
+        for (int y = 0; y < 4; y++)
+            for (int x = 0; x < rw; x++)
+            {
+                ushort u = (ushort)((0.3 + 0.7 * x / (rw - 1.0)) * 65535.0);
+                int i = y * rw + x;
+                ramp.R[i] = u; ramp.G[i] = u; ramp.B[i] = u;
+            }
+        var rampN = Adjust16.Apply(ramp, 0.0, 1.0, null, out _);
+        var rampUp = Adjust16.Apply(ramp, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Highlights = 1.0 });
+        bool mono = true;
+        for (int x = 10; x < rw; x += 10)
+            if (rampUp.G[2 * rw + x] <= rampUp.G[2 * rw + x - 10]) { mono = false; break; }
+        Check(mono, "SH: highlights +100 keeps ramp strictly increasing (no clipped plateau)");
+        Check(rampUp.G[2 * rw + 350] > rampN.G[2 * rw + 350], $"SH: highlights +100 brightens upper tones ({rampN.G[2 * rw + 350]} -> {rampUp.G[2 * rw + 350]})");
+
+        // 8-bit path: same local behavior.
+        var src8 = MakeStripes8(240, 200, 120);
+        var n8 = ReadRow(AdjustmentsProcessor.Apply(src8, 0.0, 1.0, null, out _, extra: null)!, 60, 60);
+        var h8a = ReadRow(AdjustmentsProcessor.Apply(src8, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Highlights = -1.0 })!, 60, 60);
+        var h8b = ReadRow(AdjustmentsProcessor.Apply(src8, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Highlights = -1.0 })!, 60, 62);
+        var n8b = ReadRow(AdjustmentsProcessor.Apply(src8, 0.0, 1.0, null, out _, extra: null)!, 60, 62);
+        Check(h8a.g < n8.g, $"SH: 8-bit highlights -100 darkens ({n8.g} -> {h8a.g})");
+        double r8n = Math.Abs(n8.g - n8b.g) / (double)(n8.g + n8b.g), r8h = Math.Abs(h8a.g - h8b.g) / (double)(h8a.g + h8b.g);
+        Check(r8h >= 0.8 * r8n, $"SH: 8-bit highlights -100 keeps relative stripe contrast ({r8n:0.###} -> {r8h:0.###})");
+
+        if (Adjust16.GpuAvailable)
+        {
+            var big = Scene(2400, 1800);
+            var cpu = Adjust16.Apply(big, 0.6, 1.0, null, out _, extra: new PhotoAdjustments { Highlights = -0.8 });
+            var gpu = Adjust16.TryApplyGpu(big, 0.6, 1.0, null, out _, extra: new PhotoAdjustments { Highlights = -0.8 });
+            Check(gpu is not null, "SH: gpu shadows/highlights runs");
+            if (gpu is not null)
+            {
+                int max = 0;
+                for (int i = 0; i < cpu.G.Length; i += 13) max = Math.Max(max, Math.Abs(cpu.G[i] - gpu.G[i]));
+                Check(max <= 128, $"SH: gpu matches cpu (max diff {max})");
+            }
+        }
+    }
+
+    private static BitmapSource MakeStripes8(int w, int h, int x0)
+    {
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                byte v = x < x0 ? (((x / 2) & 1) == 0 ? (byte)250 : (byte)215) : (byte)20;
+                int o = y * stride + x * 4;
+                buf[o] = v; buf[o + 1] = v; buf[o + 2] = v; buf[o + 3] = 255;
+            }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
+        src.Freeze();
+        return src;
     }
 
     private static void TestGamma()
@@ -2933,6 +3052,94 @@ internal static class Program
         long clip = 0;
         for (int i = 0; i < n; i++) if (g[i] >= 65000) clip++;
         Console.WriteLine($"   clippedG={clip} ({100.0 * clip / n:0.00}%)");
+    }
+
+    private static void ShadowsHighlightsRawProbe(string dir, string outDir)
+    {
+        Directory.CreateDirectory(outDir);
+        var cases = new (string Name, double Hl, double Sh)[] { ("hl-100", -1.0, 0.0), ("hl+100", 1.0, 0.0), ("sh+100", 0.0, 1.0), ("sh-100", 0.0, -1.0), ("hl-100_sh+100", -1.0, 1.0) };
+        foreach (var path in Directory.GetFiles(dir).Where(RawDecoder.IsRaw).OrderBy(p => p))
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var base16 = RawDecoder.Decode16(path, halfSize: false);
+            double baseEv = RawDecoder.GetBaseEv(path);
+            var curve = RawDecoder.GetCameraTone(path);
+            var rendered = LinearRender.ApplyGain(base16, baseEv, 0.0);
+            Console.WriteLine($"== {Path.GetFileName(path)} {base16.W}x{base16.H} baseEv={baseEv:0.##} curve={(curve is null ? "none" : "yes")} decode={sw.ElapsedMilliseconds} ms");
+            var neutral = Adjust16.Apply(rendered, 0.0, 1.0, null, out _, cameraTone: curve);
+            Stats(neutral, neutral, out double clip0, out _, out _);
+            Console.WriteLine($"   neutral: clipped={clip0:0.###}%");
+            Save(neutral, "neutral");
+            foreach (var c in cases)
+            {
+                var extra = new PhotoAdjustments { Highlights = c.Hl };
+                sw.Restart();
+                var cpu = Adjust16.Apply(rendered, c.Sh, 1.0, null, out _, extra: extra, cameraTone: curve);
+                long tCpu = sw.ElapsedMilliseconds;
+                sw.Restart();
+                var gpu = Adjust16.TryApplyGpu(rendered, c.Sh, 1.0, null, out _, extra: extra, cameraTone: curve);
+                long tGpu = sw.ElapsedMilliseconds;
+                int maxD = 0; double sumD = 0; long nD = 0;
+                if (gpu is not null)
+                    for (int i = 0; i < cpu.G.Length; i += 11) { int d = Math.Abs(cpu.G[i] - gpu.G[i]); sumD += d; nD++; if (d > maxD) maxD = d; }
+                Stats(cpu, neutral, out double clip, out double hiTex, out double loTex);
+                Console.WriteLine($"   {c.Name,-14} clipped={clip:0.###}%  texture bright={hiTex:0.##}x dark={loTex:0.##}x  cpu={tCpu} ms gpu={(gpu is null ? "n/a" : tGpu + " ms")}  gpu-cpu mean={(nD > 0 ? sumD / nD : double.NaN):0.##} max={maxD}");
+                if (c.Name == "hl-100_sh+100" || c.Name == "hl+100") Save(cpu, c.Name);
+            }
+
+            void Save(Raw16Image img, string tag)
+            {
+                var bmp = img.ToDisplay(false);
+                double k = 1600.0 / Math.Max(bmp.PixelWidth, bmp.PixelHeight);
+                var small = new TransformedBitmap(bmp, new ScaleTransform(k, k));
+                var enc = new PngBitmapEncoder();
+                enc.Frames.Add(BitmapFrame.Create(small));
+                using var fs = File.Create(Path.Combine(outDir, $"{Path.GetFileNameWithoutExtension(path)}_{tag}.png"));
+                enc.Save(fs);
+            }
+        }
+
+        // clip: % pixels with any channel at white; texture: relative local gradient vs neutral in
+        // neutral-bright (lum > 0.7) and neutral-dark (lum < 0.15) areas (1.0 = unchanged detail).
+        static void Stats(Raw16Image img, Raw16Image refImg, out double clipPct, out double hiTex, out double loTex)
+        {
+            long clipped = 0, n = 0;
+            double hiA = 0, hiB = 0, loA = 0, loB = 0;
+            int w = img.W;
+            for (int y = 1; y < img.H; y += 3)
+                for (int x = 1; x < w; x += 3)
+                {
+                    int i = y * w + x;
+                    n++;
+                    if (img.R[i] >= 65280 || img.G[i] >= 65280 || img.B[i] >= 65280) clipped++;
+                    double l0 = refImg.G[i] / 65535.0;
+                    double g0 = (Math.Abs(refImg.G[i] - refImg.G[i - 1]) + Math.Abs(refImg.G[i] - refImg.G[i - w])) / (refImg.G[i] + 1.0);
+                    double g1 = (Math.Abs(img.G[i] - img.G[i - 1]) + Math.Abs(img.G[i] - img.G[i - w])) / (img.G[i] + 1.0);
+                    if (l0 > 0.7 && l0 < 0.99) { hiA += g0; hiB += g1; }
+                    else if (l0 < 0.15 && l0 > 0.01) { loA += g0; loB += g1; }
+                }
+            clipPct = 100.0 * clipped / Math.Max(n, 1);
+            hiTex = hiA > 0 ? hiB / hiA : double.NaN;
+            loTex = loA > 0 ? loB / loA : double.NaN;
+        }
+    }
+
+    private static void ShadowsHighlightsProbe(string path, string dest, double highlights, double shadows)
+    {
+        var src = new BitmapImage();
+        src.BeginInit();
+        src.UriSource = new Uri(Path.GetFullPath(path));
+        src.CacheOption = BitmapCacheOption.OnLoad;
+        src.DecodePixelWidth = 1600;
+        src.EndInit();
+        src.Freeze();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var outBmp = AdjustmentsProcessor.Apply(src, shadows / 100.0, 1.0, null, out _, extra: new PhotoAdjustments { Highlights = highlights / 100.0 });
+        Console.WriteLine($"sh probe: {src.PixelWidth}x{src.PixelHeight} hl={highlights} sh={shadows} {sw.ElapsedMilliseconds} ms -> {dest}");
+        var enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(outBmp!));
+        using var fs = File.Create(dest);
+        enc.Save(fs);
     }
 
     private static void HighlightProbe(string path)
