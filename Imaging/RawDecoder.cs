@@ -547,7 +547,7 @@ public static class RawDecoder
             }
             frame.Freeze();
             var rot = Rotated(frame, orient);
-            return (rot ?? (BitmapSource)frame, true);
+            return (ImageLoader.MaterializeFrozen(rot ?? (BitmapSource)frame), true);
         }
         if (t.ImageType == ProcessedImageType.Bitmap && t.Bits == 8 && t.Channels == 3 && t.Width > 0 && t.Height > 0)
         {

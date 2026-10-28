@@ -15,6 +15,7 @@ public sealed class CropOverlay : Canvas
     private readonly Rectangle _shadeLeft;
     private readonly Rectangle _shadeRight;
     private readonly Rectangle[] _thirds;
+    private readonly Rectangle[] _fine;
     private readonly Rectangle _border;
     private readonly Rectangle[] _handles;
 
@@ -64,6 +65,8 @@ public sealed class CropOverlay : Canvas
         _shadeLeft = Shade();
         _shadeRight = Shade();
         _thirds = new[] { Line(), Line(), Line(), Line() };
+        _fine = new Rectangle[14];
+        for (int i = 0; i < _fine.Length; i++) _fine[i] = LineFine();
         _border = new Rectangle
         {
             Stroke = FrozenBrush(255, 233, 234, 238),
@@ -98,6 +101,7 @@ public sealed class CropOverlay : Canvas
         Children.Add(_shadeLeft);
         Children.Add(_shadeRight);
         foreach (var t in _thirds) Children.Add(t);
+        foreach (var f in _fine) Children.Add(f);
         Children.Add(_border);
         foreach (var h in _handles) Children.Add(h);
 
@@ -168,6 +172,12 @@ public sealed class CropOverlay : Canvas
         StrokeThickness = 0
     };
 
+    private static Rectangle LineFine() => new()
+    {
+        Fill = FrozenBrush(52, 255, 255, 255),
+        StrokeThickness = 0
+    };
+
     private Rect FrameCropRect() => new(
         _frame.X + _fx * _frame.Width,
         _frame.Y + _fy * _frame.Height,
@@ -202,6 +212,7 @@ public sealed class CropOverlay : Canvas
             SetRect(_shadeLeft, 0, 0, 0, 0);
             SetRect(_shadeRight, 0, 0, 0, 0);
             foreach (var t in _thirds) SetRect(t, 0, 0, 0, 0);
+            foreach (var f in _fine) SetRect(f, 0, 0, 0, 0);
             SetRect(_border, 0, 0, 0, 0);
             foreach (var hd in _handles) SetRect(hd, 0, 0, 0, 0);
             return;
@@ -228,6 +239,23 @@ public sealed class CropOverlay : Canvas
         SetRect(_thirds[1], crop.Left + w * 2 / 3 - 0.5, crop.Top, 1.0, h);
         SetRect(_thirds[2], crop.Left, crop.Top + h / 3 - 0.5, w, 1.0);
         SetRect(_thirds[3], crop.Left, crop.Top + h * 2 / 3 - 0.5, w, 1.0);
+
+        bool rotating = _mode == Mode.Rotate;
+        for (int i = 0; i < _fine.Length; i++)
+        {
+            var r = _fine[i];
+            if (!rotating) { SetRect(r, 0, 0, 0, 0); continue; }
+            if (i < 7)
+            {
+                double x = crop.Left + w * (i + 1) / 8.0;
+                SetRect(r, x - 0.5, crop.Top, 1.0, h);
+            }
+            else
+            {
+                double y = crop.Top + h * (i - 6) / 8.0;
+                SetRect(r, crop.Left, y - 0.5, w, 1.0);
+            }
+        }
 
         SetRect(_border, crop.Left, crop.Top, w, h);
 
@@ -274,9 +302,13 @@ public sealed class CropOverlay : Canvas
         if (nearBottom) return Mode.EdgeS;
         if (nearLeft) return Mode.EdgeW;
         if (nearRight) return Mode.EdgeE;
-        if (inX && inY && crop.Contains(p)) return Mode.Move;
+        if (inX && inY && crop.Contains(p))
+            return CtrlHeld() ? Mode.Rotate : Mode.Move;
         return Mode.Rotate;
     }
+
+    private static bool CtrlHeld() =>
+        (System.Windows.Input.Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
 
     private static Cursor CursorFor(Mode mode) => mode switch
     {
@@ -304,6 +336,7 @@ public sealed class CropOverlay : Canvas
         Point center = Center(_frame);
         _startAtan = Math.Atan2(p.Y - center.Y, p.X - center.X);
         Cursor = CursorFor(_mode);
+        Redraw();
         CaptureMouse();
         e.Handled = true;
     }
@@ -358,6 +391,7 @@ public sealed class CropOverlay : Canvas
         if (_mode == Mode.None) return;
         _mode = Mode.None;
         Cursor = Cursors.Arrow;
+        Redraw();
         if (IsMouseCaptured) ReleaseMouseCapture();
         e.Handled = true;
         InteractionEnded?.Invoke();

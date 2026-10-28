@@ -107,8 +107,7 @@ public static class ImageLoader
         {
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.OnLoad);
-            var frame = decoder.Frames[0];
-            frame.Freeze();
+            var frame = MaterializeFrozen(decoder.Frames[0]);
             if (scale < 1.0 && frame.PixelWidth > 1 && frame.PixelHeight > 1)
             {
                 int dw2 = Math.Min(frame.PixelWidth, dw);
@@ -135,6 +134,28 @@ public static class ImageLoader
         }
 
         return NormalizeDpi(result);
+    }
+
+    internal static BitmapSource MaterializeFrozen(BitmapSource frame)
+    {
+        int w = frame.PixelWidth;
+        int h = frame.PixelHeight;
+        if (w <= 0 || h <= 0) return frame;
+        int bpp = (frame.Format.BitsPerPixel + 7) / 8;
+        if (bpp is not (1 or 3 or 4)) return frame;
+        int stride = (w * bpp + 3) / 4 * 4;
+        var buffer = new byte[(long)stride * h];
+        try
+        {
+            frame.CopyPixels(buffer, stride, 0);
+        }
+        catch (Exception)
+        {
+            return frame;
+        }
+        var plain = BitmapSource.Create(w, h, frame.DpiX, frame.DpiY, frame.Format, frame.Palette, buffer, stride);
+        plain.Freeze();
+        return plain;
     }
 
     internal static BitmapSource NormalizeDpi(BitmapSource source)

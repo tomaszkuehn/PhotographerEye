@@ -1,0 +1,25 @@
+PhotographerEye — portable viewer i mini-lab fotograficzny (Windows, WPF, .NET 8, jeden .exe)
+
+PRZEZNACZENIE
+Przeglądanie folderów zdjęć JPG/PNG, HEIC/HEIF/AVIF (iPhone) i RAW (RW2, NEF, ARW, CR2/CR3, ORF, RAF, DNG) z chwilową korektą tonalną i zapisem edycji w pełnej rozdzielczości (JPG 90% / TIFF 16-bit).
+
+FUNKCJE
+- RAW po ~0,3 s: miniatura aparatu, pełne dekodowanie 16-bit w tle z pre-fetchem sąsiadów (cache LRU).
+- Korekty w liniowej przestrzeni scenicznej: ekspozycja ±5 EV, kontrast, cienie/światła, balans bieli z pipetą, saturacja, clarity, dehaze, denoise, wyostrzanie.
+- Histogram interaktywny: punkty rozciągające krzywą zakotwiczone w EV (bake do suwaków lub krzywa stała).
+- Nieniszczące kadrowanie, rotacje 90°, prostowanie ±45° (live overlay: drag na miniaturze, pełna rez. w tle).
+- Undo/redo (10 stanów), pamięć edycji per zdjęcie, fingerprint ".eye" (JSON).
+- Czarno-biały tryb dokumentalny + emulacja Tri-X 400 z ziarnem.
+- Suwaki jak w Photoshopie: klik tracku, drag etykiety z modyfikatorami, wpisywanie wartości.
+
+ARCHITEKTURA
+- Dwutorowy pipeline: 8-bit dla JPG/PNG i planarny 16-bit RGB dla RAW w przestrzeni liniowej (WB/dehaze → maski EV cieni/świateł → tonemap extended Reinhard → sRGB).
+- GPU przez DirectCompute (ComputeSharp) z automatycznym fallbackiem na CPU, weryfikowana paritetem wyników (~0,03/65535).
+- Natywne dekodery w pakiecie: LibRaw (fallback dcraw_emu), LibHeif (własny parser ISOBMFF: irot/imir/clap) — bez zależności od WIC/Store.
+- Dla Sony krzywa tonalna aparatu z osadzonego podglądu JPEG (dopasowanie kwantyli), z bramkami walidacji i fallbackiem na autoekspozycję.
+
+TESTY
+- Autorski harness logiki (setki asercji PASS/FAIL): zoom/pan/fit i DPI, korekty, histogram i mapy EV (monotoniczność, roundtrip), pipeline RAW, paritet GPU vs CPU, determinizm ziarna, dekodowanie RAW/HEIC.
+- E2E przez UI Automation (PowerShell) na uruchomionej aplikacji + tryby diagnostyczne (--dump, --raworient, --heif-probe).
+
+Tech: C#, .NET 8, WPF, LibRaw, LibHeif, ComputeSharp; single-file self-contained.

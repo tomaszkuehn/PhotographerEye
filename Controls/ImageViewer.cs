@@ -22,6 +22,9 @@ public sealed partial class ImageViewer : Grid
     public event EventHandler<double>? ZoomChanged;
     public event EventHandler? ViewChanged;
     public event EventHandler<double>? RotateDragged;
+    public event EventHandler? RotateEnded;
+
+    public bool IsRotating => _rotating;
 
     public ImageViewer()
     {
@@ -267,10 +270,12 @@ public sealed partial class ImageViewer : Grid
     private void OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (!_dragging && !_rotating) return;
+        bool wasRotating = _rotating;
         _dragging = false;
         _rotating = false;
         Cursor = Cursors.Arrow;
         if (IsMouseCaptured) ReleaseMouseCapture();
+        if (wasRotating) RotateEnded?.Invoke(this, EventArgs.Empty);
         e.Handled = true;
     }
 

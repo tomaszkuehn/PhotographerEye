@@ -68,6 +68,12 @@ public partial class MainWindow : Window
     private bool _suppressCropCombo;
     private BitmapSource? _lastDisplayed;
     private Size _lastDisplayedBox;
+    private BitmapSource? _unGeoSrc;
+    private Size _unGeoBox;
+    private int _unGeoSeq;
+    private BitmapSource? _liveSrc;
+    private Size _liveBox;
+    private int _liveSeq = -1;
     private string _lastDimsText = "";
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _adjustTimer;
@@ -109,6 +115,7 @@ public partial class MainWindow : Window
         ShadowSlider.ValueChanged += OnToolbarShadowSynced;
         Viewer.PreviewMouseLeftButtonDown += OnViewerPickClick;
         Viewer.RotateDragged += OnViewerRotateDrag;
+        Viewer.RotateEnded += OnViewerRotateEnded;
         Viewer.ViewChanged += (_, _) => { if (_cropMode && !CropOverlay.IsInteracting) CropOverlay.Sync(); };
         CropOverlay.GeometryChanged += OnCropGeometryChanged;
         CropOverlay.RotateChanged += OnCropRotateChanged;
@@ -134,6 +141,7 @@ public partial class MainWindow : Window
         _adjustTimer.Tick += (_, _) =>
         {
             _adjustTimer.Stop();
+            if (IsGeoInteracting) return;
             ReapplyAdjustments();
         };
 
@@ -222,6 +230,7 @@ public partial class MainWindow : Window
         SetCropMode(false);
         _lastDisplayed = null;
         _lastDisplayedBox = default;
+        InvalidateUnGeo();
         _lastDimsText = "";
         _monoSeed = MonoSeed(path);
         _hist = new List<EyeState>();
@@ -501,6 +510,7 @@ public partial class MainWindow : Window
                 : !geoAngle && AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null)
         {
             _applyCts?.Cancel();
+            StoreUnGeo(raw, box);
             var (fast, fastBox) = PhotoGeo.Apply(raw, box, displayGeo);
             SetDisplayed(fast, fastBox);
             if (geoActive) UpdateHistogram(path, fast);
@@ -535,9 +545,10 @@ public partial class MainWindow : Window
                     var (gdisp, gbox) = PhotoGeo.Apply(disp, box, displayGeo);
                     Dispatcher.BeginInvoke(() =>
                     {
-                        if (!IsCurrent(path) || !ReferenceEquals(_baseRaw16, raw16)) return;
-                        if (_compareOn) return;
-                        SetDisplayed(gdisp, gbox);
+                    if (!IsCurrent(path) || !ReferenceEquals(_baseRaw16, raw16)) return;
+                    if (_compareOn) return;
+                    StoreUnGeo(disp, box);
+                    SetDisplayed(gdisp, gbox);
                         if (geoActive) UpdateHistogram(path, gdisp);
                         else if (hist is not null) ApplyHistogram(path, hist);
                     });
@@ -557,6 +568,7 @@ public partial class MainWindow : Window
                     {
                         return;
                     }
+                    StoreUnGeo(processed, box);
                     SetDisplayed(gprocessed, gbox8);
                     if (geoActive) UpdateHistogram(path, gprocessed);
                     else if (hist8 is not null) ApplyHistogram(path, hist8);
@@ -793,6 +805,13 @@ public partial class MainWindow : Window
     private void ScheduleApplyWithThrottle()
     {
         if (_adjustTimer is null) return;
+        if (IsGeoInteracting)
+        {
+            _adjustTimer.Stop();
+            _lastApplyTicks = Environment.TickCount64;
+            RenderLiveGeoPreview();
+            return;
+        }
         long now = Environment.TickCount64;
         if (now - _lastApplyTicks >= 40)
         {
@@ -805,6 +824,97 @@ public partial class MainWindow : Window
             _adjustTimer.Stop();
             _adjustTimer.Start();
         }
+    }
+
+    private bool IsGeoInteracting => CropOverlay.IsInteracting || Viewer.IsRotating;
+
+    private void StoreUnGeo(BitmapSource src, Size box)
+    {
+        _unGeoSrc = src;
+        _unGeoBox = box;
+        _unGeoSeq++;
+    }
+
+    private void InvalidateUnGeo()
+    {
+        _unGeoSrc = null;
+        _unGeoBox = default;
+        _unGeoSeq++;
+        _liveSrc = null;
+        _liveBox = default;
+        _liveSeq++;
+    }
+
+    private void RenderLiveGeoPreview()
+    {
+        if (_compareOn) return;
+        var src = _unGeoSrc;
+        if (src is null || _unGeoBox.Width <= 0)
+        {
+            ReapplyAdjustments();
+            return;
+        }
+
+        var displayGeo = _cropMode ? _geo with { CropX = 0.0, CropY = 0.0, CropW = 1.0, CropH = 1.0 } : _geo;
+        if (displayGeo.IsDefault)
+        {
+            SetDisplayed(src, _unGeoBox);
+            return;
+        }
+
+        int seq = _unGeoSeq;
+        if (_liveSeq != seq)
+        {
+            double srcLong = Math.Max(src.PixelWidth, src.PixelHeight);
+            double vp = Math.Max(1024.0, Math.Max(Viewer.ActualWidth, Viewer.ActualHeight));
+            double target = Math.Min(3200.0, vp * Math.Max(1.0, Viewer.Zoom));
+            double scale = Math.Min(1.0, target / srcLong);
+            _liveSeq = seq;
+            if (scale > 0.9995)
+            {
+                _liveSrc = src;
+                _liveBox = _unGeoBox;
+            }
+            else
+            {
+                _liveSrc = null;
+                _liveBox = default;
+                Size box = _unGeoBox;
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        var st = new ScaleTransform(scale, scale, 0.0, 0.0);
+                        st.Freeze();
+                        var tb = new TransformedBitmap(src, st);
+                        tb.Freeze();
+                        var conv = new FormatConvertedBitmap(tb, PixelFormats.Bgra32, null, 0);
+                        conv.Freeze();
+                        int w = conv.PixelWidth;
+                        int h = conv.PixelHeight;
+                        byte[] buf = new byte[(long)w * 4 * h];
+                        conv.CopyPixels(buf, w * 4, 0);
+                        var mat = BitmapSource.Create(w, h, src.DpiX, src.DpiY, PixelFormats.Bgra32, null, buf, w * 4);
+                        mat.Freeze();
+                        Dispatcher.BeginInvoke(() =>
+                        {
+                            if (_unGeoSeq != seq) return;
+                            _liveSrc = mat;
+                            _liveBox = new Size(box.Width * scale, box.Height * scale);
+                            if (IsGeoInteracting) RenderLiveGeoPreview();
+                        });
+                    }
+                    catch (Exception)
+                    {
+                    }
+                });
+            }
+        }
+
+        if (_liveSrc is null) return;
+
+        var (gsrc, gbox) = PhotoGeo.Apply(_liveSrc, _liveBox, displayGeo);
+        SetDisplayed(gsrc, gbox);
     }
 
     private void OnComparePress(object sender, MouseButtonEventArgs e)
@@ -861,6 +971,11 @@ public partial class MainWindow : Window
         BtnCrop.Foreground = (Brush)FindResource(open ? "AccentBrush" : "ForegroundBrush");
         CropOverlay.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         CropBar.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        bool editOn = !open;
+        ShadowSlider.IsEnabled = editOn;
+        GammaSlider.IsEnabled = editOn;
+        RightPanel.IsEnabled = editOn;
+        HistHost.IsEnabled = editOn;
         if (open)
         {
             _suppressCropCombo = true;
@@ -868,12 +983,13 @@ public partial class MainWindow : Window
             finally { _suppressCropCombo = false; }
             CropOverlay.Aspect = ResolveAspect(_geo.Aspect);
             CropOverlay.SetGeometry(_geo.CropX, _geo.CropY, _geo.CropW, _geo.CropH, _geo.Angle);
-            SetStatus("Crop — drag inside: move, handles: resize, drag outside or Ctrl+drag: rotate, Esc: close", error: false);
+            SetStatus("Crop — drag inside: move, handles: resize, drag outside or Ctrl+drag anywhere: rotate, Esc: close", error: false);
         }
         else
         {
             CropOverlay.Hide();
         }
+        RenderLiveGeoPreview();
         ReapplyAdjustments();
     }
 
@@ -892,6 +1008,7 @@ public partial class MainWindow : Window
             CropOverlay.SetGeometry(_geo.CropX, _geo.CropY, _geo.CropW, _geo.CropH, _geo.Angle);
         }
         UpdateSaveState();
+        RenderLiveGeoPreview();
         ReapplyAdjustments();
         ScheduleHistCommit();
         SetStatus(turns > 0 ? "Rotated 90° right — orientation swapped" : "Rotated 90° left — orientation swapped", error: false);
@@ -906,6 +1023,13 @@ public partial class MainWindow : Window
         ScheduleApplyWithThrottle();
         ScheduleHistCommit();
         SetStatus($"Straighten {_geo.Angle:0.0}° (Ctrl+drag)", error: false);
+    }
+
+    private void OnViewerRotateEnded(object? sender, EventArgs e)
+    {
+        if (IsGeoInteracting || _baseBitmap is null) return;
+        ReapplyAdjustments();
+        ScheduleHistCommit();
     }
 
     private void OnCropGeometryChanged()
@@ -951,6 +1075,7 @@ public partial class MainWindow : Window
             CropOverlay.SetGeometry(0, 0, 1, 1, 0);
         }
         UpdateSaveState();
+        RenderLiveGeoPreview();
         ReapplyAdjustments();
         ScheduleHistCommit();
         SetStatus("Crop reset to original frame", error: false);
@@ -969,6 +1094,7 @@ public partial class MainWindow : Window
             CropOverlay.SetGeometry(_geo.CropX, _geo.CropY, _geo.CropW, _geo.CropH, _geo.Angle);
         }
         UpdateSaveState();
+        RenderLiveGeoPreview();
         ReapplyAdjustments();
         ScheduleHistCommit();
         SetStatus($"Crop aspect: {item.Content}", error: false);
