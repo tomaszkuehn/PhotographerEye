@@ -12,6 +12,8 @@ public sealed record ViewerSettings
     public Dictionary<string, bool>? PluginFiles { get; init; }
     /// <summary>Why a plugin was switched off automatically (key = plugin id).</summary>
     public Dictionary<string, string>? PluginDisabledReason { get; init; }
+    /// <summary>Adjustments panel: expanded (true) / collapsed (false) plugin sections chosen by the user (key = plugin id).</summary>
+    public Dictionary<string, bool>? PluginSectionExpanded { get; init; }
 }
 
 public static class SettingsStore

@@ -370,6 +370,7 @@ public partial class MainWindow
 
     private void OnPluginUiChanged()
     {
+        UpdatePluginSectionBadges();
         _showHistogram = true;
         HistHost.Visibility = RightPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Hidden;
         UpdateSaveState();
@@ -381,27 +382,283 @@ public partial class MainWindow
         ScheduleHistCommit();
     }
 
+    private Dictionary<string, bool>? _pluginExpandedUser;
+    private readonly HashSet<string> _pluginExpandedSession = new(StringComparer.Ordinal);
+    private readonly List<(FrameworkElement Badge, List<Registered<FilterDescriptor>> Filters)> _pluginSectionBadges = new();
+
+    private static string SectionName(Registered<FilterDescriptor> f) => f.IsCore ? "Built-in" : f.PluginName;
+
+    private bool IsSectionExpanded(string pluginId, bool active)
+    {
+        _pluginExpandedUser ??= SettingsStore.Load().PluginSectionExpanded is { } m
+            ? new Dictionary<string, bool>(m, StringComparer.Ordinal)
+            : new Dictionary<string, bool>(StringComparer.Ordinal);
+        if (_pluginExpandedUser.TryGetValue(pluginId, out var user)) return user;
+        // No explicit choice: open sections that edit this photo, and keep them open for the session.
+        if (active) _pluginExpandedSession.Add(pluginId);
+        return _pluginExpandedSession.Contains(pluginId);
+    }
+
+    private void SetSectionExpanded(string pluginId, bool expanded)
+    {
+        _pluginExpandedUser ??= new Dictionary<string, bool>(StringComparer.Ordinal);
+        _pluginExpandedUser[pluginId] = expanded;
+        if (expanded) _pluginExpandedSession.Add(pluginId);
+        else _pluginExpandedSession.Remove(pluginId);
+        try
+        {
+            SettingsStore.Save(SettingsStore.Load() with { PluginSectionExpanded = new Dictionary<string, bool>(_pluginExpandedUser) });
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"PLUGINS: save section state failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Refreshes the "edits this photo" dot of every plugin section (no rebuild).</summary>
+    private void UpdatePluginSectionBadges()
+    {
+        foreach (var (badge, filters) in _pluginSectionBadges)
+            badge.Visibility = filters.Any(_pluginState.IsFilterActive) ? Visibility.Visible : Visibility.Hidden;
+    }
+
     private void BuildPluginPanel()
     {
         var muted = (Brush)FindResource("MutedBrush");
         var border = (Brush)FindResource("BorderBrushCol");
+        _pluginSectionBadges.Clear();
         var ordered = new List<Registered<FilterDescriptor>>();
         foreach (var stage in new[] { FilterStage.SceneLinear, FilterStage.Display, FilterStage.Output })
             ordered.AddRange(_pluginState.Ordered(_pluginReg, stage)
                 .Where(f => f.D.Params.Count > 0 || f.D.Placement == FilterPlacement.Panel));
-        var groups = ordered.GroupBy(f => string.IsNullOrWhiteSpace(f.D.Group) ? "Plugins" : f.D.Group).ToList();
-        foreach (var g in groups)
+        if (ordered.Count == 0) return;
+
+        PluginPanelHost.Children.Add(new Border
         {
-            PluginPanelHost.Children.Add(new Border
-            {
-                BorderBrush = border,
-                BorderThickness = new Thickness(0, 1, 0, 0),
-                Margin = new Thickness(0, 16, 0, 0),
-                Padding = new Thickness(0, 6, 0, 0),
-                Child = new TextBlock { Text = g.Key.ToUpperInvariant(), Foreground = muted, FontSize = 11, FontWeight = FontWeights.SemiBold }
-            });
-            foreach (var f in g) PluginPanelHost.Children.Add(BuildFilterSection(f, muted));
+            BorderBrush = border,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Margin = new Thickness(0, 16, 0, 0),
+            Padding = new Thickness(0, 6, 0, 0),
+            Child = new TextBlock { Text = "PLUGINS", Foreground = muted, FontSize = 11, FontWeight = FontWeights.SemiBold }
+        });
+
+        // One collapsible section per plugin (built-in filters first), filters inside in run order.
+        var sections = ordered.GroupBy(f => f.PluginId)
+            .OrderBy(g => g.First().IsCore ? 0 : 1)
+            .ThenBy(g => SectionName(g.First()), StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        foreach (var g in sections)
+            PluginPanelHost.Children.Add(BuildPluginSection(g.Key, g.ToList(), muted, border));
+    }
+
+    private FrameworkElement BuildPluginSection(string pluginId, List<Registered<FilterDescriptor>> filters, Brush muted, Brush border)
+    {
+        var first = filters[0];
+        bool single = filters.Count == 1;
+        bool active = filters.Any(_pluginState.IsFilterActive);
+        bool expanded = IsSectionExpanded(pluginId, active);
+        bool faulted = first.Owner is { Faulted: true };
+
+        var root = new StackPanel();
+        // Outer frame: transparent when collapsed, light accent (blue) tint when expanded.
+        var frame = new Border
+        {
+            Margin = new Thickness(0, 6, 0, 0),
+            CornerRadius = new CornerRadius(4),
+            BorderThickness = new Thickness(1),
+            BorderBrush = Brushes.Transparent,
+            Background = Brushes.Transparent,
+            Child = root
+        };
+        AutomationProperties.SetAutomationId(frame, "PluginGroup_" + pluginId);
+        var accent = (TryFindResource("AccentBrush") as SolidColorBrush)?.Color ?? Color.FromRgb(0x6C, 0xB2, 0xFF);
+        Brush Tint(byte alpha)
+        {
+            var b = new SolidColorBrush(Color.FromArgb(alpha, accent.R, accent.G, accent.B));
+            b.Freeze();
+            return b;
         }
+        Brush frameBg = Tint(0x1A), frameBorder = Tint(0x70), headOpen = Tint(0x38), headOpenHover = Tint(0x4C);
+
+        var header = new Border
+        {
+            BorderBrush = border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3),
+            Padding = new Thickness(6, 4, 4, 4),
+            Cursor = Cursors.Hand,
+            Focusable = true,
+            ToolTip = SectionTooltip(first, filters)
+        };
+        bool isOpen = false, hover = false;
+        void PaintHeader()
+        {
+            if (isOpen)
+            {
+                header.Background = hover ? headOpenHover : headOpen;
+                header.BorderBrush = Brushes.Transparent;
+            }
+            else
+            {
+                header.SetResourceReference(Border.BackgroundProperty, hover ? "ControlHoverBrush" : "ControlBrush");
+                header.BorderBrush = border;
+            }
+        }
+        header.MouseEnter += (_, _) => { hover = true; PaintHeader(); };
+        header.MouseLeave += (_, _) => { hover = false; PaintHeader(); };
+        AutomationProperties.SetAutomationId(header, "PluginGroupHeader_" + pluginId);
+        AutomationProperties.SetName(header, SectionName(first));
+
+        var dock = new DockPanel { LastChildFill = true };
+        var chevron = new TextBlock
+        {
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = 9,
+            Width = 14,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = muted
+        };
+        DockPanel.SetDock(chevron, Dock.Left);
+        dock.Children.Add(chevron);
+
+        // Right side: per-filter controls when the plugin has one filter, otherwise "reset all".
+        var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (single)
+        {
+            foreach (var el in FilterHeaderTools(first)) tools.Children.Add(el);
+        }
+        else
+        {
+            var resetAll = SmallButton("", "Reset all filters of this plugin");
+            resetAll.Click += (_, _) =>
+            {
+                foreach (var f in filters) ResetFilterKeepMask(f);
+                DeferRebuild();
+                OnPluginUiChanged();
+            };
+            tools.Children.Add(resetAll);
+        }
+        DockPanel.SetDock(tools, Dock.Right);
+        dock.Children.Add(tools);
+
+        var badge = new TextBlock
+        {
+            Text = "●",
+            FontSize = 9,
+            Margin = new Thickness(4, 0, 2, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = "Changes this photo",
+            Visibility = active ? Visibility.Visible : Visibility.Hidden
+        };
+        badge.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
+        DockPanel.SetDock(badge, Dock.Right);
+        dock.Children.Add(badge);
+        _pluginSectionBadges.Add((badge, filters));
+
+        var title = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        title.Inlines.Add(new System.Windows.Documents.Run(SectionName(first)) { FontWeight = FontWeights.SemiBold });
+        string sub = single
+            ? (string.Equals(first.D.Label, first.PluginName, StringComparison.CurrentCultureIgnoreCase) ? StageBadge(first) : first.D.Label + StageSuffix(first))
+            : $"{filters.Count} filters";
+        if (sub.Length > 0)
+            title.Inlines.Add(new System.Windows.Documents.Run("  " + sub) { Foreground = muted, FontSize = 10 });
+        dock.Children.Add(title);
+        header.Child = dock;
+        root.Children.Add(header);
+
+        var body = new StackPanel { Margin = new Thickness(8, 0, 6, 8) };
+        if (faulted)
+        {
+            var t = new TextBlock { Text = "Disabled — the plugin failed. Re-enable it in Settings ▸ Plugins.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
+            t.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush");
+            body.Children.Add(t);
+        }
+        foreach (var f in filters)
+            body.Children.Add(single ? BuildFilterBody(f, muted) : BuildFilterSection(f, muted));
+        root.Children.Add(body);
+
+        void Apply(bool open)
+        {
+            isOpen = open;
+            body.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            frame.Background = open ? frameBg : Brushes.Transparent;
+            frame.BorderBrush = open ? frameBorder : Brushes.Transparent;
+            PaintHeader();
+            chevron.Text = open ? "" : "";
+            AutomationProperties.SetHelpText(header, open ? "expanded" : "collapsed");
+        }
+        Apply(expanded);
+        void Toggle()
+        {
+            bool open = body.Visibility != Visibility.Visible;
+            Apply(open);
+            SetSectionExpanded(pluginId, open);
+        }
+        header.MouseLeftButtonUp += (_, e) => { Toggle(); e.Handled = true; };
+        header.KeyDown += (_, e) =>
+        {
+            if (e.Key is Key.Enter or Key.Space) { Toggle(); e.Handled = true; }
+        };
+        return frame;
+    }
+
+    private static string StageSuffix(Registered<FilterDescriptor> f) => StageBadge(f) is { Length: > 0 } b ? " · " + b : "";
+
+    private static string StageBadge(Registered<FilterDescriptor> f) => f.D.Stage switch
+    {
+        FilterStage.Output => "post-crop",
+        FilterStage.SceneLinear => "linear",
+        _ => ""
+    };
+
+    private static string SectionTooltip(Registered<FilterDescriptor> first, List<Registered<FilterDescriptor>> filters)
+    {
+        var parts = new List<string>();
+        if (first.IsCore) parts.Add("Built-in filters of PhotographerEye");
+        else
+        {
+            var o = first.Owner!;
+            parts.Add($"Plugin {o.Name}" + (string.IsNullOrEmpty(o.Version) ? "" : $" {o.Version}") + (string.IsNullOrEmpty(o.Author) ? "" : $" by {o.Author}"));
+            if (!string.IsNullOrWhiteSpace(o.Description)) parts.Add(o.Description);
+            if (o.Faulted) parts.Add("Disabled: " + (o.DisabledReason ?? o.Error ?? "plugin failed"));
+        }
+        parts.Add("Filters: " + string.Join(", ", filters.Select(f => f.D.Label)));
+        parts.Add("Click to expand or collapse");
+        return string.Join("\n", parts);
+    }
+
+    private void ResetFilterKeepMask(Registered<FilterDescriptor> f)
+    {
+        var mask = _pluginState.Masks.TryGetValue(f.FullId, out var m) ? m : null;
+        _pluginState.ResetFilter(f);
+        if (mask is not null) _pluginState.Masks[f.FullId] = mask;
+    }
+
+    /// <summary>Enable checkbox (parameterless panel filters), run earlier/later and reset.</summary>
+    private List<FrameworkElement> FilterHeaderTools(Registered<FilterDescriptor> f)
+    {
+        var list = new List<FrameworkElement>();
+        if (f.D.Params.Count == 0 && f.D.Placement == FilterPlacement.Panel)
+        {
+            var cb = new CheckBox { IsChecked = _pluginState.Active.Contains(f.FullId), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0), ToolTip = "Apply " + f.D.Label };
+            cb.Click += (_, _) => SetFilterActive(f, cb.IsChecked == true);
+            list.Add(cb);
+        }
+        var up = SmallButton("", "Run earlier (order among all plugin filters of the same stage)");
+        up.Click += (_, _) => { if (_pluginState.Move(_pluginReg, f, -1)) { DeferRebuild(); OnPluginUiChanged(); } };
+        var down = SmallButton("", "Run later (order among all plugin filters of the same stage)");
+        down.Click += (_, _) => { if (_pluginState.Move(_pluginReg, f, +1)) { DeferRebuild(); OnPluginUiChanged(); } };
+        var reset = SmallButton("", "Reset " + f.D.Label);
+        reset.Click += (_, _) =>
+        {
+            ResetFilterKeepMask(f);
+            DeferRebuild();
+            OnPluginUiChanged();
+        };
+        list.Add(up);
+        list.Add(down);
+        list.Add(reset);
+        return list;
     }
 
     private static Button SmallButton(string glyph, string tip)
@@ -422,55 +679,32 @@ public partial class MainWindow
         return b;
     }
 
+    /// <summary>A filter inside a multi-filter plugin section: sub-header with its own tools, then its controls.</summary>
     private FrameworkElement BuildFilterSection(Registered<FilterDescriptor> f, Brush muted)
     {
         var section = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
         AutomationProperties.SetAutomationId(section, "PluginSection_" + f.FullId);
-        bool faulted = IsFaulted(f);
 
         var header = new DockPanel { LastChildFill = true };
-        var reset = SmallButton("", "Reset this filter");
-        reset.Click += (_, _) =>
-        {
-            var mask = _pluginState.Masks.TryGetValue(f.FullId, out var m) ? m : null;
-            _pluginState.ResetFilter(f);
-            if (mask is not null) _pluginState.Masks[f.FullId] = mask;
-            DeferRebuild();
-            OnPluginUiChanged();
-        };
-        var down = SmallButton("", "Run later");
-        down.Click += (_, _) => { if (_pluginState.Move(_pluginReg, f, +1)) { DeferRebuild(); OnPluginUiChanged(); } };
-        var up = SmallButton("", "Run earlier");
-        up.Click += (_, _) => { if (_pluginState.Move(_pluginReg, f, -1)) { DeferRebuild(); OnPluginUiChanged(); } };
-        DockPanel.SetDock(reset, Dock.Right);
-        DockPanel.SetDock(down, Dock.Right);
-        DockPanel.SetDock(up, Dock.Right);
-        header.Children.Add(reset);
-        header.Children.Add(down);
-        header.Children.Add(up);
-
-        if (f.D.Params.Count == 0 && f.D.Placement == FilterPlacement.Panel)
-        {
-            var cb = new CheckBox { IsChecked = _pluginState.Active.Contains(f.FullId), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
-            cb.Click += (_, _) => SetFilterActive(f, cb.IsChecked == true);
-            DockPanel.SetDock(cb, Dock.Left);
-            header.Children.Add(cb);
-        }
+        var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var el in FilterHeaderTools(f)) tools.Children.Add(el);
+        DockPanel.SetDock(tools, Dock.Right);
+        header.Children.Add(tools);
         var title = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = FilterTooltip(f) };
         title.Inlines.Add(new System.Windows.Documents.Run(f.D.Label) { FontWeight = FontWeights.SemiBold });
-        if (f.D.Stage != FilterStage.Display)
-            title.Inlines.Add(new System.Windows.Documents.Run("  " + (f.D.Stage == FilterStage.Output ? "post-crop" : "linear")) { Foreground = muted, FontSize = 10 });
+        if (StageBadge(f) is { Length: > 0 } badge)
+            title.Inlines.Add(new System.Windows.Documents.Run("  " + badge) { Foreground = muted, FontSize = 10 });
         header.Children.Add(title);
         section.Children.Add(header);
+        section.Children.Add(BuildFilterBody(f, muted));
+        return section;
+    }
 
-        if (faulted)
-        {
-            var t = new TextBlock { Text = "Disabled — the plugin failed", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
-            t.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush");
-            section.Children.Add(t);
-        }
-
-        var body = new StackPanel { IsEnabled = !faulted };
+    /// <summary>Parameter controls (and mask controls) of one filter.</summary>
+    private FrameworkElement BuildFilterBody(Registered<FilterDescriptor> f, Brush muted)
+    {
+        var body = new StackPanel { IsEnabled = !IsFaulted(f) };
+        AutomationProperties.SetAutomationId(body, "PluginBody_" + f.FullId);
         foreach (var d in f.D.Params)
         {
             try
@@ -486,8 +720,7 @@ public partial class MainWindow
         }
         if (f.D.SupportsMask && f.D.Stage != FilterStage.Output)
             body.Children.Add(BuildMaskControls(f, muted));
-        section.Children.Add(body);
-        return section;
+        return body;
     }
 
     private void DeferRebuild() => Dispatcher.BeginInvoke(RebuildPluginUi, System.Windows.Threading.DispatcherPriority.Background);
