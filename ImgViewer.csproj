@@ -31,6 +31,7 @@
     <Compile Remove="tools\**" />
     <Compile Remove="PluginSdk\**" />
     <Compile Remove="plugins-samples\**" />
+    <Compile Remove="plugins-auto\**" />
     <Resource Include="Assets\icon.ico" />
     <None Include="thirdparty\libraw22\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="thirdparty\librawhe\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
@@ -40,10 +41,12 @@
     <ProjectReference Include="PluginSdk\ImgViewer.Plugin.Abstractions.csproj" />
     <!-- Built together with the app so the bundled sample plugins are never stale; not referenced by the app code. -->
     <ProjectReference Include="plugins-samples\ImgViewer.Plugins.Samples.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="plugins-auto\ImgViewer.Plugins.AutoEnhance.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <PropertyGroup>
     <PluginSamplesBin>plugins-samples\bin\$(Configuration)\netstandard2.0\</PluginSamplesBin>
+    <PluginAutoBin>plugins-auto\bin\$(Configuration)\netstandard2.0\</PluginAutoBin>
   </PropertyGroup>
 
   <Target Name="CopyLibRaw22ToPublish" AfterTargets="Publish">
@@ -66,6 +69,23 @@
     </ItemGroup>
     <Copy SourceFiles="@(PluginSampleBin)" DestinationFolder="$(OutDir)plugins\samples" SkipUnchangedFiles="true" Condition="@(PluginSampleBin->Count()) &gt; 0" />
     <Delete Files="$(OutDir)plugins\ImgViewer.Plugins.Samples.dll" ContinueOnError="true" />
+  </Target>
+
+  <!-- Auto enhance plugin ships as plugins\autoenhance\{manifest.json, ImgViewer.Plugins.AutoEnhance.dll}. -->
+  <Target Name="CopyPluginAutoToPublish" AfterTargets="Publish">
+    <ItemGroup Condition="Exists('$(PluginAutoBin)ImgViewer.Plugins.AutoEnhance.dll')">
+      <PluginAutoFile Include="$(PluginAutoBin)ImgViewer.Plugins.AutoEnhance.dll;plugins-auto\manifest.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginAutoFile)" DestinationFolder="$(PublishDir)plugins\autoenhance" SkipUnchangedFiles="true" Condition="@(PluginAutoFile->Count()) &gt; 0" />
+    <Delete Files="$(PublishDir)plugins\ImgViewer.Plugins.AutoEnhance.dll" ContinueOnError="true" />
+  </Target>
+
+  <Target Name="CopyPluginAutoToOutput" AfterTargets="Build">
+    <ItemGroup Condition="Exists('$(PluginAutoBin)ImgViewer.Plugins.AutoEnhance.dll')">
+      <PluginAutoFile Include="$(PluginAutoBin)ImgViewer.Plugins.AutoEnhance.dll;plugins-auto\manifest.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginAutoFile)" DestinationFolder="$(OutDir)plugins\autoenhance" SkipUnchangedFiles="true" Condition="@(PluginAutoFile->Count()) &gt; 0" />
+    <Delete Files="$(OutDir)plugins\ImgViewer.Plugins.AutoEnhance.dll" ContinueOnError="true" />
   </Target>
 
 </Project>

@@ -20,6 +20,22 @@ internal static partial class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Length > 2 && args[0] == "--auto-color")
+        {
+            AutoColorProbe(args[1], args[2]);
+            return;
+        }
+        if (args.Length > 1 && args[0] == "--auto-probe")
+        {
+            AutoEnhanceProbe(args[1], args.Length > 2 ? args[2] : null);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--auto")
+        {
+            TestAutoEnhance();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--sdcb-corr")
         {
             SdcbCorr(args[1]);
@@ -193,6 +209,7 @@ internal static partial class Program
         TestColorSpeckle();
         TestNoiseReductionDetail();
         TestPluginSamples();
+        TestAutoEnhance();
         TestPhotoMeta();
         TestRawPreview();
         TestHeif();
