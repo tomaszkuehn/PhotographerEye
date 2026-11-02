@@ -388,14 +388,14 @@ public partial class MainWindow
 
     private static string SectionName(Registered<FilterDescriptor> f) => f.IsCore ? "Built-in" : f.PluginName;
 
-    private bool IsSectionExpanded(string pluginId, bool active)
+    private bool IsSectionExpanded(string pluginId, bool active, bool defaultOpen = false)
     {
         _pluginExpandedUser ??= SettingsStore.Load().PluginSectionExpanded is { } m
             ? new Dictionary<string, bool>(m, StringComparer.Ordinal)
             : new Dictionary<string, bool>(StringComparer.Ordinal);
         if (_pluginExpandedUser.TryGetValue(pluginId, out var user)) return user;
         // No explicit choice: open sections that edit this photo, and keep them open for the session.
-        if (active) _pluginExpandedSession.Add(pluginId);
+        if (active || defaultOpen) _pluginExpandedSession.Add(pluginId);
         return _pluginExpandedSession.Contains(pluginId);
     }
 
@@ -456,76 +456,13 @@ public partial class MainWindow
         var first = filters[0];
         bool single = filters.Count == 1;
         bool active = filters.Any(_pluginState.IsFilterActive);
-        bool expanded = IsSectionExpanded(pluginId, active);
         bool faulted = first.Owner is { Faulted: true };
 
-        var root = new StackPanel();
-        // Outer frame: transparent when collapsed, light accent (blue) tint when expanded.
-        var frame = new Border
-        {
-            Margin = new Thickness(0, 6, 0, 0),
-            CornerRadius = new CornerRadius(4),
-            BorderThickness = new Thickness(1),
-            BorderBrush = Brushes.Transparent,
-            Background = Brushes.Transparent,
-            Child = root
-        };
-        AutomationProperties.SetAutomationId(frame, "PluginGroup_" + pluginId);
-        var accent = (TryFindResource("AccentBrush") as SolidColorBrush)?.Color ?? Color.FromRgb(0x6C, 0xB2, 0xFF);
-        Brush Tint(byte alpha)
-        {
-            var b = new SolidColorBrush(Color.FromArgb(alpha, accent.R, accent.G, accent.B));
-            b.Freeze();
-            return b;
-        }
-        Brush frameBg = Tint(0x1A), frameBorder = Tint(0x70), headOpen = Tint(0x38), headOpenHover = Tint(0x4C);
-
-        var header = new Border
-        {
-            BorderBrush = border,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
-            Padding = new Thickness(6, 4, 4, 4),
-            Cursor = Cursors.Hand,
-            Focusable = true,
-            ToolTip = SectionTooltip(first, filters)
-        };
-        bool isOpen = false, hover = false;
-        void PaintHeader()
-        {
-            if (isOpen)
-            {
-                header.Background = hover ? headOpenHover : headOpen;
-                header.BorderBrush = Brushes.Transparent;
-            }
-            else
-            {
-                header.SetResourceReference(Border.BackgroundProperty, hover ? "ControlHoverBrush" : "ControlBrush");
-                header.BorderBrush = border;
-            }
-        }
-        header.MouseEnter += (_, _) => { hover = true; PaintHeader(); };
-        header.MouseLeave += (_, _) => { hover = false; PaintHeader(); };
-        AutomationProperties.SetAutomationId(header, "PluginGroupHeader_" + pluginId);
-        AutomationProperties.SetName(header, SectionName(first));
-
-        var dock = new DockPanel { LastChildFill = true };
-        var chevron = new TextBlock
-        {
-            FontFamily = new FontFamily("Segoe MDL2 Assets"),
-            FontSize = 9,
-            Width = 14,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = muted
-        };
-        DockPanel.SetDock(chevron, Dock.Left);
-        dock.Children.Add(chevron);
-
         // Right side: per-filter controls when the plugin has one filter, otherwise "reset all".
-        var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var tools = new List<UIElement>();
         if (single)
         {
-            foreach (var el in FilterHeaderTools(first)) tools.Children.Add(el);
+            tools.AddRange(FilterHeaderTools(first));
         }
         else
         {
@@ -536,37 +473,14 @@ public partial class MainWindow
                 DeferRebuild();
                 OnPluginUiChanged();
             };
-            tools.Children.Add(resetAll);
+            tools.Add(resetAll);
         }
-        DockPanel.SetDock(tools, Dock.Right);
-        dock.Children.Add(tools);
 
-        var badge = new TextBlock
-        {
-            Text = "●",
-            FontSize = 9,
-            Margin = new Thickness(4, 0, 2, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            ToolTip = "Changes this photo",
-            Visibility = active ? Visibility.Visible : Visibility.Hidden
-        };
-        badge.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
-        DockPanel.SetDock(badge, Dock.Right);
-        dock.Children.Add(badge);
-        _pluginSectionBadges.Add((badge, filters));
-
-        var title = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-        title.Inlines.Add(new System.Windows.Documents.Run(SectionName(first)) { FontWeight = FontWeights.SemiBold });
         string sub = single
             ? (string.Equals(first.D.Label, first.PluginName, StringComparison.CurrentCultureIgnoreCase) ? StageBadge(first) : first.D.Label + StageSuffix(first))
             : $"{filters.Count} filters";
-        if (sub.Length > 0)
-            title.Inlines.Add(new System.Windows.Documents.Run("  " + sub) { Foreground = muted, FontSize = 10 });
-        dock.Children.Add(title);
-        header.Child = dock;
-        root.Children.Add(header);
 
-        var body = new StackPanel { Margin = new Thickness(8, 0, 6, 8) };
+        var body = new StackPanel();
         if (faulted)
         {
             var t = new TextBlock { Text = "Disabled — the plugin failed. Re-enable it in Settings ▸ Plugins.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
@@ -575,30 +489,10 @@ public partial class MainWindow
         }
         foreach (var f in filters)
             body.Children.Add(single ? BuildFilterBody(f, muted) : BuildFilterSection(f, muted));
-        root.Children.Add(body);
 
-        void Apply(bool open)
-        {
-            isOpen = open;
-            body.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-            frame.Background = open ? frameBg : Brushes.Transparent;
-            frame.BorderBrush = open ? frameBorder : Brushes.Transparent;
-            PaintHeader();
-            chevron.Text = open ? "" : "";
-            AutomationProperties.SetHelpText(header, open ? "expanded" : "collapsed");
-        }
-        Apply(expanded);
-        void Toggle()
-        {
-            bool open = body.Visibility != Visibility.Visible;
-            Apply(open);
-            SetSectionExpanded(pluginId, open);
-        }
-        header.MouseLeftButtonUp += (_, e) => { Toggle(); e.Handled = true; };
-        header.KeyDown += (_, e) =>
-        {
-            if (e.Key is Key.Enter or Key.Space) { Toggle(); e.Handled = true; }
-        };
+        var frame = MakeCollapsibleSection(pluginId, "PluginGroup_" + pluginId, SectionName(first), sub, SectionTooltip(first, filters),
+            tools, body, active, defaultOpen: false, out var badge, headerAutomationId: "PluginGroupHeader_" + pluginId);
+        _pluginSectionBadges.Add((badge, filters));
         return frame;
     }
 

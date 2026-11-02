@@ -295,7 +295,8 @@
                      </Border>
                      <ScrollViewer VerticalScrollBarVisibility="Auto">
                          <StackPanel Margin="12,8,12,12">
-                          <StackPanel Margin="0,2,0,0">
+                          <StackPanel x:Name="StdSectionBody" AutomationProperties.AutomationId="StdSectionBody">
+                          <StackPanel Margin="0,8,0,0">
                               <Grid>
                                   <TextBlock Text="Exposure" />
                                   <TextBlock x:Name="ExpValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0.00" />
@@ -371,7 +372,9 @@
                               </Grid>
                               <Slider x:Name="SatSlider" Value="0" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
-                          <StackPanel Margin="0,12,0,0">
+                          </StackPanel>
+                          <StackPanel x:Name="DetailSectionBody" AutomationProperties.AutomationId="DetailSectionBody">
+                          <StackPanel Margin="0,8,0,0">
                               <Grid>
                                   <TextBlock Text="Sharpening" />
                                   <TextBlock x:Name="SharpenValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
@@ -398,6 +401,7 @@
                                   <TextBlock x:Name="ColorNoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
                               <Slider x:Name="ColorNoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                          </StackPanel>
                           </StackPanel>
                           <StackPanel x:Name="PluginPanelHost" AutomationProperties.AutomationId="PluginPanelHost" />
                          </StackPanel>
