@@ -30,6 +30,12 @@ internal static partial class Program
             AutoEnhanceProbe(args[1], args.Length > 2 ? args[2] : null);
             return;
         }
+        if (args.Length > 0 && args[0] == "--colorbalance")
+        {
+            TestColorBalance();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--auto")
         {
             TestAutoEnhance();
@@ -210,6 +216,7 @@ internal static partial class Program
         TestNoiseReductionDetail();
         TestPluginSamples();
         TestAutoEnhance();
+        TestColorBalance();
         TestPhotoMeta();
         TestRawPreview();
         TestHeif();

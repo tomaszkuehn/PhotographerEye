@@ -32,6 +32,7 @@
     <Compile Remove="PluginSdk\**" />
     <Compile Remove="plugins-samples\**" />
     <Compile Remove="plugins-auto\**" />
+    <Compile Remove="plugins-colorbalance\**" />
     <Resource Include="Assets\icon.ico" />
     <None Include="thirdparty\libraw22\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="thirdparty\librawhe\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
@@ -42,11 +43,13 @@
     <!-- Built together with the app so the bundled sample plugins are never stale; not referenced by the app code. -->
     <ProjectReference Include="plugins-samples\ImgViewer.Plugins.Samples.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="plugins-auto\ImgViewer.Plugins.AutoEnhance.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="plugins-colorbalance\ImgViewer.Plugins.ColorBalance.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <PropertyGroup>
     <PluginSamplesBin>plugins-samples\bin\$(Configuration)\netstandard2.0\</PluginSamplesBin>
     <PluginAutoBin>plugins-auto\bin\$(Configuration)\netstandard2.0\</PluginAutoBin>
+    <PluginCbBin>plugins-colorbalance\bin\$(Configuration)\netstandard2.0\</PluginCbBin>
   </PropertyGroup>
 
   <Target Name="CopyLibRaw22ToPublish" AfterTargets="Publish">
@@ -86,6 +89,21 @@
     </ItemGroup>
     <Copy SourceFiles="@(PluginAutoFile)" DestinationFolder="$(OutDir)plugins\autoenhance" SkipUnchangedFiles="true" Condition="@(PluginAutoFile->Count()) &gt; 0" />
     <Delete Files="$(OutDir)plugins\ImgViewer.Plugins.AutoEnhance.dll" ContinueOnError="true" />
+  </Target>
+
+  <!-- Color balance plugin ships as plugins\colorbalance\{manifest.json, ImgViewer.Plugins.ColorBalance.dll}. -->
+  <Target Name="CopyPluginCbToPublish" AfterTargets="Publish">
+    <ItemGroup Condition="Exists('$(PluginCbBin)ImgViewer.Plugins.ColorBalance.dll')">
+      <PluginCbFile Include="$(PluginCbBin)ImgViewer.Plugins.ColorBalance.dll;plugins-colorbalance\manifest.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginCbFile)" DestinationFolder="$(PublishDir)plugins\colorbalance" SkipUnchangedFiles="true" Condition="@(PluginCbFile->Count()) &gt; 0" />
+  </Target>
+
+  <Target Name="CopyPluginCbToOutput" AfterTargets="Build">
+    <ItemGroup Condition="Exists('$(PluginCbBin)ImgViewer.Plugins.ColorBalance.dll')">
+      <PluginCbFile Include="$(PluginCbBin)ImgViewer.Plugins.ColorBalance.dll;plugins-colorbalance\manifest.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginCbFile)" DestinationFolder="$(OutDir)plugins\colorbalance" SkipUnchangedFiles="true" Condition="@(PluginCbFile->Count()) &gt; 0" />
   </Target>
 
 </Project>

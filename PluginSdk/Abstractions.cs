@@ -653,7 +653,7 @@ public sealed class CommandDescriptor
 }
 
 /// <summary>
-/// Named set of values. Keys: "core.Exposure", "core.Contrast", "core.Temperature", "core.Saturation",
+/// Named set of values. Keys: "core.Exposure", "core.Contrast", "core.Temperature", "core.Tint", "core.Saturation",
 /// "core.Highlights", "core.Shadows", "core.Whites", "core.Blacks", "core.Clarity", "core.Dehaze",
 /// "core.Sharpen", "core.Denoise", "core.ColorNoise", "core.Gamma", "core.ShadowLift" (toolbar), "core.Mono" and
 /// "filterId/paramId" (this plugin) or "pluginId:filterId/paramId" (any plugin).

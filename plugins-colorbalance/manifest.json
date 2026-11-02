@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.colorbalance",
+  "name": "Color balance",
+  "version": "1.0",
+  "author": "PhotographerEye",
+  "description": "Cyan–Red, Magenta–Green and Yellow–Blue balance for shadows, midtones and highlights, with luminosity preservation.",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.ColorBalance.dll",
+  "permissions": []
+}
