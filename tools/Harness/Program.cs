@@ -29,6 +29,11 @@ internal static class Program
             ProbeDecode(args[1]);
             return;
         }
+        if (args.Length > 0 && args[0] == "--nr-raw")
+        {
+            NoiseReductionRawProbe(args[1], args[2], args.Length > 3 ? double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture) : 0.0);
+            return;
+        }
         if (args.Length > 0 && args[0] == "--sh-raw")
         {
             ShadowsHighlightsRawProbe(args[1], args[2]);
@@ -183,6 +188,8 @@ internal static class Program
         TestEyeFile();
         TestPhotoGeo();
         TestChromaNoise();
+        TestColorSpeckle();
+        TestNoiseReductionDetail();
         TestPhotoMeta();
         TestRawPreview();
         TestHeif();
@@ -739,8 +746,7 @@ internal static class Program
             Sharpen = 0.4,
             Highlights = -0.3,
             Dehaze = 0.2,
-            Denoise = 0.4,
-            ColorNoise = 0.4
+            Denoise = 0.4
         };
 
         var swCpu = System.Diagnostics.Stopwatch.StartNew();
@@ -1757,6 +1763,222 @@ internal static class Program
         var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, stride);
         src.Freeze();
         return src;
+    }
+
+    // Single-slider NR must remove noise in flat areas while keeping edges and texture that sit
+    // well above the noise floor, and must leave a clean image essentially untouched.
+    private static void TestNoiseReductionDetail()
+    {
+        const int w = 256, h = 256;
+        float Clean(int x, int y)
+        {
+            if (y >= 128) return x < 128 ? 60f : 180f;
+            if (x < 128) return 110f;
+            return ((x / 4) & 1) == 0 ? 70f : 150f;
+        }
+        BitmapSource Make(double sigma, int seed)
+        {
+            var rnd = new Random(seed);
+            var buf = new byte[w * h * 4];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    int o = (y * w + x) * 4;
+                    float c = Clean(x, y);
+                    for (int k = 0; k < 3; k++)
+                    {
+                        double g = Math.Sqrt(-2.0 * Math.Log(1.0 - rnd.NextDouble())) * Math.Cos(2.0 * Math.PI * rnd.NextDouble());
+                        buf[o + k] = (byte)Math.Clamp((int)Math.Round(c + sigma * g), 0, 255);
+                    }
+                    buf[o + 3] = 255;
+                }
+            var bmp = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, w * 4);
+            bmp.Freeze();
+            return bmp;
+        }
+        byte[] Px(BitmapSource b)
+        {
+            var p = new byte[w * h * 4];
+            b.CopyPixels(p, w * 4, 0);
+            return p;
+        }
+        double G(byte[] p, int x, int y) => p[(y * w + x) * 4 + 1];
+        double Stripe(byte[] p)
+        {
+            double on = 0, off = 0;
+            int n = 0;
+            for (int y = 20; y < 108; y++)
+                for (int x = 140; x < 244; x++)
+                {
+                    if (((x / 4) & 1) == 0) on += G(p, x, y); else off += G(p, x, y);
+                    n++;
+                }
+            return (off - on) / (n / 2.0);
+        }
+        double Edge(byte[] p)
+        {
+            double s = 0;
+            for (int y = 140; y < 244; y++) s += (G(p, 128, y) + G(p, 129, y)) - (G(p, 126, y) + G(p, 127, y));
+            return s / 2.0 / 104.0;
+        }
+        double Flat(byte[] p)
+        {
+            double m = 0, m2 = 0;
+            int n = 0;
+            for (int y = 20; y < 108; y++)
+                for (int x = 20; x < 108; x++) { double v = G(p, x, y); m += v; m2 += v * v; n++; }
+            m /= n;
+            return Math.Sqrt(Math.Max(m2 / n - m * m, 0));
+        }
+        double ChromaFlat(byte[] p)
+        {
+            double s = 0;
+            int n = 0;
+            for (int y = 20; y < 108; y++)
+                for (int x = 20; x < 108; x++)
+                {
+                    int o = (y * w + x) * 4;
+                    s += Math.Abs(p[o + 2] - p[o + 1]) + Math.Abs(p[o] - p[o + 1]);
+                    n++;
+                }
+            return s / n;
+        }
+
+        var noisy = Make(8.0, 21);
+        var clean = Make(0.0, 21);
+        var pn = Px(noisy);
+        var pc = Px(clean);
+        var outN = Px(AdjustmentsProcessor.Apply(noisy, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Denoise = 1.0, ColorNoise = 1.0 })!);
+        var outMid = Px(AdjustmentsProcessor.Apply(noisy, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Denoise = 0.5, ColorNoise = 0.5 })!);
+        double f0 = Flat(pn), f1 = Flat(outN), fm = Flat(outMid);
+        Check(f1 < f0 * 0.4, $"NR 100 removes flat-area noise ({f0:0.##} -> {f1:0.##})");
+        Check(fm < f0 && fm > f1, $"NR 50 sits between (flat {f0:0.##} -> {fm:0.##} -> {f1:0.##})");
+        double c0 = ChromaFlat(pn), c1 = ChromaFlat(outMid);
+        Check(c1 < c0 * 0.35, $"NR 50 already removes most color noise ({c0:0.##} -> {c1:0.##})");
+        double e0 = Edge(pc), e1 = Edge(outN);
+        Check(e1 > e0 * 0.9, $"NR 100 keeps edge contrast ({e0:0.#} -> {e1:0.#})");
+        double s0 = Stripe(pc), s1 = Stripe(outN);
+        Check(s1 > s0 * 0.85, $"NR 100 keeps fine texture (stripes {s0:0.#} -> {s1:0.#})");
+
+        var outClean = Px(AdjustmentsProcessor.Apply(clean, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Denoise = 1.0, ColorNoise = 1.0 })!);
+        double diff = 0;
+        for (int i = 0; i < pc.Length; i += 4) diff += Math.Abs(outClean[i + 1] - pc[i + 1]);
+        diff /= w * h;
+        Check(diff < 1.5, $"NR 100 leaves a clean image almost untouched (mean diff {diff:0.##})");
+
+        // RAW16: photon-like noise (sigma ~ sqrt(signal)) in a dark and a bright patch, CPU vs GPU.
+        int rw = 2400, rh = 1800;
+        var raw = new Raw16Image(rw, rh);
+        var rnd = new Random(5);
+        for (int y = 0; y < rh; y++)
+            for (int x = 0; x < rw; x++)
+            {
+                int i = y * rw + x;
+                double v = x < rw / 2 ? 0.03 : 0.4;
+                if (y > rh / 2 && ((x / 6) & 1) == 0) v *= 1.6;
+                for (int c = 0; c < 3; c++)
+                {
+                    double g = Math.Sqrt(-2.0 * Math.Log(1.0 - rnd.NextDouble())) * Math.Cos(2.0 * Math.PI * rnd.NextDouble());
+                    ushort u = (ushort)Math.Clamp(Math.Round((v + 0.012 * Math.Sqrt(v) * g) * 65535.0), 0, 65535);
+                    if (c == 0) raw.R[i] = u; else if (c == 1) raw.G[i] = u; else raw.B[i] = u;
+                }
+            }
+        double Sd16(Raw16Image img, int x0, int y0)
+        {
+            double m = 0, m2 = 0;
+            int n = 0;
+            for (int y = y0; y < y0 + 200; y++)
+                for (int x = x0; x < x0 + 200; x++) { double v = img.G[y * img.W + x]; m += v; m2 += v * v; n++; }
+            m /= n;
+            return Math.Sqrt(Math.Max(m2 / n - m * m, 0)) / Math.Max(m, 1);
+        }
+        var n16 = Adjust16.Apply(raw, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Exposure = 0.0001 });
+        var d16 = Adjust16.Apply(raw, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Denoise = 1.0, ColorNoise = 1.0 });
+        double dark0 = Sd16(n16, 200, 300), dark1 = Sd16(d16, 200, 300);
+        double bright0 = Sd16(n16, 1500, 300), bright1 = Sd16(d16, 1500, 300);
+        Check(dark1 < dark0 * 0.5 && bright1 < bright0 * 0.5,
+              $"NR RAW16 removes noise in dark and bright areas (dark {dark0:0.####} -> {dark1:0.####}, bright {bright0:0.####} -> {bright1:0.####})");
+        var g16 = Adjust16.TryApplyGpu(raw, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Denoise = 1.0, ColorNoise = 1.0 });
+        Check(g16 is not null, "NR RAW16 gpu run");
+        if (g16 is not null)
+        {
+            long sum = 0;
+            int max = 0;
+            for (int i = 0; i < d16.G.Length; i += 7)
+            {
+                int dd = Math.Abs(d16.G[i] - g16.G[i]);
+                sum += dd;
+                if (dd > max) max = dd;
+            }
+            double mean = sum / (double)((d16.G.Length + 6) / 7);
+            Check(mean < 4.0 && max < 256, $"NR RAW16 gpu matches cpu (mean {mean:0.##}, max {max})");
+        }
+    }
+
+    // Colored speckles (isolated pixels and 2x2 clusters far off the noise distribution, as in
+    // demosaiced shadows) must go with the color slider, while luminance stays as it was.
+    private static void TestColorSpeckle()
+    {
+        const int w = 240, h = 240;
+        var rnd = new Random(3);
+        var buf = new byte[w * h * 4];
+        for (int i = 0; i < w * h; i++)
+        {
+            int o = i * 4;
+            for (int k = 0; k < 3; k++)
+            {
+                double g = Math.Sqrt(-2.0 * Math.Log(1.0 - rnd.NextDouble())) * Math.Cos(2.0 * Math.PI * rnd.NextDouble());
+                buf[o + k] = (byte)Math.Clamp((int)Math.Round(90 + 3 * g), 0, 255);
+            }
+            buf[o + 3] = 255;
+        }
+        var spots = new List<int>();
+        for (int y = 6; y < h - 6; y += 12)
+            for (int x = 6; x < w - 6; x += 12)
+            {
+                int size = ((x / 12 + y / 12) & 1) == 0 ? 1 : 2;
+                int ch = rnd.Next(3);
+                for (int dy = 0; dy < size; dy++)
+                    for (int dx = 0; dx < size; dx++)
+                    {
+                        int o = ((y + dy) * w + x + dx) * 4;
+                        buf[o + ch] = (byte)Math.Min(255, buf[o + ch] + 70);
+                        buf[o + (ch + 1) % 3] = (byte)Math.Max(0, buf[o + (ch + 1) % 3] - 35);
+                        spots.Add((y + dy) * w + x + dx);
+                    }
+            }
+        var src = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, w * 4);
+        src.Freeze();
+        double Chroma(byte[] p)
+        {
+            double s = 0;
+            foreach (int i in spots)
+            {
+                int o = i * 4;
+                double m = (p[o] + p[o + 1] + p[o + 2]) / 3.0;
+                s += Math.Abs(p[o] - m) + Math.Abs(p[o + 1] - m) + Math.Abs(p[o + 2] - m);
+            }
+            return s / spots.Count;
+        }
+        double Luma(byte[] p)
+        {
+            double s = 0;
+            for (int i = 0; i < w * h; i++) s += 0.25 * p[i * 4] + 0.5 * p[i * 4 + 1] + 0.25 * p[i * 4 + 2];
+            return s / (w * h);
+        }
+        byte[] Run(PhotoAdjustments a)
+        {
+            var r = AdjustmentsProcessor.Apply(src, 0.0, 1.0, null, out _, extra: a)!;
+            var p = new byte[w * h * 4];
+            r.CopyPixels(p, w * 4, 0);
+            return p;
+        }
+        double c0 = Chroma(buf);
+        var lumaOnly = Run(new PhotoAdjustments { Denoise = 1.0 });
+        var color = Run(new PhotoAdjustments { ColorNoise = 1.0 });
+        Check(Chroma(lumaOnly) > c0 * 0.6, $"luma NR alone leaves color speckles to the color slider ({c0:0.#} -> {Chroma(lumaOnly):0.#})");
+        Check(Chroma(color) < c0 * 0.2, $"color NR 100 removes color speckles ({c0:0.#} -> {Chroma(color):0.#})");
+        Check(Math.Abs(Luma(color) - Luma(buf)) < 0.5, $"color NR keeps luminance ({Luma(buf):0.##} vs {Luma(color):0.##})");
     }
 
     private static void TestChromaNoise()
@@ -3052,6 +3274,112 @@ internal static class Program
         long clip = 0;
         for (int i = 0; i < n; i++) if (g[i] >= 65000) clip++;
         Console.WriteLine($"   clippedG={clip} ({100.0 * clip / n:0.00}%)");
+    }
+
+    private static void NoiseReductionRawProbe(string dir, string outDir, double pushEv)
+    {
+        Directory.CreateDirectory(outDir);
+        foreach (var path in Directory.GetFiles(dir).Where(RawDecoder.IsRaw).OrderBy(p => p))
+        {
+            var base16 = RawDecoder.Decode16(path, halfSize: false);
+            double baseEv = RawDecoder.GetBaseEv(path);
+            var curve = RawDecoder.GetCameraTone(path);
+            var rendered = LinearRender.ApplyGain(base16, baseEv + pushEv, 0.0);
+            string name = Path.GetFileNameWithoutExtension(path);
+            Console.WriteLine($"== {Path.GetFileName(path)} {base16.W}x{base16.H} push={pushEv:+0.#;-0.#;0} EV");
+            // Measured luma noise per wavelet scale and brightness band (sqrt domain, x1000), before
+            // and after NR 100 (the "after" pass uses a negligible amount just to measure).
+            var den = Copy16(rendered);
+            var before = NoiseReduction.Apply16(den.R, den.G, den.B, den.W, den.H, 1.0, 1.0, new System.Threading.Tasks.ParallelOptions())!;
+            var after = NoiseReduction.Apply16(den.R, den.G, den.B, den.W, den.H, 0.001, 0.0, new System.Threading.Tasks.ParallelOptions())!;
+            Console.WriteLine("   band         " + string.Join(" ", Enumerable.Range(0, NoiseReduction.Bins).Select(b => $"{b,5}")));
+            for (int sc = 0; sc < before.Length; sc++)
+            {
+                Console.WriteLine($"   s{sc} before   " + string.Join(" ", before[sc].Select(v => $"{v * 1000,5:0.00}")));
+                Console.WriteLine($"   s{sc} after    " + string.Join(" ", after[sc].Select(v => $"{v * 1000,5:0.00}")));
+            }
+            // 100% crop around the darkest-but-not-black 600x400 tile (where noise shows most).
+            int cw = 600, ch = 400, bx = 0, by = 0;
+            double best = double.MaxValue;
+            for (int ty = 0; ty + ch <= rendered.H; ty += ch / 2)
+                for (int tx = 0; tx + cw <= rendered.W; tx += cw / 2)
+                {
+                    double m = 0;
+                    for (int y = ty; y < ty + ch; y += 8)
+                        for (int x = tx; x < tx + cw; x += 8) m += rendered.G[y * rendered.W + x];
+                    m /= (ch / 8) * (cw / 8);
+                    double score = Math.Abs(Math.Log((m + 1) / (0.015 * 65535)));
+                    if (score < best) { best = score; bx = tx; by = ty; }
+                }
+            // Second crop: the most textured mid-tone tile (relative gradient), to see detail loss.
+            int tbx = 0, tby = 0;
+            double bestTex = -1;
+            for (int ty = 0; ty + ch <= rendered.H; ty += ch / 2)
+                for (int tx = 0; tx + cw <= rendered.W; tx += cw / 2)
+                {
+                    double m = 0, g = 0;
+                    for (int y = ty + 1; y < ty + ch; y += 4)
+                        for (int x = tx + 1; x < tx + cw; x += 4)
+                        {
+                            int i = y * rendered.W + x;
+                            m += rendered.G[i];
+                            g += Math.Abs(rendered.G[i] - rendered.G[i - 1]) + Math.Abs(rendered.G[i] - rendered.G[i - rendered.W]);
+                        }
+                    double mean = m / ((ch / 4) * (cw / 4)) / 65535.0;
+                    if (mean < 0.05 || mean > 0.5) continue;
+                    double tex = g / Math.Max(m, 1);
+                    if (tex > bestTex) { bestTex = tex; tbx = tx; tby = ty; }
+                }
+            foreach (var amount in new[] { 0.0, 0.5, 1.0 })
+            {
+                var extra = new PhotoAdjustments { Denoise = amount, ColorNoise = amount };
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var cpu = Adjust16.Apply(rendered, 0.0, 1.0, null, out _, extra: extra, cameraTone: curve);
+                long tCpu = sw.ElapsedMilliseconds;
+                string gpuInfo = "";
+                if (amount > 0)
+                {
+                    sw.Restart();
+                    var gpu = Adjust16.TryApplyGpu(rendered, 0.0, 1.0, null, out _, extra: extra, cameraTone: curve);
+                    long tGpu = sw.ElapsedMilliseconds;
+                    if (gpu is not null)
+                    {
+                        double s = 0;
+                        int max = 0;
+                        long n = 0;
+                        for (int i = 0; i < cpu.G.Length; i += 11) { int d = Math.Abs(cpu.G[i] - gpu.G[i]); s += d; n++; if (d > max) max = d; }
+                        gpuInfo = $" gpu={tGpu} ms gpu-cpu mean={s / n:0.##} max={max}";
+                    }
+                }
+                Console.WriteLine($"   NR {amount * 100,3:0}: cpu={tCpu} ms{gpuInfo}");
+                SaveCrop(cpu, bx, by, $"{name}_nr{amount * 100:0}.png");
+                SaveCrop(cpu, tbx, tby, $"{name}_tex_nr{amount * 100:0}.png");
+            }
+
+            void SaveCrop(Raw16Image img, int x0, int y0, string file)
+            {
+                var crop = new Raw16Image(cw, ch);
+                for (int y = 0; y < ch; y++)
+                {
+                    Array.Copy(img.R, (y0 + y) * img.W + x0, crop.R, y * cw, cw);
+                    Array.Copy(img.G, (y0 + y) * img.W + x0, crop.G, y * cw, cw);
+                    Array.Copy(img.B, (y0 + y) * img.W + x0, crop.B, y * cw, cw);
+                }
+                var enc = new PngBitmapEncoder();
+                enc.Frames.Add(BitmapFrame.Create(crop.ToDisplay(false)));
+                using var fs = File.Create(Path.Combine(outDir, file));
+                enc.Save(fs);
+            }
+        }
+
+        static Raw16Image Copy16(Raw16Image img)
+        {
+            var c = new Raw16Image(img.W, img.H);
+            Array.Copy(img.R, c.R, c.R.Length);
+            Array.Copy(img.G, c.G, c.G.Length);
+            Array.Copy(img.B, c.B, c.B.Length);
+            return c;
+        }
     }
 
     private static void ShadowsHighlightsRawProbe(string dir, string outDir)

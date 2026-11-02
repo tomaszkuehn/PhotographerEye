@@ -40,8 +40,7 @@ public static partial class Adjust16
 
         if (extra is not null && !extra.IsDefault)
         {
-            if (extra.Denoise > 0.0005) ApplyDenoise16(img, w, h, extra.Denoise, opts);
-            if (extra.ColorNoise > 0.0005) ApplyChromaDenoise16(img, w, h, extra.ColorNoise, opts);
+            NoiseReduction.Apply16(img.R, img.G, img.B, w, h, extra.Denoise, extra.ColorNoise, opts);
             ApplyWbDehaze16(img, extra, opts, wbOnly: curveDehaze);
             if (shadow || Math.Abs(extra.Highlights) > 0.0005) ApplyShadowsHighlights16(img, extra.Highlights, shadow ? shadowLift : 0.0, opts);
             if (Math.Abs(extra.Clarity) > 0.0005) ApplyClarity16(img, w, h, extra.Clarity, opts);
@@ -391,121 +390,6 @@ public static partial class Adjust16
         });
     }
 
-    private static void ApplyDenoise16(Raw16Image img, int w, int h, double denoise, ParallelOptions opts)
-    {
-        double n = Math.Clamp(denoise, 0.0, 1.0);
-        if (n <= 0.0005) return;
-        int r = n < 0.34 ? 1 : (n < 0.67 ? 2 : 3);
-        float blend = (float)(0.15 + 0.55 * n);
-        BlurMix(img, w, h, r, blend, opts);
-    }
-
-    private static void ApplyChromaDenoise16(Raw16Image img, int w, int h, double colorNoise, ParallelOptions opts)
-    {
-        if (colorNoise <= 0.0005) return;
-        var (r, blend, passes) = PhotoOps.ChromaDenoiseParams(colorNoise);
-        for (int pass = 0; pass < passes; pass++)
-            ChromaPass16(img, w, h, r, blend, opts);
-    }
-
-    private static void ChromaPass16(Raw16Image img, int w, int h, int r, float blend, ParallelOptions opts)
-    {
-        var pr = img.R;
-        var pg = img.G;
-        var pb = img.B;
-        int count = pr.Length;
-        var blr = new ushort[count];
-        var blg = new ushort[count];
-        var blb = new ushort[count];
-        var tmpC = new ushort[count];
-        BoxBlurPlane(pr, tmpC, w, h, r, vertical: false, opts);
-        BoxBlurPlane(tmpC, blr, w, h, r, vertical: true, opts);
-        BoxBlurPlane(pg, tmpC, w, h, r, vertical: false, opts);
-        BoxBlurPlane(tmpC, blg, w, h, r, vertical: true, opts);
-        BoxBlurPlane(pb, tmpC, w, h, r, vertical: false, opts);
-        BoxBlurPlane(tmpC, blb, w, h, r, vertical: true, opts);
-
-        var lum0 = new float[count];
-        var lumB = new float[count];
-        ComputeLuma16(pr, pg, pb, lum0, opts);
-        ComputeLuma16(blr, blg, blb, lumB, opts);
-
-        ForRange(count, opts, (s, e) =>
-        {
-            for (int i = s; i < e; i++)
-            {
-                pr[i] = MixUshort(pr[i], (int)Math.Round(lum0[i] + (blr[i] - lumB[i])), blend);
-                pg[i] = MixUshort(pg[i], (int)Math.Round(lum0[i] + (blg[i] - lumB[i])), blend);
-                pb[i] = MixUshort(pb[i], (int)Math.Round(lum0[i] + (blb[i] - lumB[i])), blend);
-            }
-        });
-    }
-
-    private static void BlurMix(Raw16Image img, int w, int h, int r, float blend, ParallelOptions opts)
-    {
-        var pr = img.R;
-        var pg = img.G;
-        var pb = img.B;
-        int count = pr.Length;
-        var tmp = new ushort[count];
-        var blr = new ushort[count];
-        var blg = new ushort[count];
-        var blb = new ushort[count];
-        BoxBlurPlane(pr, tmp, w, h, r, vertical: false, opts);
-        BoxBlurPlane(tmp, blr, w, h, r, vertical: true, opts);
-        BoxBlurPlane(pg, tmp, w, h, r, vertical: false, opts);
-        BoxBlurPlane(tmp, blg, w, h, r, vertical: true, opts);
-        BoxBlurPlane(pb, tmp, w, h, r, vertical: false, opts);
-        BoxBlurPlane(tmp, blb, w, h, r, vertical: true, opts);
-        ForRange(count, opts, (s, e) =>
-        {
-            for (int i = s; i < e; i++)
-            {
-                pr[i] = MixUshort(pr[i], blr[i], blend);
-                pg[i] = MixUshort(pg[i], blg[i], blend);
-                pb[i] = MixUshort(pb[i], blb[i], blend);
-            }
-        });
-    }
-
-    private static void BoxBlurPlane(ushort[] src, ushort[] dst, int w, int h, int r, bool vertical, ParallelOptions opts)
-    {
-        int window = 2 * r + 1;
-        if (!vertical)
-        {
-            ForRange(h, opts, (ys, ye) =>
-            {
-                for (int y = ys; y < ye; y++)
-                {
-                    int rowBase = y * w;
-                    long s = 0;
-                    for (int x = -r; x <= r; x++) s += src[rowBase + ClampI(x, 0, w - 1)];
-                    for (int x = 0; x < w; x++)
-                    {
-                        dst[rowBase + x] = (ushort)(s / window);
-                        s += src[rowBase + ClampI(x + r + 1, 0, w - 1)] - src[rowBase + ClampI(x - r, 0, w - 1)];
-                    }
-                }
-            });
-        }
-        else
-        {
-            ForRange(w, opts, (xs, xe) =>
-            {
-                for (int x = xs; x < xe; x++)
-                {
-                    long s = 0;
-                    for (int y = -r; y <= r; y++) s += src[ClampI(y, 0, h - 1) * w + x];
-                    for (int y = 0; y < h; y++)
-                    {
-                        dst[y * w + x] = (ushort)(s / window);
-                        s += src[ClampI(y + r + 1, 0, h - 1) * w + x] - src[ClampI(y - r, 0, h - 1) * w + x];
-                    }
-                }
-            });
-        }
-    }
-
     private static void ComputeLuma16(ushort[] r, ushort[] g, ushort[] b, float[] lum, ParallelOptions opts)
     {
         ForRange(lum.Length, opts, (s, e) =>
@@ -513,12 +397,6 @@ public static partial class Adjust16
             for (int i = s; i < e; i++)
                 lum[i] = 0.2126f * r[i] + 0.7152f * g[i] + 0.0722f * b[i];
         });
-    }
-
-    private static ushort MixUshort(int a, int b, float t)
-    {
-        int v = (int)(a + (b - a) * t + 0.5f);
-        return (ushort)(v < 0 ? 0 : v > 65535 ? 65535 : v);
     }
 
     private static ushort ClampU(float v)

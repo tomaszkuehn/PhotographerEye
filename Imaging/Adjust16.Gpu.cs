@@ -1,3 +1,4 @@
+#if !PHOTOGRAPHEREYE_NO_GPU
 using System;
 using System.Buffers;
 using System.Threading;
@@ -156,8 +157,7 @@ public static partial class Adjust16
 
         if (extra is not null && !extra.IsDefault)
         {
-            if (extra.Denoise > 0.0005) BlurMix(d, b, w, h, extra.Denoise, chroma: false, ct);
-            if (extra.ColorNoise > 0.0005) BlurMix(d, b, w, h, extra.ColorNoise, chroma: true, ct);
+            if (NoiseReduction.Active(extra.Denoise, extra.ColorNoise)) Denoise(d, b, w, h, extra.Denoise, extra.ColorNoise, ct);
             ColorLut(d, b, w, h, extra, ct, wbOnly: curveDehaze);
             if (shadow || Math.Abs(extra.Highlights) > 0.0005) ShadowsHighlights(d, b, w, h, extra.Highlights, shadow ? shadowLift : 0.0, ct);
             if (Math.Abs(extra.Clarity) > 0.0005) Detail(d, b, w, h, extra.Clarity, sharpen: false, ct);
@@ -202,40 +202,67 @@ public static partial class Adjust16
         return img;
     }
 
-    private static void BlurMix(GraphicsDevice d, GpuBufs b, int w, int h, double amount, bool chroma, CancellationToken ct)
+    // Same algorithm as NoiseReduction.Apply16; per-scale noise is measured on a sparse grid read
+    // back from the GPU (~200k floats per scale) and turned into band sigmas on the CPU.
+    private static void Denoise(GraphicsDevice d, GpuBufs b, int w, int h, double luma, double color, CancellationToken ct)
     {
-        double x = Math.Clamp(amount, 0.0, 1.0);
-        if (chroma)
+        var plan = NoiseReduction.Plan(luma, color);
+        d.For(w, h, new NrToPlanesKernel(b.R, b.G, b.B, b.P0, b.P1, b.P2, w, h));
+        // Guide luma (two a trous levels of Y) picks the noise band per pixel.
+        d.For(w, h, new AtrousHKernel(b.P0, b.Lo1, w, h, 1));
+        d.For(w, h, new AtrousVKernel(b.Lo1, b.Luma, w, h, 1));
+        d.For(w, h, new AtrousHKernel(b.Luma, b.Lo1, w, h, 2));
+        d.For(w, h, new AtrousVKernel(b.Lo1, b.P3, w, h, 2));
+        int gstep = Math.Max(1, (int)Math.Sqrt((double)w * h / 200_000.0));
+        int nx = w / gstep, ny = h / gstep;
+        using var samp = d.AllocateReadWriteBuffer<float>(nx * ny);
+        var host = new float[nx * ny];
+        d.For(nx, ny, new NrSampleKernel(b.P3, b.P3, samp, w, gstep, nx, ny, 0));
+        samp.CopyTo(host);
+        var grid = NoiseReduction.MakeGrid(w, h, i =>
         {
-            var (r, blend, passes) = PhotoOps.ChromaDenoiseParams(amount);
-            for (int pass = 0; pass < passes; pass++)
-                ChromaPassGpu(d, b, w, h, r, blend, ct);
-            return;
+            int y = i / w, x = i % w;
+            return host[(y / gstep) * nx + x / gstep];
+        });
+        ct.ThrowIfCancellationRequested();
+        DenoisePlane(d, b, b.P0, w, h, NoiseReduction.LumaScales, plan.Ky, plan.KeepY, grid, samp, host, ct);
+        if (plan.Median > 0f)
+        {
+            foreach (var pl in new[] { b.P1, b.P2 })
+                for (int step = 1; step <= 2; step++)
+                {
+                    d.For(w, h, new NrMedianKernel(pl, b.Lo1, plan.Median, step, w, h));
+                    d.For(w, h, new NrCopyKernel(b.Lo1, pl, w, h));
+                }
         }
-        int rl = x < 0.34 ? 1 : (x < 0.67 ? 2 : 3);
-        float blendL = (float)(0.15 + 0.55 * x);
-        BoxBlurInt(d, b.R, b.Blr, b.Tmp, w, h, rl, ct);
-        BoxBlurInt(d, b.G, b.Blg, b.Tmp, w, h, rl, ct);
-        BoxBlurInt(d, b.B, b.Blb, b.Tmp, w, h, rl, ct);
-        ct.ThrowIfCancellationRequested();
-        d.For(w, h, new BlurMixKernel(b.R, b.G, b.B, b.Blr, b.Blg, b.Blb, blendL, w, h));
+        DenoisePlane(d, b, b.P1, w, h, NoiseReduction.ChromaScales, plan.Kc, 0f, grid, samp, host, ct);
+        DenoisePlane(d, b, b.P2, w, h, NoiseReduction.ChromaScales, plan.Kc, 0f, grid, samp, host, ct);
+        d.For(w, h, new NrFromPlanesKernel(b.R, b.G, b.B, b.P0, b.P1, b.P2, w, h));
     }
 
-    private static void ChromaPassGpu(GraphicsDevice d, GpuBufs b, int w, int h, int r, float blend, CancellationToken ct)
+    private static void DenoisePlane(GraphicsDevice d, GpuBufs b, ReadWriteBuffer<float> plane, int w, int h, int scales, float k, float keep,
+                                     NoiseGrid grid, ReadWriteBuffer<float> samp, float[] host, CancellationToken ct)
     {
-        BoxBlurInt(d, b.R, b.Blr, b.Tmp, w, h, r, ct);
-        BoxBlurInt(d, b.G, b.Blg, b.Tmp, w, h, r, ct);
-        BoxBlurInt(d, b.B, b.Blb, b.Tmp, w, h, r, ct);
-        ct.ThrowIfCancellationRequested();
-        d.For(w, h, new ChromaMixKernel(b.R, b.G, b.B, b.Blr, b.Blg, b.Blb, blend, w, h));
-    }
-
-    private static void BoxBlurInt(GraphicsDevice d, ReadWriteBuffer<int> src, ReadWriteBuffer<int> dst, ReadWriteBuffer<int> tmp, int w, int h, int r, CancellationToken ct)
-    {
-        int window = 2 * r + 1;
-        d.For(w, h, new BlurHIntKernel(src, tmp, w, h, r, window));
-        ct.ThrowIfCancellationRequested();
-        d.For(w, h, new BlurVIntKernel(tmp, dst, w, h, r, window));
+        if (k <= 0f) return;
+        var cur = b.Luma;
+        var next = b.Lo2;
+        d.For(w, h, new NrCopyKernel(plane, cur, w, h));
+        float[]? prev = null;
+        for (int j = 0; j < scales; j++)
+        {
+            int step = 1 << j;
+            if (step * 2 >= Math.Min(w, h)) break;
+            ct.ThrowIfCancellationRequested();
+            d.For(w, h, new AtrousHKernel(cur, b.Lo1, w, h, step));
+            d.For(w, h, new AtrousVKernel(b.Lo1, next, w, h, step));
+            d.For(grid.Nx, grid.Ny, new NrSampleKernel(cur, next, samp, w, grid.Step, grid.Nx, grid.Ny, 1));
+            samp.CopyTo(host);
+            prev = NoiseReduction.BandSigma(host, grid, j, prev);
+            using var sigma = d.AllocateReadOnlyBuffer(prev);
+            d.For(w, h, new NrShrinkKernel(plane, cur, next, b.P3, sigma, k, keep, j == 0 ? 1 : 0, w, h));
+            (cur, next) = (next, cur);
+        }
+        d.For(w, h, new NrAddKernel(plane, cur, w, h));
     }
 
     private static void ColorLut(GraphicsDevice d, GpuBufs b, int w, int h, PhotoAdjustments a, CancellationToken ct, bool wbOnly = false)
@@ -391,10 +418,10 @@ public static partial class Adjust16
         public readonly ReadWriteBuffer<int> R;
         public readonly ReadWriteBuffer<int> G;
         public readonly ReadWriteBuffer<int> B;
-        public readonly ReadWriteBuffer<int> Blr;
-        public readonly ReadWriteBuffer<int> Blg;
-        public readonly ReadWriteBuffer<int> Blb;
-        public readonly ReadWriteBuffer<int> Tmp;
+        public readonly ReadWriteBuffer<float> P0;
+        public readonly ReadWriteBuffer<float> P1;
+        public readonly ReadWriteBuffer<float> P2;
+        public readonly ReadWriteBuffer<float> P3;
         public readonly ReadWriteBuffer<float> Luma;
         public readonly ReadWriteBuffer<float> Lo1;
         public readonly ReadWriteBuffer<float> Lo2;
@@ -404,10 +431,10 @@ public static partial class Adjust16
             R = d.AllocateReadWriteBuffer<int>(n);
             G = d.AllocateReadWriteBuffer<int>(n);
             B = d.AllocateReadWriteBuffer<int>(n);
-            Blr = d.AllocateReadWriteBuffer<int>(n);
-            Blg = d.AllocateReadWriteBuffer<int>(n);
-            Blb = d.AllocateReadWriteBuffer<int>(n);
-            Tmp = d.AllocateReadWriteBuffer<int>(n);
+            P0 = d.AllocateReadWriteBuffer<float>(n);
+            P1 = d.AllocateReadWriteBuffer<float>(n);
+            P2 = d.AllocateReadWriteBuffer<float>(n);
+            P3 = d.AllocateReadWriteBuffer<float>(n);
             Luma = d.AllocateReadWriteBuffer<float>(n);
             Lo1 = d.AllocateReadWriteBuffer<float>(n);
             Lo2 = d.AllocateReadWriteBuffer<float>(n);
@@ -418,10 +445,10 @@ public static partial class Adjust16
             R.Dispose();
             G.Dispose();
             B.Dispose();
-            Blr.Dispose();
-            Blg.Dispose();
-            Blb.Dispose();
-            Tmp.Dispose();
+            P0.Dispose();
+            P1.Dispose();
+            P2.Dispose();
+            P3.Dispose();
             Luma.Dispose();
             Lo1.Dispose();
             Lo2.Dispose();
@@ -431,50 +458,7 @@ public static partial class Adjust16
 
 [ThreadGroupSize(DefaultThreadGroupSizes.XY)]
 [GeneratedComputeShaderDescriptor]
-public readonly partial struct BlurHIntKernel(ReadWriteBuffer<int> src, ReadWriteBuffer<int> dst, int w, int h, int r, int window) : IComputeShader
-{
-    public void Execute()
-    {
-        int x = ThreadIds.X;
-        int y = ThreadIds.Y;
-        if (x >= w || y >= h) return;
-        int row = y * w;
-        int sum = 0;
-        for (int k = -r; k <= r; k++)
-        {
-            int xx = x + k;
-            if (xx < 0) xx = 0;
-            else if (xx >= w) xx = w - 1;
-            sum += src[row + xx];
-        }
-        dst[row + x] = sum / window;
-    }
-}
-
-[ThreadGroupSize(DefaultThreadGroupSizes.XY)]
-[GeneratedComputeShaderDescriptor]
-public readonly partial struct BlurVIntKernel(ReadWriteBuffer<int> src, ReadWriteBuffer<int> dst, int w, int h, int r, int window) : IComputeShader
-{
-    public void Execute()
-    {
-        int x = ThreadIds.X;
-        int y = ThreadIds.Y;
-        if (x >= w || y >= h) return;
-        int sum = 0;
-        for (int k = -r; k <= r; k++)
-        {
-            int yy = y + k;
-            if (yy < 0) yy = 0;
-            else if (yy >= h) yy = h - 1;
-            sum += src[yy * w + x];
-        }
-        dst[y * w + x] = sum / window;
-    }
-}
-
-[ThreadGroupSize(DefaultThreadGroupSizes.XY)]
-[GeneratedComputeShaderDescriptor]
-public readonly partial struct BlurMixKernel(ReadWriteBuffer<int> pr, ReadWriteBuffer<int> pg, ReadWriteBuffer<int> pb, ReadWriteBuffer<int> blr, ReadWriteBuffer<int> blg, ReadWriteBuffer<int> blb, float blend, int w, int h) : IComputeShader
+public readonly partial struct NrToPlanesKernel(ReadWriteBuffer<int> pr, ReadWriteBuffer<int> pg, ReadWriteBuffer<int> pb, ReadWriteBuffer<float> py, ReadWriteBuffer<float> pco, ReadWriteBuffer<float> pcg, int w, int h) : IComputeShader
 {
     public void Execute()
     {
@@ -482,18 +466,18 @@ public readonly partial struct BlurMixKernel(ReadWriteBuffer<int> pr, ReadWriteB
         int y = ThreadIds.Y;
         if (x >= w || y >= h) return;
         int i = y * w + x;
-        int r = (int)(pr[i] + (blr[i] - pr[i]) * blend + 0.5f);
-        pr[i] = r < 0 ? 0 : r > 65535 ? 65535 : r;
-        int g = (int)(pg[i] + (blg[i] - pg[i]) * blend + 0.5f);
-        pg[i] = g < 0 ? 0 : g > 65535 ? 65535 : g;
-        int b = (int)(pb[i] + (blb[i] - pb[i]) * blend + 0.5f);
-        pb[i] = b < 0 ? 0 : b > 65535 ? 65535 : b;
+        float r = Hlsl.Sqrt(pr[i] / 65535f);
+        float g = Hlsl.Sqrt(pg[i] / 65535f);
+        float b = Hlsl.Sqrt(pb[i] / 65535f);
+        py[i] = 0.25f * r + 0.5f * g + 0.25f * b;
+        pco[i] = 0.5f * (r - b);
+        pcg[i] = -0.25f * r + 0.5f * g - 0.25f * b;
     }
 }
 
 [ThreadGroupSize(DefaultThreadGroupSizes.XY)]
 [GeneratedComputeShaderDescriptor]
-public readonly partial struct ChromaMixKernel(ReadWriteBuffer<int> pr, ReadWriteBuffer<int> pg, ReadWriteBuffer<int> pb, ReadWriteBuffer<int> blr, ReadWriteBuffer<int> blg, ReadWriteBuffer<int> blb, float blend, int w, int h) : IComputeShader
+public readonly partial struct NrFromPlanesKernel(ReadWriteBuffer<int> pr, ReadWriteBuffer<int> pg, ReadWriteBuffer<int> pb, ReadWriteBuffer<float> py, ReadWriteBuffer<float> pco, ReadWriteBuffer<float> pcg, int w, int h) : IComputeShader
 {
     public void Execute()
     {
@@ -501,17 +485,152 @@ public readonly partial struct ChromaMixKernel(ReadWriteBuffer<int> pr, ReadWrit
         int y = ThreadIds.Y;
         if (x >= w || y >= h) return;
         int i = y * w + x;
-        float lum0 = 0.2126f * pr[i] + 0.7152f * pg[i] + 0.0722f * pb[i];
-        float lumB = 0.2126f * blr[i] + 0.7152f * blg[i] + 0.0722f * blb[i];
-        int rr = (int)(lum0 + (blr[i] - lumB) + 0.5f);
-        int gg = (int)(lum0 + (blg[i] - lumB) + 0.5f);
-        int bb = (int)(lum0 + (blb[i] - lumB) + 0.5f);
-        int r = (int)(pr[i] + (rr - pr[i]) * blend + 0.5f);
-        pr[i] = r < 0 ? 0 : r > 65535 ? 65535 : r;
-        int g = (int)(pg[i] + (gg - pg[i]) * blend + 0.5f);
-        pg[i] = g < 0 ? 0 : g > 65535 ? 65535 : g;
-        int b = (int)(pb[i] + (bb - pb[i]) * blend + 0.5f);
-        pb[i] = b < 0 ? 0 : b > 65535 ? 65535 : b;
+        float t = py[i] - pcg[i];
+        float g = Hlsl.Max(py[i] + pcg[i], 0f);
+        float r = Hlsl.Max(t + pco[i], 0f);
+        float b = Hlsl.Max(t - pco[i], 0f);
+        pr[i] = (int)Hlsl.Min(r * r * 65535f + 0.5f, 65535f);
+        pg[i] = (int)Hlsl.Min(g * g * 65535f + 0.5f, 65535f);
+        pb[i] = (int)Hlsl.Min(b * b * 65535f + 0.5f, 65535f);
+    }
+}
+
+[ThreadGroupSize(DefaultThreadGroupSizes.XY)]
+[GeneratedComputeShaderDescriptor]
+public readonly partial struct NrMedianKernel(ReadWriteBuffer<float> src, ReadWriteBuffer<float> dst, float t, int step, int w, int h) : IComputeShader
+{
+    // 3x3 median (taps step px apart) blended in by t, same network as NoiseReduction.Median9.
+    public void Execute()
+    {
+        int x = ThreadIds.X;
+        int y = ThreadIds.Y;
+        if (x >= w || y >= h) return;
+        int m = Hlsl.Max(y - step, 0) * w, o = y * w, p = Hlsl.Min(y + step, h - 1) * w;
+        int l = Hlsl.Max(x - step, 0), r = Hlsl.Min(x + step, w - 1);
+        float p0 = src[m + l], p1 = src[m + x], p2 = src[m + r];
+        float p3 = src[o + l], p4 = src[o + x], p5 = src[o + r];
+        float p6 = src[p + l], p7 = src[p + x], p8 = src[p + r];
+        float c = p4;
+        float a;
+        a = Hlsl.Min(p1, p2); p2 = Hlsl.Max(p1, p2); p1 = a;
+        a = Hlsl.Min(p4, p5); p5 = Hlsl.Max(p4, p5); p4 = a;
+        a = Hlsl.Min(p7, p8); p8 = Hlsl.Max(p7, p8); p7 = a;
+        a = Hlsl.Min(p0, p1); p1 = Hlsl.Max(p0, p1); p0 = a;
+        a = Hlsl.Min(p3, p4); p4 = Hlsl.Max(p3, p4); p3 = a;
+        a = Hlsl.Min(p6, p7); p7 = Hlsl.Max(p6, p7); p6 = a;
+        a = Hlsl.Min(p1, p2); p2 = Hlsl.Max(p1, p2); p1 = a;
+        a = Hlsl.Min(p4, p5); p5 = Hlsl.Max(p4, p5); p4 = a;
+        a = Hlsl.Min(p7, p8); p8 = Hlsl.Max(p7, p8); p7 = a;
+        a = Hlsl.Min(p0, p3); p3 = Hlsl.Max(p0, p3); p0 = a;
+        a = Hlsl.Min(p5, p8); p8 = Hlsl.Max(p5, p8); p5 = a;
+        a = Hlsl.Min(p4, p7); p7 = Hlsl.Max(p4, p7); p4 = a;
+        a = Hlsl.Min(p3, p6); p6 = Hlsl.Max(p3, p6); p3 = a;
+        a = Hlsl.Min(p1, p4); p4 = Hlsl.Max(p1, p4); p1 = a;
+        a = Hlsl.Min(p2, p5); p5 = Hlsl.Max(p2, p5); p2 = a;
+        a = Hlsl.Min(p4, p7); p7 = Hlsl.Max(p4, p7); p4 = a;
+        a = Hlsl.Min(p4, p2); p2 = Hlsl.Max(p4, p2); p4 = a;
+        a = Hlsl.Min(p6, p4); p4 = Hlsl.Max(p6, p4); p6 = a;
+        p4 = Hlsl.Min(p4, p2);
+        dst[o + x] = c + t * (p4 - c);
+    }
+}
+
+[ThreadGroupSize(DefaultThreadGroupSizes.XY)]
+[GeneratedComputeShaderDescriptor]
+public readonly partial struct NrCopyKernel(ReadWriteBuffer<float> src, ReadWriteBuffer<float> dst, int w, int h) : IComputeShader
+{
+    public void Execute()
+    {
+        int x = ThreadIds.X;
+        int y = ThreadIds.Y;
+        if (x >= w || y >= h) return;
+        dst[y * w + x] = src[y * w + x];
+    }
+}
+
+[ThreadGroupSize(DefaultThreadGroupSizes.XY)]
+[GeneratedComputeShaderDescriptor]
+public readonly partial struct AtrousHKernel(ReadWriteBuffer<float> src, ReadWriteBuffer<float> dst, int w, int h, int step) : IComputeShader
+{
+    public void Execute()
+    {
+        int x = ThreadIds.X;
+        int y = ThreadIds.Y;
+        if (x >= w || y >= h) return;
+        int o = y * w;
+        int xm2 = Hlsl.Max(x - 2 * step, 0);
+        int xm1 = Hlsl.Max(x - step, 0);
+        int xp1 = Hlsl.Min(x + step, w - 1);
+        int xp2 = Hlsl.Min(x + 2 * step, w - 1);
+        dst[o + x] = (src[o + xm2] + src[o + xp2] + 4f * (src[o + xm1] + src[o + xp1]) + 6f * src[o + x]) * 0.0625f;
+    }
+}
+
+[ThreadGroupSize(DefaultThreadGroupSizes.XY)]
+[GeneratedComputeShaderDescriptor]
+public readonly partial struct AtrousVKernel(ReadWriteBuffer<float> src, ReadWriteBuffer<float> dst, int w, int h, int step) : IComputeShader
+{
+    public void Execute()
+    {
+        int x = ThreadIds.X;
+        int y = ThreadIds.Y;
+        if (x >= w || y >= h) return;
+        int m2 = Hlsl.Max(y - 2 * step, 0) * w;
+        int m1 = Hlsl.Max(y - step, 0) * w;
+        int p1 = Hlsl.Min(y + step, h - 1) * w;
+        int p2 = Hlsl.Min(y + 2 * step, h - 1) * w;
+        dst[y * w + x] = (src[m2 + x] + src[p2 + x] + 4f * (src[m1 + x] + src[p1 + x]) + 6f * src[y * w + x]) * 0.0625f;
+    }
+}
+
+[ThreadGroupSize(DefaultThreadGroupSizes.XY)]
+[GeneratedComputeShaderDescriptor]
+public readonly partial struct NrShrinkKernel(ReadWriteBuffer<float> plane, ReadWriteBuffer<float> cur, ReadWriteBuffer<float> next, ReadWriteBuffer<float> guide, ReadOnlyBuffer<float> sigma, float k, float keep, int first, int w, int h) : IComputeShader
+{
+    public void Execute()
+    {
+        int x = ThreadIds.X;
+        int y = ThreadIds.Y;
+        if (x >= w || y >= h) return;
+        int i = y * w + x;
+        // Same band lookup as NoiseReduction.Lookup (16 bins over luma 0..1).
+        float f = Hlsl.Clamp(guide[i] * 16f - 0.5f, 0f, 15f);
+        int i0 = (int)f;
+        int i1 = Hlsl.Min(i0 + 1, 15);
+        float t = k * (sigma[i0] + (sigma[i1] - sigma[i0]) * (f - i0));
+        float d = cur[i] - next[i];
+        float d2 = d * d;
+        float s = d * d2 / (d2 + t * t + 1e-20f);
+        float o = s + keep * (d - s);
+        plane[i] = first != 0 ? o : plane[i] + o;
+    }
+}
+
+[ThreadGroupSize(DefaultThreadGroupSizes.XY)]
+[GeneratedComputeShaderDescriptor]
+public readonly partial struct NrSampleKernel(ReadWriteBuffer<float> a, ReadWriteBuffer<float> b, ReadWriteBuffer<float> samp, int w, int step, int nx, int ny, int diff) : IComputeShader
+{
+    // Grid point (k, j) = pixel at the cell center, as NoiseReduction.GridIndex.
+    public void Execute()
+    {
+        int k = ThreadIds.X;
+        int j = ThreadIds.Y;
+        if (k >= nx || j >= ny) return;
+        int i = (j * step + step / 2) * w + k * step + step / 2;
+        samp[j * nx + k] = diff != 0 ? Hlsl.Abs(a[i] - b[i]) : a[i];
+    }
+}
+
+[ThreadGroupSize(DefaultThreadGroupSizes.XY)]
+[GeneratedComputeShaderDescriptor]
+public readonly partial struct NrAddKernel(ReadWriteBuffer<float> plane, ReadWriteBuffer<float> coarse, int w, int h) : IComputeShader
+{
+    public void Execute()
+    {
+        int x = ThreadIds.X;
+        int y = ThreadIds.Y;
+        if (x >= w || y >= h) return;
+        plane[y * w + x] += coarse[y * w + x];
     }
 }
 
@@ -868,3 +987,4 @@ public readonly partial struct GrainKernel(ReadWriteBuffer<int> pr, ReadWriteBuf
         pb[i] = v;
     }
 }
+#endif

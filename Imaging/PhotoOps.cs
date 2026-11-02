@@ -431,51 +431,6 @@ public static class PhotoOps
         return (byte)(i < 0 ? 0 : i > 255 ? 255 : i);
     }
 
-    public static (int R, float Blend, int Passes) ChromaDenoiseParams(double colorNoise)
-    {
-        double n = Math.Clamp(colorNoise, 0.0, 1.0);
-        int r = 1 + (int)(n * 3.0);
-        float blend = (float)(0.2 + 0.8 * n);
-        int passes = n >= 0.6 ? 2 : 1;
-        return (r, blend, passes);
-    }
-
-    public static unsafe void ApplyChromaDenoise(byte[] buffer, int w, int h, double colorNoise)
-    {
-        double n = Math.Clamp(colorNoise, 0.0, 1.0);
-        if (n <= 0.0005) return;
-        var (r, blend, passes) = ChromaDenoiseParams(colorNoise);
-        for (int pass = 0; pass < passes; pass++)
-        {
-            var temp = new byte[buffer.Length];
-            var blurred = new byte[buffer.Length];
-            BoxBlurBgrPass(buffer, temp, w, h, r, vertical: false);
-            BoxBlurBgrPass(temp, blurred, w, h, r, vertical: true);
-
-            var lum0 = new float[w * h];
-            var lumB = new float[w * h];
-            ComputeLuma(buffer, lum0, w, h);
-            ComputeLuma(blurred, lumB, w, h);
-
-            fixed (byte* p = buffer)
-            fixed (byte* bp = blurred)
-            fixed (float* l0 = lum0, lb = lumB)
-            {
-                byte* end = p + buffer.Length;
-                float* a = l0;
-                float* b = lb;
-                for (byte* q = p, s = bp; q < end; q += 4, s += 4, a++, b++)
-                {
-                    for (int c = 0; c < 3; c++)
-                    {
-                        float corrected = *a + (s[c] - *b);
-                        q[c] = MixByte(q[c], (int)Math.Round(corrected), blend);
-                    }
-                }
-            }
-        }
-    }
-
     private static unsafe void ComputeLuma(byte[] buffer, float[] lum, int w, int h)
     {
         fixed (byte* p = buffer)
@@ -485,31 +440,6 @@ public static class PhotoOps
             byte* end = p + buffer.Length;
             for (byte* q = p; q < end; q += 4, l++)
                 *l = 0.2126f * q[2] + 0.7152f * q[1] + 0.0722f * q[0];
-        }
-    }
-
-    public static unsafe void ApplyDenoise(byte[] buffer, int w, int h, double denoise)
-    {
-        double n = Math.Clamp(denoise, 0.0, 1.0);
-        if (n <= 0.0005) return;
-        int r = n < 0.34 ? 1 : (n < 0.67 ? 2 : 3);
-        float blend = (float)(0.15 + 0.55 * n);
-
-        var temp = new byte[buffer.Length];
-        var blurred = new byte[buffer.Length];
-        BoxBlurBgrPass(buffer, temp, w, h, r, vertical: false);
-        BoxBlurBgrPass(temp, blurred, w, h, r, vertical: true);
-
-        fixed (byte* p = buffer)
-        fixed (byte* bp = blurred)
-        {
-            byte* end = p + buffer.Length;
-            for (byte* q = p, s = bp; q < end; q += 4, s += 4)
-            {
-                q[0] = MixByte(q[0], s[0], blend);
-                q[1] = MixByte(q[1], s[1], blend);
-                q[2] = MixByte(q[2], s[2], blend);
-            }
         }
     }
 
@@ -611,12 +541,6 @@ public static class PhotoOps
     public static double ClarityRadius(int w, int h) =>
         Math.Clamp((int)Math.Round(Math.Min(w, h) * 0.012), 3, 60);
 
-    private static byte MixByte(int a, int b, float t)
-    {
-        int v = (int)(a + (b - a) * t + 0.5f);
-        return (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
-    }
-
     public static unsafe void ApplyClarity(byte[] buffer, int w, int h, double clarity)
     {
         double amt = Math.Clamp(clarity, -1.0, 1.0);
@@ -645,63 +569,6 @@ public static class PhotoOps
                 q[0] = ClampByte(q[0] + delta);
                 q[1] = ClampByte(q[1] + delta);
                 q[2] = ClampByte(q[2] + delta);
-            }
-        }
-    }
-
-    private static unsafe void BoxBlurBgrPass(byte[] src, byte[] dst, int w, int h, int r, bool vertical)
-    {
-        fixed (byte* srcP = src, dstP = dst)
-        {
-            int window = 2 * r + 1;
-            if (!vertical)
-            {
-                for (int y = 0; y < h; y++)
-                {
-                    byte* row = srcP + y * w * 4;
-                    byte* outRow = dstP + y * w * 4;
-                    long s0 = 0, s1 = 0, s2 = 0;
-                    for (int x = -r; x <= r; x++)
-                    {
-                        byte* v = row + ClampI(x, 0, w - 1) * 4;
-                        s0 += v[0]; s1 += v[1]; s2 += v[2];
-                    }
-                    for (int x = 0; x < w; x++)
-                    {
-                        outRow[x * 4 + 0] = (byte)(s0 / window);
-                        outRow[x * 4 + 1] = (byte)(s1 / window);
-                        outRow[x * 4 + 2] = (byte)(s2 / window);
-                        byte* add = row + ClampI(x + r + 1, 0, w - 1) * 4;
-                        byte* sub = row + ClampI(x - r, 0, w - 1) * 4;
-                        s0 += add[0] - sub[0];
-                        s1 += add[1] - sub[1];
-                        s2 += add[2] - sub[2];
-                    }
-                }
-            }
-            else
-            {
-                for (int x = 0; x < w; x++)
-                {
-                    long s0 = 0, s1 = 0, s2 = 0;
-                    for (int y = -r; y <= r; y++)
-                    {
-                        byte* v = srcP + ClampI(y, 0, h - 1) * w * 4 + x * 4;
-                        s0 += v[0]; s1 += v[1]; s2 += v[2];
-                    }
-                    for (int y = 0; y < h; y++)
-                    {
-                        byte* o = dstP + y * w * 4 + x * 4;
-                        o[0] = (byte)(s0 / window);
-                        o[1] = (byte)(s1 / window);
-                        o[2] = (byte)(s2 / window);
-                        byte* add = srcP + ClampI(y + r + 1, 0, h - 1) * w * 4 + x * 4;
-                        byte* sub = srcP + ClampI(y - r, 0, h - 1) * w * 4 + x * 4;
-                        s0 += add[0] - sub[0];
-                        s1 += add[1] - sub[1];
-                        s2 += add[2] - sub[2];
-                    }
-                }
             }
         }
     }

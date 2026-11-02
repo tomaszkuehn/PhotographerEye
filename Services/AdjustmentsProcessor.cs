@@ -50,8 +50,7 @@ public static class AdjustmentsProcessor
 
         if (extra is not null && !extra.IsDefault)
         {
-            if (extra.Denoise > 0.0005) PhotoOps.ApplyDenoise(buffer, w, h, extra.Denoise);
-            if (extra.ColorNoise > 0.0005) PhotoOps.ApplyChromaDenoise(buffer, w, h, extra.ColorNoise);
+            NoiseReduction.Apply8(buffer, w, h, extra.Denoise, extra.ColorNoise);
             PhotoOps.ApplyColorPoints(buffer, extra);
             if (shadow || Math.Abs(extra.Highlights) > 0.0005) PhotoOps.ApplyShadowsHighlights(buffer, w, h, extra.Highlights, shadow ? shadowLift : 0.0);
             if (Math.Abs(extra.Clarity) > 0.0005) PhotoOps.ApplyClarity(buffer, w, h, extra.Clarity);
