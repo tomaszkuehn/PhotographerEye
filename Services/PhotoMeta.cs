@@ -17,6 +17,10 @@ public sealed class PhotoMeta
     public string? ApertureText;
     public string? IsoText;
     public string? ShutterText;
+    public double? Iso;
+    public double? Aperture;
+    public double? ShutterSeconds;
+    public double? Focal;
 
     public string Summary =>
         string.Join(" \u2022 ", new[] { Camera, DateText, FocalText, ApertureText, IsoText, ShutterText }
@@ -72,10 +76,10 @@ public static class PhotoMetaReader
 
             var o = r.ImageOtherParams;
             if (o.Timestamp > 0) m.DateText = DateTimeOffset.FromUnixTimeSeconds(o.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
-            if (o.FocalLength > 0.05 && o.FocalLength < 6500) m.FocalText = FormatNumber(o.FocalLength) + " mm";
-            if (o.Aperture > 0.05 && o.Aperture < 350) m.ApertureText = "f/" + FormatNumber(o.Aperture);
-            if (o.IsoSpeed > 0.5 && o.IsoSpeed < 1_000_000) m.IsoText = "ISO " + ((int)Math.Round(o.IsoSpeed)).ToString();
-            m.ShutterText = FormatShutter(o.Shutter);
+            if (o.FocalLength > 0.05 && o.FocalLength < 6500) { m.FocalText = FormatNumber(o.FocalLength) + " mm"; m.Focal = o.FocalLength; }
+            if (o.Aperture > 0.05 && o.Aperture < 350) { m.ApertureText = "f/" + FormatNumber(o.Aperture); m.Aperture = o.Aperture; }
+            if (o.IsoSpeed > 0.5 && o.IsoSpeed < 1_000_000) { m.IsoText = "ISO " + ((int)Math.Round(o.IsoSpeed)).ToString(); m.Iso = o.IsoSpeed; }
+            m.ShutterText = FormatShutter(o.Shutter); if (o.Shutter > 0) m.ShutterSeconds = o.Shutter;
             return Has(m) ? m : null;
         }
         catch (Exception ex)
@@ -108,10 +112,10 @@ public static class PhotoMetaReader
             if (taken is not null && DateTime.TryParseExact(taken, "yyyy:MM:dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var dt))
                 m.DateText = dt.ToString("yyyy-MM-dd HH:mm");
 
-            if (TryRational(md.GetQuery("/app1/ifd/exif/{ushort=33434}"), out double shutter)) m.ShutterText = FormatShutter(shutter);
-            if (TryRational(md.GetQuery("/app1/ifd/exif/{ushort=33437}"), out double fn) && fn > 0.05 && fn < 350) m.ApertureText = "f/" + FormatNumber(fn);
-            if (TryRational(md.GetQuery("/app1/ifd/exif/{ushort=37386}"), out double fl) && fl > 0.05 && fl < 6500) m.FocalText = FormatNumber(fl) + " mm";
-            if (TryInt(md.GetQuery("/app1/ifd/exif/{ushort=34855}"), out int iso) && iso > 0 && iso < 1_000_000) m.IsoText = "ISO " + iso.ToString();
+            if (TryRational(md.GetQuery("/app1/ifd/exif/{ushort=33434}"), out double shutter)) { m.ShutterText = FormatShutter(shutter); if (shutter > 0) m.ShutterSeconds = shutter; }
+            if (TryRational(md.GetQuery("/app1/ifd/exif/{ushort=33437}"), out double fn) && fn > 0.05 && fn < 350) { m.ApertureText = "f/" + FormatNumber(fn); m.Aperture = fn; }
+            if (TryRational(md.GetQuery("/app1/ifd/exif/{ushort=37386}"), out double fl) && fl > 0.05 && fl < 6500) { m.FocalText = FormatNumber(fl) + " mm"; m.Focal = fl; }
+            if (TryInt(md.GetQuery("/app1/ifd/exif/{ushort=34855}"), out int iso) && iso > 0 && iso < 1_000_000) { m.IsoText = "ISO " + iso.ToString(); m.Iso = iso; }
 
             return Has(m) ? m : null;
         }
@@ -235,19 +239,19 @@ public static class PhotoMetaReader
                     case 33437 when type == 5:
                     {
                         double fn = U32(val) / (double)U32(val + 4);
-                        if (fn > 0.05 && fn < 350) m.ApertureText = "f/" + FormatNumber(fn);
+                        if (fn > 0.05 && fn < 350) { m.ApertureText = "f/" + FormatNumber(fn); m.Aperture = fn; }
                         break;
                     }
                     case 37386 when type == 5:
                     {
                         double fl = U32(val) / (double)U32(val + 4);
-                        if (fl > 0.05 && fl < 6500) m.FocalText = FormatNumber(fl) + " mm";
+                        if (fl > 0.05 && fl < 6500) { m.FocalText = FormatNumber(fl) + " mm"; m.Focal = fl; }
                         break;
                     }
                     case 34855:
                     {
                         int iso = type == 3 ? U16(val) : (int)U32(val);
-                        if (iso > 0 && iso < 1_000_000) m.IsoText = "ISO " + iso.ToString();
+                        if (iso > 0 && iso < 1_000_000) { m.IsoText = "ISO " + iso.ToString(); m.Iso = iso; }
                         break;
                     }
                 }

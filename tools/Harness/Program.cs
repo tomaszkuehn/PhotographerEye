@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -7,12 +7,13 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ImgViewer.Controls;
 using ImgViewer.Imaging;
+using ImgViewer.Plugins;
 using ImgViewer.Services;
 using ImgViewer;
 using LibHeifSharp;
 using Sdcb.LibRaw;
 
-internal static class Program
+internal static partial class Program
 {
     private static int _fails;
 
@@ -165,6 +166,7 @@ internal static class Program
             DiagStretch(args);
             return;
         }
+        Environment.SetEnvironmentVariable("PHOTOGRAPHEREYE_APPDATA", Path.Combine(Path.GetTempPath(), "pe-harness-appdata"));
         TestCentering();
         TestDpiNormalization();
         TestShadows();
@@ -190,6 +192,7 @@ internal static class Program
         TestChromaNoise();
         TestColorSpeckle();
         TestNoiseReductionDetail();
+        TestPluginSamples();
         TestPhotoMeta();
         TestRawPreview();
         TestHeif();
@@ -202,6 +205,17 @@ internal static class Program
     {
         Console.WriteLine($"{(ok ? "PASS" : "FAIL")}  {name}");
         if (!ok) _fails++;
+    }
+
+    private static string? FindSamplePluginDll()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 6 && dir is not null; i++, dir = dir.Parent)
+        {
+            var p = Path.Combine(dir.FullName, "plugins-samples", "bin", "Release", "netstandard2.0", "ImgViewer.Plugins.Samples.dll");
+            if (File.Exists(p)) return p;
+        }
+        return null;
     }
 
     private static BitmapSource MakeSource(int w, int h, double dpiX = 96, double dpiY = 96)
@@ -724,7 +738,7 @@ internal static class Program
         string name = Adjust16.GpuDeviceName;
         if (name is null)
         {
-            Console.WriteLine("gpu: brak sprzętowego GPU, test pominięty");
+            Console.WriteLine("gpu: brak sprzÄ™towego GPU, test pominiÄ™ty");
             return;
         }
         Console.WriteLine($"gpu: {name}");
@@ -803,7 +817,7 @@ internal static class Program
         }
 
         var gpuNoop = Adjust16.TryApplyGpu(base16, 0.0, 1.0, null, out _, extra: new PhotoAdjustments());
-        Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obsługuje CPU)");
+        Check(gpuNoop is null, "gpu pomija brak operacji (neutralny obsÅ‚uguje CPU)");
 
         var cam = new CameraToneCurve(new[]
         {
@@ -839,7 +853,7 @@ internal static class Program
         Adjust16.GpuEnabled = false;
         var disabled = Adjust16.TryApplyGpu(base16, 0.3, 1.15, null, out _, mono: MonoMode.TriX, extra: extra);
         Adjust16.GpuEnabled = prevEnabled;
-        Check(disabled is null, "gpu wyłączony -> fallback CPU");
+        Check(disabled is null, "gpu wyÅ‚Ä…czony -> fallback CPU");
         Console.WriteLine($"gpu status: {Adjust16.GpuStatus}");
 
         var ramp = new Raw16Image(2048, 2048);
@@ -1021,14 +1035,14 @@ internal static class Program
         Check(Near(PhotoshopSlider.Factor(true, false, false), 10.0), "suwak: Shift = szybko 10");
 
         Check(Near(PhotoshopSlider.Quantum(0.05), 0.01), "suwak: kwant EV 0,01");
-        Check(Near(PhotoshopSlider.Quantum(1.0), 1.0), "suwak: kwant liczb całkowitych 1");
+        Check(Near(PhotoshopSlider.Quantum(1.0), 1.0), "suwak: kwant liczb caÅ‚kowitych 1");
 
-        Check(Near(PhotoshopSlider.Snap(0.037, -2, 2, 0.05), 0.04), "suwak: zaokrąglenie EV 0,037->0,04");
-        Check(Near(PhotoshopSlider.Snap(2.7, -100, 100, 1.0), 3.0), "suwak: zaokrąglenie 2,7->3");
-        Check(Near(PhotoshopSlider.Snap(9.9, -5, 5, 1.0), 5.0), "suwak: przycięcie do maksimum");
+        Check(Near(PhotoshopSlider.Snap(0.037, -2, 2, 0.05), 0.04), "suwak: zaokrÄ…glenie EV 0,037->0,04");
+        Check(Near(PhotoshopSlider.Snap(2.7, -100, 100, 1.0), 3.0), "suwak: zaokrÄ…glenie 2,7->3");
+        Check(Near(PhotoshopSlider.Snap(9.9, -5, 5, 1.0), 5.0), "suwak: przyciÄ™cie do maksimum");
 
-        // ekspozycja: pełny tor (250 px) = pełny zakres 4 EV, krok 0,01 EV
-        Check(Near(PhotoshopSlider.Scrub(0, 250, -2, 2, 0.05, false, false, false), 2.0), "suwak: 250 px = pełny zakres");
+        // ekspozycja: peÅ‚ny tor (250 px) = peÅ‚ny zakres 4 EV, krok 0,01 EV
+        Check(Near(PhotoshopSlider.Scrub(0, 250, -2, 2, 0.05, false, false, false), 2.0), "suwak: 250 px = peÅ‚ny zakres");
         Check(Near(PhotoshopSlider.Scrub(0, 100, -2, 2, 0.05, false, false, false), 1.6), "suwak: 100 px = +1,6 EV");
         Check(Near(PhotoshopSlider.Scrub(0, 100, -2, 2, 0.05, false, true, false), 0.16), "suwak: Alt 100 px = +0,16 EV (precyzja)");
         Check(Near(PhotoshopSlider.Scrub(-0.5, 50, -2, 2, 0.05, false, false, true), -0.42), "suwak: Ctrl 50 px od -0,5 = -0,42 EV");
@@ -1036,23 +1050,23 @@ internal static class Program
         // kontrast: zakres 200, 25 px ~ 20 jednostek, Ctrl -> 2
         Check(Near(PhotoshopSlider.Scrub(0, 25, -100, 100, 1.0, false, false, false), 20), "suwak: kontrast 25 px = +20");
         Check(Near(PhotoshopSlider.Scrub(0, 25, -100, 100, 1.0, false, true, false), 2), "suwak: kontrast Alt 25 px = +2");
-        Check(PhotoshopSlider.Scrub(0, 999, -100, 100, 1.0, false, false, false) == 100, "suwak: kontrast przycięty do 100");
+        Check(PhotoshopSlider.Scrub(0, 999, -100, 100, 1.0, false, false, false) == 100, "suwak: kontrast przyciÄ™ty do 100");
 
-        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, false), 0.05), "suwak: krok strzałki EV 0,05");
-        Check(Near(PhotoshopSlider.Step(0.05, 0.25, true, false), 0.25), "suwak: Shift+strzałka EV 0,25");
-        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, true), 0.01), "suwak: Ctrl+strzałka EV 0,01 (precyzja)");
-        Check(Near(PhotoshopSlider.Step(1.0, 10.0, true, false), 10), "suwak: Shift+strzałka liczb = 10");
-        Check(Near(PhotoshopSlider.Step(1.0, 10.0, false, true), 1), "suwak: Ctrl+strzałka liczb = 1 (min. krok)");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, false), 0.05), "suwak: krok strzaÅ‚ki EV 0,05");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, true, false), 0.25), "suwak: Shift+strzaÅ‚ka EV 0,25");
+        Check(Near(PhotoshopSlider.Step(0.05, 0.25, false, true), 0.01), "suwak: Ctrl+strzaÅ‚ka EV 0,01 (precyzja)");
+        Check(Near(PhotoshopSlider.Step(1.0, 10.0, true, false), 10), "suwak: Shift+strzaÅ‚ka liczb = 10");
+        Check(Near(PhotoshopSlider.Step(1.0, 10.0, false, true), 1), "suwak: Ctrl+strzaÅ‚ka liczb = 1 (min. krok)");
 
         var slider = new Slider { Minimum = -2, Maximum = 2, SmallChange = 0.05, LargeChange = 0.25 };
-        Check(!PhotoshopSlider.GetEnable(slider), "suwak: domyślnie wyłączony");
+        Check(!PhotoshopSlider.GetEnable(slider), "suwak: domyÅ›lnie wyÅ‚Ä…czony");
         PhotoshopSlider.SetEnable(slider, true);
-        Check(PhotoshopSlider.GetEnable(slider), "suwak: włączony po SetEnable");
-        Check(slider.IsMoveToPointEnabled, "suwak: klik na torze ustawia wartość (Photoshop)");
-        Check(slider.Focusable, "suwak: fokusowalny (strzałki)");
-        Check(slider.ToolTip is string, "suwak: podpowiedź ustawiona");
+        Check(PhotoshopSlider.GetEnable(slider), "suwak: wÅ‚Ä…czony po SetEnable");
+        Check(slider.IsMoveToPointEnabled, "suwak: klik na torze ustawia wartoÅ›Ä‡ (Photoshop)");
+        Check(slider.Focusable, "suwak: fokusowalny (strzaÅ‚ki)");
+        Check(slider.ToolTip is string, "suwak: podpowiedÅº ustawiona");
         PhotoshopSlider.SetEnable(slider, false);
-        Check(!PhotoshopSlider.GetEnable(slider), "suwak: wyłączony po SetEnable(false)");
+        Check(!PhotoshopSlider.GetEnable(slider), "suwak: wyÅ‚Ä…czony po SetEnable(false)");
     }
 
     private static void TestRaw16()
@@ -1386,7 +1400,7 @@ internal static class Program
             Check(File.Exists(side), "eye sidecar created");
             Check(Path.GetFileName(side) == "sidecar_source.eye", "eye sidecar name next to source");
 
-            bool ok = EyeFile.TryLoad(img, out var st2) && st2.Version == 3 &&
+            bool ok = EyeFile.TryLoad(img, out var st2) && st2.Version == 5 &&
                       st2.ShadowLift == 25 && st2.Gamma == 1.4 && st2.Mono == 2 &&
                       st2.Exposure == 0.75 && st2.Contrast == -30 && st2.Temperature == 40 &&
                       st2.Saturation == -15 && st2.Highlights == -25 && st2.Whites == 20 && st2.Blacks == -10 &&
@@ -1459,7 +1473,7 @@ internal static class Program
                           histState.History[1].History is null && histState.History[1].HistoryPos is null &&
                           histState.Exposure == stateWithHist.Exposure &&
                           histState.BaseEv == 2.58 &&
-                          histState.Version == 3;
+                          histState.Version == 5;
             Check(histOk, "eye history roundtrip (2 steps, pos, nested entries naked)");
 
             string legacyJson = "{\n  \"Version\": 2,\n  \"ShadowLift\": 10\n}";
@@ -2242,6 +2256,7 @@ internal static class Program
     {
         string arw = @"D:\temp\test-raw\DSC01670.ARW";
         Check(File.Exists(arw), "preview arw sample present");
+        if (!File.Exists(arw)) return;
 
         var full16 = RawDecoder.Decode16(arw, halfSize: false);
         Check(RawDecoder.TryGetInfoHeader(arw, out var hdr), "preview header info");

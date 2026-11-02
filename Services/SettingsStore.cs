@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -8,6 +9,9 @@ public sealed record ViewerSettings
 {
     public double ShadowLift { get; init; }
     public double Gamma { get; init; } = 1.0;
+    public Dictionary<string, bool>? PluginFiles { get; init; }
+    /// <summary>Why a plugin was switched off automatically (key = plugin id).</summary>
+    public Dictionary<string, string>? PluginDisabledReason { get; init; }
 }
 
 public static class SettingsStore
@@ -17,8 +21,11 @@ public static class SettingsStore
         WriteIndented = true
     };
 
-    private static string DirectoryPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PhotographerEye");
+    /// <summary>%APPDATA%\PhotographerEye, or PHOTOGRAPHEREYE_APPDATA when set (tests).</summary>
+    public static string DirectoryPath =>
+        Environment.GetEnvironmentVariable("PHOTOGRAPHEREYE_APPDATA") is { Length: > 0 } d
+            ? d
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PhotographerEye");
 
     private static string FilePath => Path.Combine(DirectoryPath, "settings.json");
 

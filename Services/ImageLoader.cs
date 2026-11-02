@@ -27,6 +27,10 @@ public static class ImageLoader
         {
             return Imaging.HeifDecoder.GetInfo(path);
         }
+        if (PluginImport.Find(path) is { } importer)
+        {
+            return PluginImport.GetInfo(importer, path);
+        }
 
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.None, BitmapCacheOption.OnDemand);
@@ -64,6 +68,11 @@ public static class ImageLoader
         if (Imaging.HeifDecoder.IsHeif(path))
         {
             return Imaging.HeifDecoder.LoadScaled(path, info, maxWidth, maxHeight);
+        }
+        if (PluginImport.Find(path) is { } importer)
+        {
+            bool full = maxWidth >= info.Width && maxHeight >= info.Height;
+            return PluginImport.Load(importer, path, full ? 0 : Math.Max(maxWidth, maxHeight));
         }
 
         int rawW = info.RotatedQuarter ? info.Height : info.Width;

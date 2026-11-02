@@ -8,6 +8,11 @@ $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 $main = "ImgViewer.csproj"
 
+Write-Host "Build -> plugins-samples"
+dotnet build plugins-samples\ImgViewer.Plugins.Samples.csproj -c Release --nologo -v q
+if ($LASTEXITCODE -ne 0) { throw "build plugins-samples failed" }
+if (-not (Test-Path "plugins-samples\bin\Release\netstandard2.0\ImgViewer.Plugins.Samples.dll")) { throw "sample plugin dll missing" }
+
 function Publish([string]$out, [string[]]$tfmProps) {
     Write-Host "Publish -> $out"
     dotnet publish $main -c Release -r win-x64 --self-contained true `

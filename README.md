@@ -54,6 +54,89 @@ Portable: `dist\PhotographerEye.exe [file|folder]` — no install, .NET bundled 
 | `Ctrl+O` | open file |
 | `Ctrl+S` | save edited photo |
 
+## Plugins
+
+PhotographerEye loads .NET plugins that target `netstandard2.0` and reference `ImgViewer.Plugin.Abstractions` (`PluginSdk/`). The same plugin DLL works in the .NET 8 build and in the net6 Win7 build.
+
+### SDK v2
+
+- A plugin implements `IEyePlugin`. It has a `PluginManifest` (id, name, version, author, `Api = 2`, declared permissions) and an `Initialize(IPluginHost host)` method. In that method the plugin registers:
+  - filters (`AddFilter`)
+  - mask providers (`AddMaskProvider`)
+  - importers (`AddImporter`)
+  - exporters (`AddExporter`)
+  - metadata providers (`AddMetadataProvider`)
+  - commands (`AddCommand`)
+  - presets (`AddPreset`)
+- `host.Events` exposes `ImageOpened`, `BeforeSave` (which can cancel the save), `AfterSave` and `AfterExport`. `host.DataDirectory` is a writable folder for each plugin. `host.Imaging` provides blur, resize and JPEG/PNG encoding, and uses the GPU when one is available (`host.GpuAvailable`).
+- **Filters** receive a `PluginImage` with float RGB planes in 0..1, the `FilterParams`, and a `RenderContext`. The context carries the stage, color space, preview flag, preview scale, full-resolution size, `ImageMeta`, cancellation token and progress callback.
+- **Stages** decide where a filter runs:
+  - `SceneLinear`: linear light, before the core adjustments.
+  - `Display`: sRGB, after the core adjustments.
+  - `Output`: after crop and rotate (for example a vignette).
+- **Placement**: a filter goes either on the toolbar (a toggle button) or in the Adjustments panel (a collapsible section per `Group`, with up/down/reset buttons). The user's filter order is stored in `.eye`.
+- **Parameter kinds**: `Slider`, `Toggle`, `Choice`, `Color` (hex, with an HSL picker), `Curve` (`x,y;...`, with a curve editor), `Point` (pick on the image), `File` (browse). Optional `IsIdentity` skips a filter while it would have no effect.
+- **IDs are namespaced**: `pluginId:filterId`, and parameter values are stored as `pluginId:filterId/paramId`. Values that belong to plugins which are not installed are kept untouched in `.eye`, so a photo survives a round-trip through a machine without the plugin.
+- **Masks**: any filter with `SupportsMask` (in the SceneLinear and Display stages) can be limited by one of:
+  - a linear gradient
+  - a radial gradient
+  - a brush
+  - a luminance range
+  - a plugin mask provider (`plugin:<pluginId:maskId>`)
+
+  Masks can be inverted. They are edited on the image through `Controls/MaskOverlay.cs`.
+- **Presets**: plugins can ship presets, and users can save their own to `%APPDATA%\PhotographerEye\Presets`. Preset keys are `core.Exposure`, `core.Contrast` and the other core controls, plus plugin keys.
+- **Built-in filters**: `core:lut` applies a `.cube` 3D LUT, either a built-in profile (warm, cool, tealorange, matte, vivid) or a file from `%APPDATA%\PhotographerEye\LUTs` or `luts\` next to the executable. `core:local` provides masked local adjustments.
+- **v1 compatibility**: old `IPlugin` DLLs still load through `V1Adapter`. Each v1 feature becomes a Display filter `v1.<file>.<name>:<featureId>` with parameters `p0..pN`, and v1 `.eye` keys are migrated when a photo is opened.
+
+### Packages, trust and failure handling
+
+- **Package format**: a `.pepkg` is a zip that contains `manifest.json` (`id`, `name`, `version`, `author`, `api`, `entry`, `permissions`) and the assemblies.
+- **Install**: `Settings ▸ Plugins… ▸ Install` opens a trust dialog before anything is executed. The dialog shows:
+  - the manifest
+  - the SHA-256 of the package and of the entry assembly
+  - the Authenticode signature status
+  - the plugin types and dependencies, read from assembly metadata without loading the code
+  - the declared permissions
+
+  Packages are installed to `%APPDATA%\PhotographerEye\Plugins\<id>\`. Plain `.dll` files are still accepted.
+- **Automatic disabling**: a plugin is disabled after 3 consecutive failures (exceptions in a render, mask, importer, exporter or command). A preview render that takes longer than 8 s disables it immediately. The reason is saved in `settings.json` (`PluginDisabledReason`) and shown in the Plugins window, where the plugin can be re-enabled. Each plugin inside a package can be enabled or disabled separately.
+- **Limitations**:
+  - Plugins run **in-process**. There is no process isolation or sandbox: a plugin has the same rights as the app.
+  - Permissions are **declarative only**. They are shown to the user before install but not enforced.
+  - The timeout stops waiting for a hung preview and disables the plugin, but it cannot kill the plugin's thread. Install only plugins you trust.
+
+### Samples
+
+`plugins-samples/` contains v2 samples: `sample.negative`, `sample.bwred`, `sample.grade`, `sample.vignette`, `sample.netpbm`, `sample.web`, `sample.exposure`, `sample.sky` and `sample.eventlog`. What each one does:
+
+| Sample | What it shows |
+|---|---|
+| `sample.negative` | Toolbar filter plus a command (Ctrl+Shift+N) |
+| `sample.bwred` | Black and white with a red mix; uses choice and toggle parameters and ships a preset |
+| `sample.grade` | Split-tone grade; uses color and curve parameters |
+| `sample.vignette` | Vignette in the Output stage; center picked as a point on the image |
+| `sample.netpbm` | `.ppm`/`.pgm` importer |
+| `sample.web` | Web JPEG exporter with options, plus an "outbox" exporter |
+| `sample.exposure` | Exposure-value metadata provider |
+| `sample.sky` | Sky mask provider |
+| `sample.eventlog` | Logs host events |
+
+- **Build**: `dotnet build plugins-samples\ImgViewer.Plugins.Samples.csproj -c Release`. Building the app also copies the samples to `plugins\samples\` (`manifest.json` + DLL) in the output and publish folders. The installers ship that folder.
+- **Harness coverage**: `TestPluginSamples` in `tools/Harness/PluginTests.cs` tests the following, using an isolated app-data dir (`PHOTOGRAPHEREYE_APPDATA`):
+  - loading the samples and the namespaced IDs
+  - each stage
+  - each parameter kind
+  - masks
+  - LUTs
+  - presets
+  - `.eye` v5 round-trip and v1 migration
+  - the v1 adapter
+  - automatic disabling after 3 failures
+  - the 8 s preview timeout
+  - `.pepkg` create, inspect, install, reinstall and remove
+  - the importer
+
 ## Installation
 
 Two Windows installers, built with Inno Setup (`installer\PhotographerEye.iss`, driven by `installer\build.ps1`):
@@ -116,6 +199,8 @@ Single-file diagnostics (harness modes): `--dump <file>` (decode/logic), `--meta
 - `Imaging/HeifDecoder.cs` — HEIC/HEIF/AVIF decoding (in-proc LibHeif): `IsHeif`, `GetInfo` with orientation per container/EXIF rules, `LoadScaled`/`DecodeFull` with a short LRU cache (3), `ExifBytes` for the metadata bar; in-file ISOBMFF parser (`ContainerHasTransforms`) detects `irot`/`imir`/`clap` in `ipco` (container transforms are already applied by libheif, so EXIF is skipped then)
 - `Services/ImageFolder.cs`, `Services/SettingsStore.cs` — file list, settings
 - `Services/PhotoMeta.cs` — file metadata for the bottom bar (`PhotoMetaReader.Get`, cached): RAW via LibRaw (`ImageParams`/`ImageOtherParams` — header only, no decompression), HEIC/HEIF/AVIF via own minimal TIFF parser (`ParseTiff` — LE/BE, IFD0 + ExifIFD: Make/Model, DateTimeOriginal, ExposureTime/FNumber/FocalLength/ISO), the rest via `BitmapDecoder` EXIF; no data → empty label
+- `PluginSdk/` — plugin contract (`ImgViewer.Plugin.Abstractions`, netstandard2.0)
+- `Plugins/` — plugin host: loading/registry/failure handling (`PluginManager.cs`), stage pipeline (`PluginPipeline.cs`), per-photo state (`PluginState.cs`), masks (`MaskRender.cs`), LUT + local filters (`BuiltInFilters.cs`), `.pepkg` + trust (`PluginPackage.cs`, `TrustDialog.cs`), presets, importer bridge; UI in `MainWindow.Plugins.cs`
 - `tools/Harness/` — logic tests
 - `scripts/` — E2E UIA tests and helpers
 

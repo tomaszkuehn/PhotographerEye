@@ -45,7 +45,7 @@ public sealed class NaturalComparer : IComparer<string>
 
 public static class ImageFolder
 {
-    private static readonly string[] Extensions =
+    public static readonly string[] BuiltInExtensions =
     {
         ".jpg", ".jpeg", ".png",
         ".heic", ".heif", ".hif", ".avif",
@@ -56,11 +56,13 @@ public static class ImageFolder
     public static List<string> List(string dir)
     {
         var files = new List<string>();
+        var exts = new HashSet<string>(BuiltInExtensions);
+        try { exts.UnionWith(PluginManager.Instance.Registry.ImporterExtensions); } catch (Exception) { }
         try
         {
             files.AddRange(Directory
                 .EnumerateFiles(dir)
-                .Where(p => Extensions.Contains(Path.GetExtension(p).ToLowerInvariant())));
+                .Where(p => exts.Contains(Path.GetExtension(p).ToLowerInvariant())));
         }
         catch (Exception)
         {

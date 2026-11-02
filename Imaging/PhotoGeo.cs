@@ -56,6 +56,65 @@ public static class PhotoGeo
 
     public static bool IsHeavy(GeoState g) => Math.Abs(g.Angle) >= AngleEps;
 
+    /// <summary>
+    /// Maps a point given as fractions of the un-rotated, un-cropped image (srcW x srcH, any unit) to fractions of the
+    /// output of <see cref="Apply(BitmapSource, Size, GeoState)"/>. Points outside the output map outside 0..1.
+    /// </summary>
+    public static Point MapToOutput(GeoState g, double srcW, double srcH, Point p)
+    {
+        double u = p.X, v = p.Y, w = srcW, h = srcH;
+        int rot = ((g.Rot90 % 4) + 4) % 4;
+        for (int k = 0; k < rot; k++)
+        {
+            (u, v) = (1 - v, u);
+            (w, h) = (h, w);
+        }
+        if (Math.Abs(g.Angle) >= AngleEps)
+        {
+            double t = InsetScale(w, h, g.Angle);
+            double rad = Math.Clamp(g.Angle, -45.0, 45.0) * Math.PI / 180.0;
+            double c = Math.Cos(rad), s = Math.Sin(rad);
+            double dsx = u * w - w / 2, dsy = v * h - h / 2;
+            double dox = c * dsx - s * dsy, doy = s * dsx + c * dsy;
+            double ow = w * t, oh = h * t;
+            u = (dox + ow / 2) / ow;
+            v = (doy + oh / 2) / oh;
+        }
+        var (x, y, cw, ch) = ClampFractions(g);
+        return new Point((u - x) / cw, (v - y) / ch);
+    }
+
+    /// <summary>Inverse of <see cref="MapToOutput"/>.</summary>
+    public static Point MapFromOutput(GeoState g, double srcW, double srcH, Point p)
+    {
+        var (x, y, cw, ch) = ClampFractions(g);
+        double u = x + p.X * cw, v = y + p.Y * ch;
+        int rot = ((g.Rot90 % 4) + 4) % 4;
+        double w = rot % 2 == 1 ? srcH : srcW, h = rot % 2 == 1 ? srcW : srcH;
+        if (Math.Abs(g.Angle) >= AngleEps)
+        {
+            double t = InsetScale(w, h, g.Angle);
+            double rad = Math.Clamp(g.Angle, -45.0, 45.0) * Math.PI / 180.0;
+            double c = Math.Cos(rad), s = Math.Sin(rad);
+            double ow = w * t, oh = h * t;
+            double dox = u * ow - ow / 2, doy = v * oh - oh / 2;
+            double dsx = c * dox + s * doy, dsy = -s * dox + c * doy;
+            u = (dsx + w / 2) / w;
+            v = (dsy + h / 2) / h;
+        }
+        for (int k = 0; k < rot; k++) (u, v) = (v, 1 - u);
+        return new Point(u, v);
+    }
+
+    /// <summary>Width of the output in source units (srcW x srcH before rotation).</summary>
+    public static double OutputWidth(GeoState g, double srcW, double srcH)
+    {
+        int rot = ((g.Rot90 % 4) + 4) % 4;
+        double w = rot % 2 == 1 ? srcH : srcW, h = rot % 2 == 1 ? srcW : srcH;
+        double t = Math.Abs(g.Angle) >= AngleEps ? InsetScale(w, h, g.Angle) : 1.0;
+        return w * t * ClampFractions(g).W;
+    }
+
     public static (BitmapSource Src, Size Box) Apply(BitmapSource src, Size nativeBox, GeoState g)
     {
         if (g.IsDefault) return (src, nativeBox);

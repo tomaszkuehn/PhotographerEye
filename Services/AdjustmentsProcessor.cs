@@ -103,6 +103,38 @@ public static class AdjustmentsProcessor
         return converted;
     }
 
+    public static byte[] ToBgraBuffer(BitmapSource source, out int stride)
+    {
+        var bgra = EnsureBgra(source);
+        int w = bgra.PixelWidth;
+        int h = bgra.PixelHeight;
+        stride = w * 4;
+        var buffer = new byte[(long)stride * h];
+        bgra.CopyPixels(buffer, stride, 0);
+        return buffer;
+    }
+
+    public static BitmapSource FromBgraBuffer(byte[] buffer, int width, int height, int stride)
+    {
+        var fmt = GetBgraFormat(buffer, width, height, stride);
+        var src = BitmapSource.Create(width, height, 96.0, 96.0, fmt, null, (Array)buffer, stride);
+        src.Freeze();
+        return src;
+    }
+
+    private static PixelFormat GetBgraFormat(byte[] buffer, int width, int height, int stride)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            int row = y * stride;
+            for (int x = 0; x < width; x++)
+            {
+                if (buffer[row + x * 4 + 3] < 255) return PixelFormats.Bgra32;
+            }
+        }
+        return PixelFormats.Bgr32;
+    }
+
     private static unsafe byte[]? ComputeStretchFromBuffer(byte[] buffer)
     {
         Span<int> hl = stackalloc int[256];

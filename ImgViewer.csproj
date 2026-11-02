@@ -29,14 +29,43 @@
 
   <ItemGroup>
     <Compile Remove="tools\**" />
+    <Compile Remove="PluginSdk\**" />
+    <Compile Remove="plugins-samples\**" />
     <Resource Include="Assets\icon.ico" />
     <None Include="thirdparty\libraw22\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="thirdparty\librawhe\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="PluginSdk\ImgViewer.Plugin.Abstractions.csproj" />
+    <!-- Built together with the app so the bundled sample plugins are never stale; not referenced by the app code. -->
+    <ProjectReference Include="plugins-samples\ImgViewer.Plugins.Samples.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <PluginSamplesBin>plugins-samples\bin\$(Configuration)\netstandard2.0\</PluginSamplesBin>
+  </PropertyGroup>
+
   <Target Name="CopyLibRaw22ToPublish" AfterTargets="Publish">
     <Copy SourceFiles="thirdparty\libraw22\dcraw_emu.exe;thirdparty\libraw22\libraw.dll" DestinationFolder="$(PublishDir)thirdparty\libraw22" SkipUnchangedFiles="true" />
     <Copy SourceFiles="thirdparty\librawhe\dcraw_emu.exe" DestinationFolder="$(PublishDir)thirdparty\librawhe" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Sample plugins ship as an installed package folder: plugins\samples\{manifest.json, ImgViewer.Plugins.Samples.dll}. -->
+  <Target Name="CopyPluginSamplesToPublish" AfterTargets="Publish">
+    <ItemGroup Condition="Exists('$(PluginSamplesBin)ImgViewer.Plugins.Samples.dll')">
+      <PluginSampleBin Include="$(PluginSamplesBin)ImgViewer.Plugins.Samples.dll;plugins-samples\manifest.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginSampleBin)" DestinationFolder="$(PublishDir)plugins\samples" SkipUnchangedFiles="true" Condition="@(PluginSampleBin->Count()) &gt; 0" />
+    <Delete Files="$(PublishDir)plugins\ImgViewer.Plugins.Samples.dll" ContinueOnError="true" />
+  </Target>
+
+  <Target Name="CopyPluginSamplesToOutput" AfterTargets="Build">
+    <ItemGroup Condition="Exists('$(PluginSamplesBin)ImgViewer.Plugins.Samples.dll')">
+      <PluginSampleBin Include="$(PluginSamplesBin)ImgViewer.Plugins.Samples.dll;plugins-samples\manifest.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginSampleBin)" DestinationFolder="$(OutDir)plugins\samples" SkipUnchangedFiles="true" Condition="@(PluginSampleBin->Count()) &gt; 0" />
+    <Delete Files="$(OutDir)plugins\ImgViewer.Plugins.Samples.dll" ContinueOnError="true" />
   </Target>
 
 </Project>

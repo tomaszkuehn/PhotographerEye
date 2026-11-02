@@ -7,12 +7,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using ImgViewer.Controls;
 using ImgViewer.Imaging;
+using ImgViewer.Plugins;
 using ImgViewer.Services;
 using Microsoft.Win32;
 
@@ -130,7 +132,7 @@ public partial class MainWindow : Window
         _saveTimer.Tick += (_, _) =>
         {
             _saveTimer.Stop();
-            SettingsStore.Save(new ViewerSettings
+            SettingsStore.Save(SettingsStore.Load() with
             {
                 ShadowLift = ShadowSlider.Value,
                 Gamma = GammaSlider.Value
@@ -152,12 +154,13 @@ public partial class MainWindow : Window
             OnRedecodeTimer();
         };
 
+        InitPlugins();
         Loaded += OnLoaded;
         Closing += (_, _) =>
         {
             _loadCts?.Cancel();
             _applyCts?.Cancel();
-            SettingsStore.Save(new ViewerSettings
+            SettingsStore.Save(SettingsStore.Load() with
             {
                 ShadowLift = ShadowSlider.Value,
                 Gamma = GammaSlider.Value
@@ -405,20 +408,8 @@ public partial class MainWindow : Window
             _lastDimsText = $"{Path.GetFileName(path)}   preview…";
             SetStatus(_lastDimsText, error: false);
         }
-        UpdateStatusMeta(path);
+        UpdateStatusMeta(path, isFull);
         ReapplyAdjustments(path, info);
-    }
-
-    private void UpdateStatusMeta(string path)
-    {
-        Task.Run(() =>
-        {
-            var meta = PhotoMetaReader.Get(path);
-            Dispatcher.BeginInvoke(() =>
-            {
-                if (IsCurrent(path)) StatusRight.Text = meta?.Summary ?? "";
-            });
-        });
     }
 
     private void ReapplyAdjustments()
@@ -504,10 +495,10 @@ public partial class MainWindow : Window
 
         bool baseMatchesFile = Math.Abs(_eyeBaseEv - _baseEv) < 1e-9 && !_eyeCurveSet;
         bool neutralRaw = baseMatchesFile && raw16 is not null && Math.Abs(s) <= 0.0001 && Math.Abs(g - 1.0) < 0.0005 &&
-            !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null && !geoAngle;
+            !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null && !geoAngle && !PluginHasEffect();
         if (raw16 is not null
                 ? neutralRaw
-                : !geoAngle && AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null)
+                : !geoAngle && AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null && !PluginHasEffect())
         {
             _applyCts?.Cancel();
             StoreUnGeo(raw, box);
@@ -525,6 +516,13 @@ public partial class MainWindow : Window
         var ct = _applyCts.Token;
         double baseEv = CurrentBaseEv();
         var toneCurve = CurrentCurve();
+        int fullW = info.Width, fullH = info.Height;
+        int bufLong = raw16 is not null ? Math.Max(raw16.W, raw16.H) : Math.Max(raw.PixelWidth, raw.PixelHeight);
+        double pScale = Math.Min(1.0, bufLong / (double)Math.Max(1, Math.Max(fullW, fullH)));
+        var job = PluginJob(preview: true, pScale, ct);
+        var mono = _monoMode;
+        int seed = _monoSeed;
+        bool runOutput = !_cropMode;
 
         _ = Task.Run(() =>
         {
@@ -534,48 +532,73 @@ public partial class MainWindow : Window
                 {
                     var sw = System.Diagnostics.Stopwatch.StartNew();
                     var rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, ct);
+                    rendered = PluginPipeline.ApplyRaw16(rendered, FilterStage.SceneLinear, job, fullW, fullH) ?? rendered;
                     var extra2 = StripExposureTemp(extra);
-                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out var hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct, cameraTone: toneCurve);
+                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out var hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: toneCurve);
                     if (corrected is null)
-                        corrected = Adjust16.Apply(rendered, s, g, manual, out hist, mono: _monoMode, grainSeed: _monoSeed, extra: extra2, ct: ct, cameraTone: toneCurve);
+                        corrected = Adjust16.Apply(rendered, s, g, manual, out hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: toneCurve);
+                    if (ct.IsCancellationRequested) return;
+                    var post = PluginPipeline.ApplyRaw16(corrected, FilterStage.Display, job, fullW, fullH);
+                    bool postRan = post is not null;
+                    corrected = post ?? corrected;
                     sw.Stop();
-                    Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms size={raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} baseEv={baseEv:0.00} manual={manual} mono={_monoMode:D} extra={extra2 is not null}");
+                    Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms size={raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} baseEv={baseEv:0.00} manual={manual} mono={mono:D} extra={extra2 is not null} plugins={job.Report.Ran}");
                     if (ct.IsCancellationRequested) return;
                     var disp = corrected.ToDisplay(dither: true);
                     var (gdisp, gbox) = PhotoGeo.Apply(disp, box, displayGeo);
+                    if (runOutput)
+                    {
+                        var outB = PluginPipeline.ApplyBitmap(gdisp, FilterStage.Output, job,
+                            (int)Math.Round(gdisp.PixelWidth / pScale), (int)Math.Round(gdisp.PixelHeight / pScale));
+                        if (outB is not null) { gdisp = outB; postRan = true; }
+                    }
+                    ReportPluginErrors(path, job);
                     Dispatcher.BeginInvoke(() =>
                     {
-                    if (!IsCurrent(path) || !ReferenceEquals(_baseRaw16, raw16)) return;
-                    if (_compareOn) return;
-                    StoreUnGeo(disp, box);
-                    SetDisplayed(gdisp, gbox);
-                        if (geoActive) UpdateHistogram(path, gdisp);
+                        if (!IsCurrent(path) || !ReferenceEquals(_baseRaw16, raw16)) return;
+                        if (_compareOn) return;
+                        StoreUnGeo(disp, box);
+                        SetDisplayed(gdisp, gbox);
+                        if (geoActive || postRan) UpdateHistogram(path, gdisp);
                         else if (hist is not null) ApplyHistogram(path, hist);
                     });
                     return;
                 }
 
                 var sw8 = System.Diagnostics.Stopwatch.StartNew();
-                var processed = AdjustmentsProcessor.Apply(raw, s, g, manual, out var hist8, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
-                sw8.Stop();
-                Debug.Log($"APPLY: {sw8.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual} mono={_monoMode:D} extra={extra is not null}");
+                var src8 = PluginPipeline.ApplyBitmap(raw, FilterStage.SceneLinear, job, fullW, fullH) ?? raw;
+                var processed = AdjustmentsProcessor.Apply(src8, s, g, manual, out var hist8, mono: mono, grainSeed: seed, extra: extra);
                 if (processed is null || ct.IsCancellationRequested) return;
-                var (gprocessed, gbox8) = PhotoGeo.Apply(processed, box, displayGeo);
+                BitmapSource processedOut = processed;
+                var post8 = PluginPipeline.ApplyBitmap(processedOut, FilterStage.Display, job, fullW, fullH);
+                bool postRan8 = post8 is not null;
+                processedOut = post8 ?? processedOut;
+                sw8.Stop();
+                Debug.Log($"APPLY: {sw8.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual} mono={mono:D} extra={extra is not null} plugins={job.Report.Ran}");
+                var (gprocessed, gbox8) = PhotoGeo.Apply(processedOut, box, displayGeo);
+                if (runOutput)
+                {
+                    var outB = PluginPipeline.ApplyBitmap(gprocessed, FilterStage.Output, job,
+                        (int)Math.Round(gprocessed.PixelWidth / pScale), (int)Math.Round(gprocessed.PixelHeight / pScale));
+                    if (outB is not null) { gprocessed = outB; postRan8 = true; }
+                }
+                ReportPluginErrors(path, job);
                 Dispatcher.BeginInvoke(() =>
                 {
                     if (!IsCurrent(path) || !ReferenceEquals(_baseBitmap, raw)) return;
-                    if (_compareOn)
-                    {
-                        return;
-                    }
-                    StoreUnGeo(processed, box);
+                    if (_compareOn) return;
+                    StoreUnGeo(processedOut, box);
                     SetDisplayed(gprocessed, gbox8);
-                    if (geoActive) UpdateHistogram(path, gprocessed);
+                    if (geoActive || postRan8) UpdateHistogram(path, gprocessed);
                     else if (hist8 is not null) ApplyHistogram(path, hist8);
                 });
             }
-            catch (Exception)
+            catch (OperationCanceledException)
             {
+            }
+            catch (Exception ex)
+            {
+                Debug.Log($"APPLY ERROR: [{ex.GetType().Name}] {ex.Message} {ex.StackTrace}");
             }
         });
     }
@@ -586,6 +609,7 @@ public partial class MainWindow : Window
         _lastDisplayedBox = box;
         Viewer.SetSource(src, box);
         if (_cropMode && !CropOverlay.IsInteracting) CropOverlay.Sync();
+        RefreshMaskOverlay();
     }
 
     private void UpdateHistogram(string path, BitmapSource src)
@@ -690,6 +714,7 @@ public partial class MainWindow : Window
         if (a.Rot90 != b.Rot90 || a.CropAspect != b.CropAspect || Math.Abs(a.Angle - b.Angle) > 1e-6) return false;
         if (Math.Abs(a.CropX - b.CropX) > 1e-9 || Math.Abs(a.CropY - b.CropY) > 1e-9 ||
             Math.Abs(a.CropW - b.CropW) > 1e-9 || Math.Abs(a.CropH - b.CropH) > 1e-9) return false;
+        if (!PluginEyeEqual(a, b)) return false;
         return KnotsEqual(a.StretchEv, b.StretchEv);
     }
 
@@ -966,6 +991,7 @@ public partial class MainWindow : Window
     private void SetCropMode(bool open)
     {
         if (open && _baseBitmap is null) return;
+        if (open) EndMaskEdit();
         _cropMode = open;
         if (open && _compareOn) SetCompare(false);
         BtnCrop.Foreground = (Brush)FindResource(open ? "AccentBrush" : "ForegroundBrush");
@@ -1156,7 +1182,9 @@ public partial class MainWindow : Window
         return g with { CropX = x, CropY = y, CropW = w / fw, CropH = h / fh };
     }
 
-    private string DimsLine(string name, ImageInfo info, string decoded)
+    private string DimsLine(string name, ImageInfo info, string decoded) => DimsLineCore(name, info, decoded) + PluginMissingNote();
+
+    private string DimsLineCore(string name, ImageInfo info, string decoded)
     {
         if (_geo.IsDefault || info.Width <= 0 || info.Height <= 0) return $"{name}   {info.Width}×{info.Height} px{decoded}";
         var (fw, fh) = FrameNativeSize(info);
@@ -1270,6 +1298,7 @@ public partial class MainWindow : Window
                         HistogramPanel.HasManualEffect ||
                         _monoMode != MonoMode.None ||
                         PanelExtras() is not null ||
+                        PluginHasEffect() ||
                         !_geo.IsDefault;
         BtnSave.IsEnabled = modified && _currentPath is not null;
     }
@@ -1298,43 +1327,41 @@ public partial class MainWindow : Window
         string dest = dialog.FileName;
         CommitHistNow();
         var eyeState = CaptureEyeState() with { History = new List<EyeState>(_hist), HistoryPos = _histPos };
-        bool rawFile = RawDecoder.IsRaw(path);
+        string fmt = tiff ? "tiff16" : "jpg";
+        string? cancel = null;
+        try { cancel = PluginManager.Instance.RaiseBeforeSave(path, dest, fmt); }
+        catch (Exception ex) { Debug.Log($"PLUGINS: BeforeSave [{ex.GetType().Name}] {ex.Message}"); }
+        if (cancel is not null)
+        {
+            SetStatus($"Save cancelled — {cancel}", error: true);
+            return;
+        }
+        var snap = CaptureFullSnapshot(path);
+        var geo = _geo;
 
         _saving = true;
         BtnSave.IsEnabled = false;
         Mouse.OverrideCursor = Cursors.Wait;
-        double s = ShadowSlider.Value / 100.0;
-        double g = GammaSlider.Value;
-        var manual = HistogramPanel.Snapshot();
-        var extra = PanelExtras();
 
         _ = Task.Run(() =>
         {
+            bool saved = false;
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                if (rawFile)
+                var (r16, bmp) = RenderFull(snap);
+                if (r16 is not null)
                 {
-                    var base16 = RawDecoder.Decode16(path, halfSize: false);
-                    var toneCurve = CurrentCurve();
-                    var rendered = LinearRender.ApplyGain(base16, CurrentBaseEv() + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0);
-                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra), cameraTone: toneCurve);
-                    if (corrected is null)
-                        corrected = Adjust16.Apply(rendered, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: StripExposureTemp(extra), cameraTone: toneCurve);
-                    var geo16 = PhotoGeo.Apply(corrected, _geo);
-                    SaveEncoded(geo16, dest, tiff);
-                    Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={geo16.W}x{geo16.H} raw16 tiff16={tiff} geo(rot={_geo.Rot90} angle={_geo.Angle:0.##} crop={_geo.CropX:0.##},{_geo.CropY:0.##},{_geo.CropW:0.##},{_geo.CropH:0.##})");
+                    SaveEncoded(r16, dest, tiff);
+                    Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={r16.W}x{r16.H} raw16 tiff16={tiff} plugins={snap.Job.Report.Ran} geo(rot={geo.Rot90} angle={geo.Angle:0.##} crop={geo.CropX:0.##},{geo.CropY:0.##},{geo.CropW:0.##},{geo.CropH:0.##})");
                 }
                 else
                 {
-                    var info = ImageLoader.GetInfo(path);
-                    var full = ImageLoader.LoadScaled(path, info, info.Width, info.Height);
-                    var processed = AdjustmentsProcessor.Apply(full, s, g, manual, out _, mono: _monoMode, grainSeed: _monoSeed, extra: extra);
-                    if (processed is null) throw new InvalidOperationException("Failed to process image");
-                    var (geo8, geoBox) = PhotoGeo.Apply(processed, new Size(processed.PixelWidth, processed.PixelHeight), _geo);
-                    SaveEncoded(geo8, dest, tiff);
-                    Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={geo8.PixelWidth}x{geo8.PixelHeight} manual={manual} mono={_monoMode:D} tiff16={tiff} geo(rot={_geo.Rot90} angle={_geo.Angle:0.##} crop={_geo.CropX:0.##},{_geo.CropY:0.##},{_geo.CropW:0.##},{_geo.CropH:0.##})");
+                    SaveEncoded(bmp!, dest, tiff);
+                    Debug.Log($"SAVE: {dest} {sw.ElapsedMilliseconds} ms out={bmp!.PixelWidth}x{bmp.PixelHeight} tiff16={tiff} plugins={snap.Job.Report.Ran} geo(rot={geo.Rot90} angle={geo.Angle:0.##} crop={geo.CropX:0.##},{geo.CropY:0.##},{geo.CropW:0.##},{geo.CropH:0.##})");
                 }
+                saved = true;
+                var perr = snap.Job.Report.Errors.Count > 0 ? $"  (plugin errors: {string.Join("; ", snap.Job.Report.Errors.Distinct())})" : "";
                 try
                 {
                     EyeFile.Save(path, eyeState);
@@ -1345,7 +1372,7 @@ public partial class MainWindow : Window
                 }
                 Dispatcher.BeginInvoke(() =>
                 {
-                    if (IsCurrent(path)) SetStatus($"Saved: {Path.GetFileName(dest)} ({(tiff ? "TIFF 16-bit" : "JPG 90%")})", error: false);
+                    if (IsCurrent(path)) SetStatus($"Saved: {Path.GetFileName(dest)} ({(tiff ? "TIFF 16-bit" : "JPG 90%")}){perr}", error: perr.Length > 0);
                     Mouse.OverrideCursor = null;
                 });
             }
@@ -1360,6 +1387,8 @@ public partial class MainWindow : Window
             }
             finally
             {
+                try { PluginManager.Instance.RaiseAfterSave(path, dest, fmt, saved, export: false); }
+                catch (Exception ex) { Debug.Log($"PLUGINS: AfterSave [{ex.GetType().Name}] {ex.Message}"); }
                 _saving = false;
                 Dispatcher.BeginInvoke(UpdateSaveState);
             }
@@ -1520,7 +1549,7 @@ public partial class MainWindow : Window
         var dlg = new OpenFileDialog
         {
             Title = "Open Image",
-            Filter = "Images|*.jpg;*.jpeg;*.png;*.heic;*.heif;*.hif;*.avif|RAW|*.rw2;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.cr2;*.cr3;*.crw;*.orf;*.raf;*.pef;*.ptx;*.dng;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.mos;*.erf;*.kdc;*.dcr;*.mef;*.rwl|All files|*.*",
+            Filter = "Images|*.jpg;*.jpeg;*.png;*.heic;*.heif;*.hif;*.avif" + PluginOpenPatterns() + "|RAW|*.rw2;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.cr2;*.cr3;*.crw;*.orf;*.raf;*.pef;*.ptx;*.dng;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.mos;*.erf;*.kdc;*.dcr;*.mef;*.rwl|All files|*.*",
             CheckFileExists = true
         };
         if (dlg.ShowDialog(this) == true)
@@ -1662,6 +1691,7 @@ public partial class MainWindow : Window
 
     private void OnViewerPickClick(object sender, MouseButtonEventArgs e)
     {
+        if (_pointPick is not null) { HandlePointPick(e); return; }
         if (!_wbPicking) return;
         e.Handled = true;
         _wbPicking = false;
@@ -1814,6 +1844,9 @@ public partial class MainWindow : Window
         }
         _monoMode = MonoMode.None;
         UpdateMonoButton();
+        _pluginState.Clear();
+        EndMaskEdit();
+        RebuildPluginUi();
         if (!silent)
         {
             SetStatus("Adjustments reset to defaults", error: false);
@@ -1832,6 +1865,7 @@ public partial class MainWindow : Window
             stretchEv[i] = new[] { knots[i].In, knots[i].Out };
             stretch[i] = new[] { PhotoOps.EvToDisplayFraction(knots[i].In, gamma), PhotoOps.EvToDisplayFraction(knots[i].Out, gamma) };
         }
+        var ps = _pluginState.Save();
         return new EyeState
         {
             BaseEv = double.IsNaN(_eyeBaseEv) ? _baseEv : _eyeBaseEv,
@@ -1859,7 +1893,12 @@ public partial class MainWindow : Window
             CropY = _geo.CropY,
             CropW = _geo.CropW,
             CropH = _geo.CropH,
-            CropAspect = _geo.Aspect
+            CropAspect = _geo.Aspect,
+            PluginValues = ps.Values,
+            PluginActive = ps.Active,
+            PluginText = ps.Text,
+            PluginOrder = ps.Order,
+            PluginMasks = ps.Masks
         };
     }
 
@@ -1936,6 +1975,9 @@ public partial class MainWindow : Window
             CropH = Math.Clamp(st.CropH <= 0 ? 1.0 : st.CropH, PhotoGeo.MinFraction, 1.0),
             Aspect = string.IsNullOrWhiteSpace(st.CropAspect) ? "original" : st.CropAspect
         };
+        _pluginState.Load(st, _pluginReg);
+        SyncMaskOverlaySpec();
+        RebuildPluginUi();
         if (_cropMode)
         {
             _suppressCropCombo = true;
@@ -2012,6 +2054,7 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        if (HandlePluginKey(e)) return;
         if (e.Key is Key.LeftCtrl or Key.RightCtrl) return;
 
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && e.Key is Key.Z or Key.Y)

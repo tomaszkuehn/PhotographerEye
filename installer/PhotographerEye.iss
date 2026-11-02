@@ -48,6 +48,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "{#RootDir}\installer\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "{#RootDir}\{#DistDir}\PhotographerEye.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#RootDir}\{#DistDir}\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#RootDir}\{#DistDir}\thirdparty\*"; DestDir: "{app}\thirdparty"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]

@@ -7,7 +7,7 @@ namespace ImgViewer.Services;
 
 public sealed record EyeState
 {
-    public int Version { get; init; } = 3;
+    public int Version { get; init; } = 5;
     public double BaseEv { get; init; }
     public double[][]? ToneCurve { get; init; }
     public double ShadowLift { get; init; }
@@ -34,8 +34,26 @@ public sealed record EyeState
     public double CropW { get; init; } = 1.0;
     public double CropH { get; init; } = 1.0;
     public string CropAspect { get; init; } = "original";
+    public Dictionary<string, double>? PluginValues { get; init; }
+    public List<string>? PluginActive { get; init; }
+    public Dictionary<string, string>? PluginText { get; init; }
+    public List<string>? PluginOrder { get; init; }
+    public Dictionary<string, MaskSpec>? PluginMasks { get; init; }
     public List<EyeState>? History { get; init; }
     public int? HistoryPos { get; init; }
+}
+
+/// <summary>Local mask attached to a plugin filter. Coordinates are fractions of the un-rotated, un-cropped photo.</summary>
+public sealed record MaskSpec
+{
+    /// <summary>"linear" (P = x1,y1,x2,y2), "radial" (P = cx,cy,rx,ry,feather), "brush" (Strokes), "luma" (P = lo,hi,feather) or "plugin:&lt;pluginId:maskId&gt;".</summary>
+    public string Kind { get; init; } = "";
+    public double[]? P { get; init; }
+    public bool Invert { get; init; }
+    /// <summary>Brush strokes: [mode (1 paint, 0 erase), radius (fraction of width), x1, y1, x2, y2, ...].</summary>
+    public List<double[]>? Strokes { get; init; }
+    public Dictionary<string, double>? Values { get; init; }
+    public Dictionary<string, string>? Text { get; init; }
 }
 
 public static class EyeFile
@@ -58,7 +76,7 @@ public static class EyeFile
         try
         {
             var loaded = JsonSerializer.Deserialize<EyeState>(File.ReadAllText(SidecarPath(imagePath)), JsonOptions);
-            if (loaded is not { Version: 1 or 2 or 3 }) return false;
+            if (loaded is not { Version: 1 or 2 or 3 or 4 or 5 }) return false;
             state = loaded;
             return true;
         }

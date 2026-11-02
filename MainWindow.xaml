@@ -69,6 +69,10 @@
                         ToolTip="Settings">
                     <Button.ContextMenu>
                         <ContextMenu Placement="Bottom" StaysOpen="False">
+                            <MenuItem Header="Plugins…" Click="OnPluginsClick" />
+                            <MenuItem x:Name="MnuExport" Header="Export" />
+                            <MenuItem x:Name="MnuCommands" Header="Plugin commands" />
+                            <Separator />
                             <MenuItem x:Name="MnuAbout" Header="About…" Click="OnAboutClick" />
                         </ContextMenu>
                     </Button.ContextMenu>
@@ -117,6 +121,7 @@
                 <Button x:Name="BtnMono" Content="&#xE792;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
                         Style="{StaticResource ToolButton}" Click="OnMonoToggleClick"
                         ToolTip="Black &amp; white: documentary / Tri-X 400 (B — three states)" />
+                <StackPanel x:Name="PluginToolbarHost" Orientation="Horizontal" AutomationProperties.AutomationId="PluginToolbarHost" />
                 <Border Style="{StaticResource ToolSeparator}" />
                 <Button x:Name="BtnRotateL" AutomationProperties.AutomationId="BtnRotateL" Content="&#x27F2;" FontFamily="Segoe UI Symbol" FontSize="15" Width="30" Height="26"
                         Style="{StaticResource ToolButton}" Click="OnRotateLeftClick"
@@ -168,6 +173,7 @@
                     Click="OnNextClick"
                     ToolTip="Next image (&#x2192;)" />
             <v:CropOverlay x:Name="CropOverlay" Visibility="Collapsed" />
+            <v:MaskOverlay x:Name="MaskOverlay" Visibility="Collapsed" />
             <Grid x:Name="HistHost"
                   Width="250" Height="130"
                   HorizontalAlignment="Right" VerticalAlignment="Top"
@@ -272,6 +278,18 @@
                                      Style="{StaticResource ToolButton}"
                                      Click="OnResetClick"
                                      ToolTip="Reset all edits" />
+                             <Button x:Name="BtnPresets"
+                                     AutomationProperties.AutomationId="BtnPresets"
+                                     DockPanel.Dock="Right"
+                                     Height="18"
+                                     Margin="0,0,6,0"
+                                     Padding="6,0"
+                                     MinWidth="0"
+                                     FontSize="11"
+                                     Content="Presets"
+                                     Style="{StaticResource ToolButton}"
+                                     Click="OnPresetsClick"
+                                     ToolTip="Apply, save or delete presets" />
                              <TextBlock Text="Adjustments" FontWeight="SemiBold" VerticalAlignment="Center" />
                          </DockPanel>
                      </Border>
@@ -381,6 +399,7 @@
                               </Grid>
                               <Slider x:Name="ColorNoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
+                          <StackPanel x:Name="PluginPanelHost" AutomationProperties.AutomationId="PluginPanelHost" />
                          </StackPanel>
                      </ScrollViewer>
                  </DockPanel>
