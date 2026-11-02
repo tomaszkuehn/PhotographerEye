@@ -976,14 +976,35 @@ internal static partial class Program
               Math.Abs(a.Whites - 1.0) < 1e-9 && Math.Abs(a.Blacks - (-1.0)) < 1e-9 &&
               Math.Abs(a.Dehaze - (-1.0)) < 1e-9, "LC: FromUi maps ranges -100..100/0..150");
         Check(a.IsDefault == false, "LC: FromUi non-default settings");
+        {
+            bool mono = true; double prev = -1;
+            for (int i = 0; i <= 100; i++) { double v = PhotoAdjustments.DehazeCurve(i); if (v <= prev) mono = false; prev = v; }
+            Check(Math.Abs(PhotoAdjustments.DehazeCurve(4) - 1) < 1e-9 && Math.Abs(PhotoAdjustments.DehazeCurve(8) - 2) < 1e-9 &&
+                  Math.Abs(PhotoAdjustments.DehazeCurve(6) - 1.5) < 1e-9 && Math.Abs(PhotoAdjustments.DehazeCurve(100) - 100) < 1e-9 &&
+                  Math.Abs(PhotoAdjustments.DehazeCurve(-4) + 1) < 1e-9 && Math.Abs(PhotoAdjustments.DehazeCurve(-100) + 100) < 1e-9 && mono,
+                  $"Dehaze curve: 4->1, 8->2, 100->100, symmetric, monotonic (50->{PhotoAdjustments.DehazeCurve(50):0.0})");
+        }
 
         var satUi = PhotoAdjustments.FromUi(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         Check(satUi.IsDefault, "LC: all sliders at 0 => neutral");
 
-        var (gR, gG, gB) = PhotoOps.TempGains(1.0);
-        Check(Math.Abs(gR - 1.25) < 1e-9 && Math.Abs(gB - 0.75) < 1e-9 && Math.Abs(gG - 1.0) < 1e-9, "LC: temp symmetric R/B");
-        var (cR, cG, cB) = PhotoOps.TempGains(-1.0);
-        Check(Math.Abs(cR - 0.75) < 1e-9 && Math.Abs(cB - 1.25) < 1e-9, "LC: negative temp symmetric");
+        var (gR, gG, gB) = PhotoOps.WbGains(1.0, 0.0);
+        var (cR, cG, cB) = PhotoOps.WbGains(-1.0, 0.0);
+        Check(Math.Abs(Math.Log(gR / gB) + Math.Log(cR / cB)) < 1e-9, "LC: temp symmetric R/B");
+        Check(gR / gB > 7.0 && cB / cR > 7.0, $"LC: temp range wide (R/B x{gR / gB:0.0} at +100, B/R x{cB / cR:0.0} at -100)");
+        var (nR, nG, nB) = PhotoOps.WbGains(0.0, 0.0);
+        Check(Math.Abs(nR - 1) < 1e-12 && Math.Abs(nG - 1) < 1e-12 && Math.Abs(nB - 1) < 1e-12, "LC: wb 0/0 is identity");
+        bool lumaKept = true;
+        foreach (var (t, u) in new[] { (1.0, 0.0), (-1.0, 0.0), (0.4, -0.7), (-0.3, 1.0) })
+        {
+            var (a1, a2, a3) = PhotoOps.WbGains(t, u);
+            lumaKept &= Math.Abs(0.2126 * a1 + 0.7152 * a2 + 0.0722 * a3 - 1.0) < 1e-9;
+        }
+        Check(lumaKept, "LC: wb gains keep luminance");
+        var (fine1, _, fineB) = PhotoOps.WbGains(0.01, 0.0);
+        Check(Math.Log(fine1 / fineB) < 0.01, $"LC: temp step near 0 is fine ({Math.Log(fine1 / fineB):0.0000} per unit)");
+        var (mR, mG, mB) = PhotoOps.WbGains(0.0, 1.0);
+        Check(mG < mR && mG < mB && Math.Abs(mR - mB) < 1e-9, "LC: tint + is magenta (green down)");
 
         var flat = MakeFlat(255, 240, 240, 240, 120, 120, 120, 10, 10, 10);
         var baseP = ReadPixels(AdjustmentsProcessor.Apply(flat, 0.0, 1.0)!);
@@ -1563,12 +1584,25 @@ internal static partial class Program
         Check(cnr is not null && ChromaStddev(cnr!) < ChromaStddev(chroma),
               $"chroma NR reduces color noise ({ChromaStddev(chroma):0.###} -> {ChromaStddev(cnr ?? chroma):0.###})");
 
-        double tWarmSample = PhotoOps.WbTemperatureFromSample(90, 130, 170);
-        double tCoolSample = PhotoOps.WbTemperatureFromSample(170, 130, 90);
-        double tNeutral = PhotoOps.WbTemperatureFromSample(128, 128, 128);
-        Check(tWarmSample > 0.5, $"wb picker blue-ish sample -> warm correction ({tWarmSample:0.##})");
-        Check(tCoolSample < -0.5, $"wb picker red-ish sample -> cool correction ({tCoolSample:0.##})");
-        Check(Math.Abs(tNeutral) < 0.01, $"wb picker neutral sample -> no change ({tNeutral:0.###})");
+        PhotoOps.WbFromLinearSample(0.10, 0.18, 0.30, out double tWarmSample, out double uW);
+        PhotoOps.WbFromLinearSample(0.30, 0.18, 0.10, out double tCoolSample, out double uC);
+        PhotoOps.WbFromLinearSample(0.2, 0.2, 0.2, out double tNeutral, out double uN);
+        Check(tWarmSample > 0.3, $"wb picker blue-ish sample -> warm correction ({tWarmSample:0.##})");
+        Check(tCoolSample < -0.3, $"wb picker red-ish sample -> cool correction ({tCoolSample:0.##})");
+        Check(Math.Abs(tNeutral) < 1e-6 && Math.Abs(uN) < 1e-6, $"wb picker neutral sample -> no change ({tNeutral:0.###})");
+        // Round trip: any cast within range, picked and applied, gives an exactly neutral sample.
+        bool rt = true; string worst = "";
+        foreach (var (cr, cg, cb) in new[] { (1.8, 1.0, 0.45), (0.6, 1.0, 1.7), (1.0, 1.35, 1.0), (1.1, 0.8, 1.2), (2.3, 1.0, 0.35) })
+        {
+            double sr = 0.2 * cr, sg = 0.2 * cg, sb = 0.2 * cb;
+            bool ok = PhotoOps.WbFromLinearSample(sr, sg, sb, out double tt, out double uu);
+            var (k1, k2, k3) = PhotoOps.WbGains(tt, uu);
+            double e1 = Math.Abs(Math.Log(sr * k1 / (sg * k2))), e2 = Math.Abs(Math.Log(sb * k3 / (sg * k2)));
+            if (!ok || e1 > 1e-6 || e2 > 1e-6) { rt = false; worst = $"cast {cr}/{cg}/{cb}: ok={ok} err {e1:0.0000}/{e2:0.0000}"; }
+        }
+        Check(rt, "wb picker round trip neutralizes casts incl. green and strong tungsten " + worst);
+        bool beyond = !PhotoOps.WbFromLinearSample(0.2 * 20, 0.2, 0.2 / 20, out double tb, out _);
+        Check(beyond && tb < -0.999, $"wb picker: cast beyond range reported and clamped ({tb:0.###})");
     }
 
     private static BitmapSource MakeHighlightSource()

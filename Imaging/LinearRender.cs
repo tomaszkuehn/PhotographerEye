@@ -23,10 +23,13 @@ public static class LinearRender
         return lut;
     }
 
-    public static Raw16Image ApplyGain(Raw16Image src, double ev, double temperature, CancellationToken ct = default)
+    public static Raw16Image ApplyGain(Raw16Image src, double ev, double temperature, CancellationToken ct = default) =>
+        ApplyGain(src, ev, temperature, 0.0, ct);
+
+    public static Raw16Image ApplyGain(Raw16Image src, double ev, double temperature, double tint, CancellationToken ct = default)
     {
         double evGain = Math.Pow(2.0, ev);
-        var (gainR, gainG, gainB) = PhotoOps.TempGains(temperature);
+        var (gainR, gainG, gainB) = PhotoOps.WbGains(temperature, tint);
 
         float gr = (float)(evGain * gainR);
         float gg = (float)(evGain * gainG);

@@ -356,7 +356,14 @@
                                       <TextBlock x:Name="TempValue" Foreground="{StaticResource MutedBrush}" Text="0" />
                                   </StackPanel>
                               </Grid>
-                              <Slider x:Name="TempSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="TempSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True"
+                                      ToolTip="Temperature: − cooler (blue), + warmer (amber). Fine near 0, wide range towards the ends" />
+                              <Grid Margin="0,8,0,0">
+                                  <TextBlock Text="Tint" Foreground="{StaticResource MutedBrush}" />
+                                  <TextBlock x:Name="TintValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
+                              </Grid>
+                              <Slider x:Name="TintSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True"
+                                      ToolTip="Tint: − green, + magenta (fluorescent / LED light)" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>

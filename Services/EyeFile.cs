@@ -18,6 +18,7 @@ public sealed record EyeState
     public double Exposure { get; init; }
     public double Contrast { get; init; }
     public double Temperature { get; init; }
+    public double Tint { get; init; }
     public double Saturation { get; init; }
     public double Highlights { get; init; }
     public double Whites { get; init; }

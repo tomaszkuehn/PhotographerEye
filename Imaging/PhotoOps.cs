@@ -8,6 +8,7 @@ public sealed class PhotoAdjustments
     public double Exposure;
     public double Contrast;
     public double Temperature;
+    public double Tint;
     public double Saturation = 1.0;
     public double Clarity;
     public double Sharpen;
@@ -22,6 +23,7 @@ public sealed class PhotoAdjustments
         Math.Abs(Exposure) < 0.0005 &&
         Math.Abs(Contrast) < 0.0005 &&
         Math.Abs(Temperature) < 0.0005 &&
+        Math.Abs(Tint) < 0.0005 &&
         Math.Abs(Saturation - 1.0) < 0.005 &&
         Math.Abs(Clarity) < 0.0005 &&
         Math.Abs(Sharpen) < 0.0005 &&
@@ -31,6 +33,17 @@ public sealed class PhotoAdjustments
         Math.Abs(Dehaze) < 0.0005 &&
         Math.Abs(Denoise) < 0.0005 &&
         Math.Abs(ColorNoise) < 0.0005;
+
+    /// <summary>
+    /// Dehaze slider position (-100..100) to effect strength in the same units: 4 gives 1 and 8 gives 2 (linear in between),
+    /// above 8 the strength grows quadratically (slope continuous at 8) so 100 still gives the full 100; symmetric for negatives.
+    /// </summary>
+    public static double DehazeCurve(double pos)
+    {
+        double p = Math.Min(Math.Abs(pos), 100.0);
+        double v = p <= 8.0 ? p / 4.0 : 2.0 + 0.25 * (p - 8.0) + 75.0 * Math.Pow((p - 8.0) / 92.0, 2);
+        return Math.Sign(pos) * v;
+    }
 
     public static PhotoAdjustments FromUi(double exposure, double contrast, double temperature, double saturation, double clarity, double sharpen, double highlights, double whites, double blacks, double dehaze, double denoise, double colorNoise) =>
         new()
@@ -44,7 +57,7 @@ public sealed class PhotoAdjustments
             Highlights = highlights / 100.0,
             Whites = whites / 100.0,
             Blacks = blacks / 100.0,
-            Dehaze = dehaze / 100.0,
+            Dehaze = DehazeCurve(dehaze) / 100.0,
             Denoise = denoise / 100.0,
             ColorNoise = colorNoise / 100.0
         };
@@ -52,10 +65,54 @@ public sealed class PhotoAdjustments
 
 public static class PhotoOps
 {
-    public static (double R, double G, double B) TempGains(double t)
+    // White balance in linear light. Temperature t (-1..1, + = warmer) is a log R/B half-ratio along a cubic curve:
+    // fine control near 0, wide range at the ends (R/B ratio up to e^4 ~ 55x end to end, covering candle .. shade).
+    // Tint u (-1..1, + = magenta) scales green. Gains are normalized to unit luminance so exposure stays put.
+    private const double WbLin = 0.25, WbCub = 0.75;
+    private const double TintLin = 0.15, TintCub = 0.45;
+
+    public static double WbLog(double t) { t = Math.Clamp(t, -1.0, 1.0); return WbLin * t + WbCub * t * t * t; }
+    public static double TintLog(double u) { u = Math.Clamp(u, -1.0, 1.0); return TintLin * u + TintCub * u * u * u; }
+
+    public static (double R, double G, double B) WbGains(double temperature, double tint)
     {
-        double g = 1.0 + 0.25 * t;
-        return (g, 1.0, 1.0 - 0.25 * t);
+        double l = WbLog(temperature), m = TintLog(tint);
+        double r = Math.Exp(l), g = Math.Exp(-m), b = Math.Exp(-l);
+        double y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        return (r / y, g / y, b / y);
+    }
+
+    public static (double R, double G, double B) WbGains(PhotoAdjustments a) => WbGains(a.Temperature, a.Tint);
+
+    public static (double R, double G, double B) TempGains(double t) => WbGains(t, 0.0);
+
+    /// <summary>
+    /// Temperature and tint (-1..1) that make a sampled linear-light color neutral. The sample must come from the image
+    /// before white balance; returns false when the color cannot be neutralized within range (clamped result still returned).
+    /// </summary>
+    public static bool WbFromLinearSample(double r, double g, double b, out double temperature, out double tint)
+    {
+        temperature = 0; tint = 0;
+        if (r <= 1e-6 || g <= 1e-6 || b <= 1e-6) return false;
+        // Neutral: l + ln r = -m + ln g = -l + ln b.
+        double l = (Math.Log(b) - Math.Log(r)) / 2.0;
+        double m = Math.Log(g) - (Math.Log(r) + Math.Log(b)) / 2.0;
+        temperature = InvertCubic(l, WbLin, WbCub);
+        tint = InvertCubic(m, TintLin, TintCub);
+        return Math.Abs(l) <= WbLin + WbCub + 1e-9 && Math.Abs(m) <= TintLin + TintCub + 1e-9;
+    }
+
+    private static double InvertCubic(double v, double a, double c)
+    {
+        if (v >= a + c) return 1.0;
+        if (v <= -(a + c)) return -1.0;
+        double lo = -1, hi = 1;
+        for (int i = 0; i < 60; i++)
+        {
+            double mid = (lo + hi) / 2;
+            if (a * mid + c * mid * mid * mid < v) lo = mid; else hi = mid;
+        }
+        return (lo + hi) / 2;
     }
 
     public const double ToneGrey = 0.18;
@@ -198,7 +255,7 @@ public static class PhotoOps
 
     public static (byte[] R, byte[] G, byte[] B) BuildChannelLuts(PhotoAdjustments a)
     {
-        var (gR, gG, gB) = TempGains(a.Temperature);
+        var (gR, gG, gB) = WbGains(a);
         return (BuildChannelLut(gR, a.Dehaze), BuildChannelLut(gG, a.Dehaze), BuildChannelLut(gB, a.Dehaze));
     }
 
@@ -414,15 +471,6 @@ public static class PhotoOps
         if (i >= lut.Length - 1) return lut[lut.Length - 1];
         double t = f - i;
         return (float)(lut[i] + (lut[i + 1] - lut[i]) * t);
-    }
-
-    public static double WbTemperatureFromSample(double mR, double mG, double mB)
-    {
-        if (mR < 1.0 || mG < 1.0 || mB < 1.0) return 0.0;
-        double gR = mG / mR;
-        double gB = mG / mB;
-        double t = ((gR - 1.0) + (1.0 - gB)) / 0.5;
-        return Math.Clamp(t, -1.0, 1.0);
     }
 
     private static byte ClampByte(float v)

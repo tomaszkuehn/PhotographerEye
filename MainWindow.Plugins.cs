@@ -195,7 +195,7 @@ public partial class MainWindow
         {
             var base16 = RawDecoder.Decode16(sn.Path, halfSize: false);
             int fw = base16.W, fh = base16.H;
-            var rendered = LinearRender.ApplyGain(base16, sn.BaseEv + (sn.Extra?.Exposure ?? 0.0), sn.Extra?.Temperature ?? 0.0);
+            var rendered = LinearRender.ApplyGain(base16, sn.BaseEv + (sn.Extra?.Exposure ?? 0.0), sn.Extra?.Temperature ?? 0.0, sn.Extra?.Tint ?? 0.0);
             rendered = PluginPipeline.ApplyRaw16(rendered, FilterStage.SceneLinear, job, fw, fh) ?? rendered;
             var extra2 = StripExposureTemp(sn.Extra);
             var corrected = Adjust16.TryApplyGpu(rendered, sn.S, sn.G, sn.Manual, out _, mono: sn.Mono, grainSeed: sn.Seed, extra: extra2, cameraTone: sn.Curve)
@@ -1425,7 +1425,7 @@ public partial class MainWindow
 
     private (string Key, Slider Slider)[] CoreSliders() => new[]
     {
-        ("core.Exposure", ExpSlider), ("core.Contrast", ContrastSlider), ("core.Temperature", TempSlider),
+        ("core.Exposure", ExpSlider), ("core.Contrast", ContrastSlider), ("core.Temperature", TempSlider), ("core.Tint", TintSlider),
         ("core.Saturation", SatSlider), ("core.Highlights", HighlightsSlider), ("core.Shadows", PanelShadowSlider),
         ("core.ShadowLift", ShadowSlider),
         ("core.Whites", WhitesSlider), ("core.Blacks", BlacksSlider), ("core.Clarity", ClaritySlider),

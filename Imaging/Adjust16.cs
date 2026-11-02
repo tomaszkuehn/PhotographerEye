@@ -407,7 +407,7 @@ public static partial class Adjust16
 
     private static (ushort[] R, ushort[] G, ushort[] B) BuildChannelLuts16(PhotoAdjustments a, double? dehaze = null)
     {
-        var (gR, gG, gB) = PhotoOps.TempGains(a.Temperature);
+        var (gR, gG, gB) = PhotoOps.WbGains(a);
         double dz = dehaze ?? a.Dehaze;
         return (GetChannelLut(gR, dz), GetChannelLut(gG, dz), GetChannelLut(gB, dz));
     }

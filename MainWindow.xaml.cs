@@ -101,6 +101,7 @@ public partial class MainWindow : Window
         ExpSlider.ValueChanged += OnPanelSliderChanged;
         ContrastSlider.ValueChanged += OnPanelSliderChanged;
         TempSlider.ValueChanged += OnPanelSliderChanged;
+        TintSlider.ValueChanged += OnPanelSliderChanged;
         SatSlider.ValueChanged += OnPanelSliderChanged;
         ClaritySlider.ValueChanged += OnPanelSliderChanged;
         SharpenSlider.ValueChanged += OnPanelSliderChanged;
@@ -111,7 +112,7 @@ public partial class MainWindow : Window
         DehazeSlider.ValueChanged += OnPanelSliderChanged;
         DenoiseSlider.ValueChanged += OnPanelSliderChanged;
         ColorNoiseSlider.ValueChanged += OnPanelSliderChanged;
-        foreach (var s in new[] { ExpSlider, ContrastSlider, TempSlider, SatSlider, ClaritySlider, SharpenSlider, HighlightsSlider, WhitesSlider, BlacksSlider, PanelShadowSlider, DehazeSlider, DenoiseSlider, ColorNoiseSlider })
+        foreach (var s in new[] { ExpSlider, ContrastSlider, TempSlider, TintSlider, SatSlider, ClaritySlider, SharpenSlider, HighlightsSlider, WhitesSlider, BlacksSlider, PanelShadowSlider, DehazeSlider, DenoiseSlider, ColorNoiseSlider })
         {
             s.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         }
@@ -532,7 +533,7 @@ public partial class MainWindow : Window
                 if (raw16 is not null)
                 {
                     var sw = System.Diagnostics.Stopwatch.StartNew();
-                    var rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, ct);
+                    var rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0, ct);
                     rendered = PluginPipeline.ApplyRaw16(rendered, FilterStage.SceneLinear, job, fullW, fullH) ?? rendered;
                     var extra2 = StripExposureTemp(extra);
                     var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out var hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: toneCurve);
@@ -707,7 +708,7 @@ public partial class MainWindow : Window
         if (!KnotsEqual(a.ToneCurve, b.ToneCurve)) return false;
         if (Math.Abs(a.ShadowLift - b.ShadowLift) > 1e-9 || Math.Abs(a.Gamma - b.Gamma) > 1e-9 ||
             Math.Abs(a.Exposure - b.Exposure) > 1e-9 || Math.Abs(a.Contrast - b.Contrast) > 1e-9 ||
-            Math.Abs(a.Temperature - b.Temperature) > 1e-9 || Math.Abs(a.Saturation - b.Saturation) > 1e-9 ||
+            Math.Abs(a.Temperature - b.Temperature) > 1e-9 || Math.Abs(a.Tint - b.Tint) > 1e-9 || Math.Abs(a.Saturation - b.Saturation) > 1e-9 ||
             Math.Abs(a.Highlights - b.Highlights) > 1e-9 || Math.Abs(a.Whites - b.Whites) > 1e-9 ||
             Math.Abs(a.Blacks - b.Blacks) > 1e-9 || Math.Abs(a.Clarity - b.Clarity) > 1e-9 ||
             Math.Abs(a.Sharpen - b.Sharpen) > 1e-9 || Math.Abs(a.Dehaze - b.Dehaze) > 1e-9 ||
@@ -1640,6 +1641,7 @@ public partial class MainWindow : Window
             DehazeSlider.Value,
             DenoiseSlider.Value,
             ColorNoiseSlider.Value);
+        a.Tint = TintSlider.Value / 100.0;
         return a.IsDefault ? null : a;
     }
 
@@ -1650,6 +1652,7 @@ public partial class MainWindow : Window
         {
             Exposure = 0.0,
             Temperature = 0.0,
+            Tint = 0.0,
             Contrast = a.Contrast,
             Saturation = a.Saturation,
             Clarity = a.Clarity,
@@ -1698,39 +1701,75 @@ public partial class MainWindow : Window
         _wbPicking = false;
         Mouse.OverrideCursor = null;
 
-        var pickSource = _lastDisplayed ?? _baseBitmap;
-        if (pickSource is not null && Viewer.TryScreenToPixel(e.GetPosition(Viewer), out double bx, out double by))
+        var disp = _lastDisplayed ?? _baseBitmap;
+        if (disp is null || _baseInfo is not ImageInfo bi || !Viewer.TryScreenToPixel(e.GetPosition(Viewer), out double bx, out double by))
         {
-            int cx = (int)bx;
-            int cy = (int)by;
-            int r = 4;
-            int x0 = Math.Max(0, cx - r);
-            int y0 = Math.Max(0, cy - r);
-            int w = Math.Min(pickSource.PixelWidth, cx + r + 1) - x0;
-            int h = Math.Min(pickSource.PixelHeight, cy + r + 1) - y0;
-            if (w > 0 && h > 0)
+            SetStatus("White point — clicked outside the photo", error: true);
+            return;
+        }
+        // The displayed image already carries the current white balance and the tone curve, so the sample is taken
+        // from the unprocessed source (geometry mapped back) in linear light, and the result is absolute.
+        var src = PhotoGeo.MapFromOutput(CurrentDisplayGeo(), bi.Width, bi.Height, new Point(bx / disp.PixelWidth, by / disp.PixelHeight));
+        if (src.X < 0 || src.Y < 0 || src.X > 1 || src.Y > 1 || !SampleSourceLinear(src.X, src.Y, out double lr, out double lg, out double lb, out bool clipped))
+        {
+            SetStatus("White point — clicked outside the photo", error: true);
+            return;
+        }
+        if (clipped)
+        {
+            SetStatus("White point — that area is overexposed (clipped); pick a light gray that is not pure white", error: true);
+            return;
+        }
+        bool inRange = PhotoOps.WbFromLinearSample(lr, lg, lb, out double temp, out double tint);
+        TempSlider.Value = Math.Clamp(Math.Round(temp * 100.0), TempSlider.Minimum, TempSlider.Maximum);
+        TintSlider.Value = Math.Clamp(Math.Round(tint * 100.0), TintSlider.Minimum, TintSlider.Maximum);
+        SetStatus(inRange
+            ? $"White balance from white point — temperature {(int)TempSlider.Value}, tint {(int)TintSlider.Value}"
+            : $"White point — color cast beyond the slider range, corrected as far as possible (temperature {(int)TempSlider.Value}, tint {(int)TintSlider.Value})",
+            error: !inRange);
+    }
+
+    /// <summary>
+    /// Mean linear-light color of the unprocessed source around a normalized point (RAW: decoded linear data;
+    /// other formats: decoded pixels with the same 2.2 linearization the adjustments use). Clipped pixels are skipped.
+    /// </summary>
+    private bool SampleSourceLinear(double nx, double ny, out double r, out double g, out double b, out bool clipped)
+    {
+        r = g = b = 0; clipped = false;
+        double sr = 0, sg = 0, sb = 0; int n = 0, nClip = 0;
+        if (_baseRaw16 is Raw16Image raw)
+        {
+            int cx = (int)Math.Clamp(nx * raw.W, 0, raw.W - 1), cy = (int)Math.Clamp(ny * raw.H, 0, raw.H - 1);
+            int rad = Math.Max(2, Math.Max(raw.W, raw.H) / 500);
+            for (int y = Math.Max(0, cy - rad); y <= Math.Min(raw.H - 1, cy + rad); y++)
+                for (int x = Math.Max(0, cx - rad); x <= Math.Min(raw.W - 1, cx + rad); x++)
+                {
+                    int i = y * raw.W + x;
+                    if (Math.Max(raw.R[i], Math.Max(raw.G[i], raw.B[i])) >= 64800) { nClip++; continue; }
+                    sr += raw.R[i] / 65535.0; sg += raw.G[i] / 65535.0; sb += raw.B[i] / 65535.0; n++;
+                }
+        }
+        else if (_baseBitmap is BitmapSource bmp)
+        {
+            int cx = (int)Math.Clamp(nx * bmp.PixelWidth, 0, bmp.PixelWidth - 1), cy = (int)Math.Clamp(ny * bmp.PixelHeight, 0, bmp.PixelHeight - 1);
+            int rad = Math.Max(2, Math.Max(bmp.PixelWidth, bmp.PixelHeight) / 500);
+            int x0 = Math.Max(0, cx - rad), y0 = Math.Max(0, cy - rad);
+            int w = Math.Min(bmp.PixelWidth, cx + rad + 1) - x0, h = Math.Min(bmp.PixelHeight, cy + rad + 1) - y0;
+            if (w <= 0 || h <= 0) return false;
+            var region = new FormatConvertedBitmap(new CroppedBitmap(bmp, new Int32Rect(x0, y0, w, h)), PixelFormats.Bgra32, null, 0);
+            var buf = new byte[w * h * 4];
+            region.CopyPixels(buf, w * 4, 0);
+            for (int i = 0; i + 3 < buf.Length; i += 4)
             {
-                var buf = new byte[w * h * 4];
-                pickSource.CopyPixels(new Int32Rect(x0, y0, w, h), buf, w * 4, 0);
-                double sr = 0, sg = 0, sb = 0, n = 0;
-                for (int i = 0; i < buf.Length - 3; i += 4)
-                {
-                    if (buf[i + 3] < 16) continue;
-                    sb += buf[i];
-                    sg += buf[i + 1];
-                    sr += buf[i + 2];
-                    n++;
-                }
-                if (n > 0)
-                {
-                    double t = PhotoOps.WbTemperatureFromSample(sr / n, sg / n, sb / n);
-                    TempSlider.Value = Math.Clamp(t * 100.0, TempSlider.Minimum, TempSlider.Maximum);
-                    SetStatus($"White balance from white point — temperature {(int)Math.Round(TempSlider.Value)}", error: false);
-                    return;
-                }
+                if (buf[i + 3] < 16) continue;
+                if (Math.Max(buf[i], Math.Max(buf[i + 1], buf[i + 2])) >= 252) { nClip++; continue; }
+                sb += Math.Pow(buf[i] / 255.0, 2.2); sg += Math.Pow(buf[i + 1] / 255.0, 2.2); sr += Math.Pow(buf[i + 2] / 255.0, 2.2); n++;
             }
         }
-        SetStatus("White point — sampled outside the image", error: true);
+        else return false;
+        if (n == 0) { clipped = nClip > 0; return nClip > 0; }
+        r = sr / n; g = sg / n; b = sb / n;
+        return true;
     }
 
     private void OnPanelSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -1766,6 +1805,7 @@ public partial class MainWindow : Window
         ExpValue.Text = (ExpSlider.Value > 0 ? "+" : "") + ExpSlider.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
         ContrastValue.Text = ((int)ContrastSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         TempValue.Text = ((int)TempSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        TintValue.Text = ((int)TintSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         SatValue.Text = ((int)SatSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         PanelShadowValue.Text = Math.Round(PanelShadowSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
         HighlightsValue.Text = ((int)HighlightsSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -1831,6 +1871,7 @@ public partial class MainWindow : Window
             ExpSlider.Value = 0;
             ContrastSlider.Value = 0;
             TempSlider.Value = 0;
+            TintSlider.Value = 0;
             SatSlider.Value = 0;
             PanelShadowSlider.Value = 0;
             HighlightsSlider.Value = 0;
@@ -1879,6 +1920,7 @@ public partial class MainWindow : Window
             Exposure = ExpSlider.Value,
             Contrast = ContrastSlider.Value,
             Temperature = TempSlider.Value,
+            Tint = TintSlider.Value,
             Saturation = SatSlider.Value,
             Highlights = HighlightsSlider.Value,
             Whites = WhitesSlider.Value,
@@ -1956,6 +1998,7 @@ public partial class MainWindow : Window
         ExpSlider.Value = Math.Clamp(st.Exposure, ExpSlider.Minimum, ExpSlider.Maximum);
         ContrastSlider.Value = Math.Clamp(st.Contrast, ContrastSlider.Minimum, ContrastSlider.Maximum);
         TempSlider.Value = Math.Clamp(st.Temperature, TempSlider.Minimum, TempSlider.Maximum);
+        TintSlider.Value = Math.Clamp(st.Tint, TintSlider.Minimum, TintSlider.Maximum);
         double legacySatShift = st.Version == 1 ? 100.0 : 0.0;
         SatSlider.Value = Math.Clamp(st.Saturation - legacySatShift, SatSlider.Minimum, SatSlider.Maximum);
         HighlightsSlider.Value = Math.Clamp(st.Highlights, HighlightsSlider.Minimum, HighlightsSlider.Maximum);
@@ -2000,6 +2043,7 @@ public partial class MainWindow : Window
         else if (ReferenceEquals(sender, ExpSlider)) ExpSlider.Value = 0;
         else if (ReferenceEquals(sender, ContrastSlider)) ContrastSlider.Value = 0;
         else if (ReferenceEquals(sender, TempSlider)) TempSlider.Value = 0;
+        else if (ReferenceEquals(sender, TintSlider)) TintSlider.Value = 0;
         else if (ReferenceEquals(sender, SatSlider)) SatSlider.Value = 0;
         else if (ReferenceEquals(sender, PanelShadowSlider)) PanelShadowSlider.Value = 0;
         else if (ReferenceEquals(sender, HighlightsSlider)) HighlightsSlider.Value = 0;
