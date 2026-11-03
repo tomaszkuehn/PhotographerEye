@@ -534,15 +534,11 @@ public partial class MainWindow : Window
                 if (raw16 is not null)
                 {
                     var sw = System.Diagnostics.Stopwatch.StartNew();
-                    var rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0, ct);
-                    rendered = PluginPipeline.ApplyRaw16(rendered, FilterStage.SceneLinear, job, fullW, fullH) ?? rendered;
+                    var corrected = Correct16(raw16, baseEv, extra, s, g, manual, mono, seed, toneCurve, job, fullW, fullH, ct, out var hist, out bool blended);
                     var extra2 = StripExposureTemp(extra);
-                    var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out var hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: toneCurve);
-                    if (corrected is null)
-                        corrected = Adjust16.Apply(rendered, s, g, manual, out hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: toneCurve);
                     if (ct.IsCancellationRequested) return;
                     var post = PluginPipeline.ApplyRaw16(corrected, FilterStage.Display, job, fullW, fullH);
-                    bool postRan = post is not null;
+                    bool postRan = post is not null || blended;
                     corrected = post ?? corrected;
                     sw.Stop();
                     Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms size={raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} baseEv={baseEv:0.00} manual={manual} mono={mono:D} extra={extra2 is not null} plugins={job.Report.Ran}");
@@ -570,11 +566,11 @@ public partial class MainWindow : Window
 
                 var sw8 = System.Diagnostics.Stopwatch.StartNew();
                 var src8 = PluginPipeline.ApplyBitmap(raw, FilterStage.SceneLinear, job, fullW, fullH) ?? raw;
-                var processed = AdjustmentsProcessor.Apply(src8, s, g, manual, out var hist8, mono: mono, grainSeed: seed, extra: extra);
+                var processed = Correct8(src8, extra, s, g, manual, mono, seed, job, fullW, fullH, out var hist8, out bool blended8);
                 if (processed is null || ct.IsCancellationRequested) return;
                 BitmapSource processedOut = processed;
                 var post8 = PluginPipeline.ApplyBitmap(processedOut, FilterStage.Display, job, fullW, fullH);
-                bool postRan8 = post8 is not null;
+                bool postRan8 = post8 is not null || blended8;
                 processedOut = post8 ?? processedOut;
                 sw8.Stop();
                 Debug.Log($"APPLY: {sw8.ElapsedMilliseconds} ms size={raw.PixelWidth}x{raw.PixelHeight} s={s:0.##} g={g:0.##} manual={manual} mono={mono:D} extra={extra is not null} plugins={job.Report.Ran}");
@@ -748,6 +744,7 @@ public partial class MainWindow : Window
             Math.Abs(a.CropW - b.CropW) > 1e-9 || Math.Abs(a.CropH - b.CropH) > 1e-9) return false;
         if (!PluginEyeEqual(a, b)) return false;
         if (!KnotsEqual(a.CurveR, b.CurveR) || !KnotsEqual(a.CurveG, b.CurveG) || !KnotsEqual(a.CurveB, b.CurveB)) return false;
+        if (!KnotsEqual(a.LevelR, b.LevelR) || !KnotsEqual(a.LevelG, b.LevelG) || !KnotsEqual(a.LevelB, b.LevelB)) return false;
         return KnotsEqual(a.StretchEv, b.StretchEv);
     }
 
@@ -1955,6 +1952,9 @@ public partial class MainWindow : Window
             CurveR = NullIfEmpty(HistogramPanel.CurvePairs(HistChannel.R)),
             CurveG = NullIfEmpty(HistogramPanel.CurvePairs(HistChannel.G)),
             CurveB = NullIfEmpty(HistogramPanel.CurvePairs(HistChannel.B)),
+            LevelR = NullIfEmpty(HistogramPanel.LevelPairs(HistChannel.R)),
+            LevelG = NullIfEmpty(HistogramPanel.LevelPairs(HistChannel.G)),
+            LevelB = NullIfEmpty(HistogramPanel.LevelPairs(HistChannel.B)),
             Mono = (int)_monoMode,
             Exposure = ExpSlider.Value,
             Contrast = ContrastSlider.Value,
@@ -2034,7 +2034,7 @@ public partial class MainWindow : Window
         {
             HistogramPanel.RestoreManualStretch(new List<StretchKnot>());
         }
-        HistogramPanel.RestoreCurves(st.CurveR, st.CurveG, st.CurveB);
+        HistogramPanel.RestoreCurves(st.CurveR, st.CurveG, st.CurveB, st.LevelR, st.LevelG, st.LevelB);
         ExpSlider.Value = Math.Clamp(st.Exposure, ExpSlider.Minimum, ExpSlider.Maximum);
         ContrastSlider.Value = Math.Clamp(st.Contrast, ContrastSlider.Minimum, ContrastSlider.Maximum);
         TempSlider.Value = Math.Clamp(st.Temperature, TempSlider.Minimum, TempSlider.Maximum);

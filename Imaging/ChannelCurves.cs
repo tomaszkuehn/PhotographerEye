@@ -9,16 +9,22 @@ public enum HistChannel { Rgb = 0, R = 1, G = 2, B = 3 }
 /// <summary>
 /// Tone curve of one color channel in display (sRGB-encoded) space, 0..1. Knots map an input level to an output level;
 /// the ends are fixed at 0→0 and 1→1 and the curve is a monotone cubic (Fritsch–Carlson), so it never reverses tones.
+/// After the curve comes a piecewise linear levels stretch (<see cref="Levels"/>, the points on the histogram's bottom
+/// edge): each point moves the tones at its input to its output, so the channel's histogram is dragged sideways.
 /// </summary>
 public sealed class ChannelCurve
 {
     private readonly List<StretchKnot> _knots = new();
+    private readonly List<StretchKnot> _levels = new();
     private const double MinGap = 0.004;
 
     public IReadOnlyList<StretchKnot> Knots => _knots;
     public int Count => _knots.Count;
 
-    public bool HasEffect
+    public IReadOnlyList<StretchKnot> Levels => _levels;
+    public int LevelCount => _levels.Count;
+
+    public bool HasCurveEffect
     {
         get
         {
@@ -28,18 +34,133 @@ public sealed class ChannelCurve
         }
     }
 
-    public void Clear() => _knots.Clear();
+    public bool HasLevelsEffect
+    {
+        get
+        {
+            foreach (var k in _levels)
+                if (Math.Abs(k.Out - k.In) > 0.002) return true;
+            return false;
+        }
+    }
+
+    public bool HasEffect => HasCurveEffect || HasLevelsEffect;
+
+    /// <summary>Removes the curve points and the levels points.</summary>
+    public void Clear()
+    {
+        _knots.Clear();
+        _levels.Clear();
+    }
+
+    public void ClearCurve() => _knots.Clear();
+
+    public void ClearLevels() => _levels.Clear();
 
     public void RemoveAt(int index)
     {
         if (index >= 0 && index < _knots.Count) _knots.RemoveAt(index);
     }
 
+    public void RemoveLevelAt(int index)
+    {
+        if (index >= 0 && index < _levels.Count) _levels.RemoveAt(index);
+    }
+
     public ChannelCurve Clone()
     {
         var c = new ChannelCurve();
-        c._knots.AddRange(_knots);
+        c.CopyFrom(this);
         return c;
+    }
+
+    public void CopyFrom(ChannelCurve o)
+    {
+        _knots.Clear();
+        _knots.AddRange(o._knots);
+        _levels.Clear();
+        _levels.AddRange(o._levels);
+    }
+
+    // ---- levels (bottom-edge points): piecewise linear, ends 0→0 and 1→1 ----
+
+    /// <summary>Inserts a levels point (or moves the one at the same input). Returns its index.</summary>
+    public int UpsertLevel(double @in, double @out)
+    {
+        @in = Math.Clamp(@in, 0.0, 1.0);
+        for (int i = 0; i < _levels.Count; i++)
+            if (Math.Abs(_levels[i].In - @in) < 0.005)
+            {
+                SetLevelOut(i, @out);
+                return i;
+            }
+        int idx = 0;
+        while (idx < _levels.Count && _levels[idx].In < @in) idx++;
+        _levels.Insert(idx, new StretchKnot(@in, @out));
+        SetLevelOut(idx, @out);
+        return idx;
+    }
+
+    /// <summary>Moves the output of levels point <paramref name="index"/>, clamped between its neighbours.</summary>
+    public void SetLevelOut(int index, double @out)
+    {
+        double lo = index > 0 ? _levels[index - 1].Out : 0.0;
+        double hi = index < _levels.Count - 1 ? _levels[index + 1].Out : 1.0;
+        _levels[index] = _levels[index] with { Out = Math.Clamp(@out, lo, hi) };
+    }
+
+    public double MapLevels(double v)
+    {
+        v = Math.Clamp(v, 0.0, 1.0);
+        if (_levels.Count == 0) return v;
+        double pIn = 0, pOut = 0;
+        foreach (var k in _levels)
+        {
+            if (v < k.In)
+            {
+                double d = k.In - pIn;
+                return d <= 1e-9 ? k.Out : pOut + (k.Out - pOut) * ((v - pIn) / d);
+            }
+            pIn = k.In;
+            pOut = k.Out;
+        }
+        double dl = 1.0 - pIn;
+        return dl <= 1e-9 ? pOut : pOut + (1.0 - pOut) * ((v - pIn) / dl);
+    }
+
+    public double InverseLevels(double y)
+    {
+        y = Math.Clamp(y, 0.0, 1.0);
+        if (_levels.Count == 0) return y;
+        double pIn = 0, pOut = 0;
+        foreach (var k in _levels)
+        {
+            if (y < k.Out)
+            {
+                double d = k.Out - pOut;
+                return d <= 1e-9 ? k.In : pIn + (k.In - pIn) * ((y - pOut) / d);
+            }
+            pIn = k.In;
+            pOut = k.Out;
+        }
+        double dl = 1.0 - pOut;
+        return dl <= 1e-9 ? pIn : pIn + (1.0 - pIn) * ((y - pOut) / dl);
+    }
+
+    public double[][] LevelPairs()
+    {
+        var p = new double[_levels.Count][];
+        for (int i = 0; i < _levels.Count; i++) p[i] = new[] { _levels[i].In, _levels[i].Out };
+        return p;
+    }
+
+    public void FromLevelPairs(double[][]? pairs)
+    {
+        _levels.Clear();
+        if (pairs is null) return;
+        foreach (var p in pairs)
+            if (p is { Length: 2 } && double.IsFinite(p[0]) && double.IsFinite(p[1]))
+                UpsertLevel(p[0], Math.Clamp(p[1], 0.0, 1.0));
     }
 
     /// <summary>Inserts a knot (or moves the one at the same input) keeping outputs ordered. Returns its index.</summary>
@@ -77,16 +198,22 @@ public sealed class ChannelCurve
         }
     }
 
-    /// <summary>Evaluates the curve at <paramref name="x"/> (0..1).</summary>
-    public double Map(double x)
+    /// <summary>Evaluates the curve and then the levels at <paramref name="x"/> (0..1).</summary>
+    public double Map(double x) => MapLevels(MapCurve(x));
+
+    /// <summary>The curve alone (without the levels).</summary>
+    public double MapCurve(double x)
     {
         if (_knots.Count == 0) return Math.Clamp(x, 0.0, 1.0);
         var (xs, ys, ms) = Spline();
         return Eval(xs, ys, ms, x);
     }
 
-    /// <summary>Input level that maps to <paramref name="y"/> (bisection; the curve is monotone).</summary>
-    public double Inverse(double y)
+    /// <summary>Input level that maps to <paramref name="y"/> through curve and levels.</summary>
+    public double Inverse(double y) => InverseCurve(InverseLevels(y));
+
+    /// <summary>Inverse of the curve alone (bisection; the curve is monotone).</summary>
+    public double InverseCurve(double y)
     {
         if (_knots.Count == 0) return Math.Clamp(y, 0.0, 1.0);
         var (xs, ys, ms) = Spline();
@@ -105,11 +232,11 @@ public sealed class ChannelCurve
         var t = new double[size];
         if (_knots.Count == 0)
         {
-            for (int i = 0; i < size; i++) t[i] = i / (double)(size - 1);
+            for (int i = 0; i < size; i++) t[i] = MapLevels(i / (double)(size - 1));
             return t;
         }
         var (xs, ys, ms) = Spline();
-        for (int i = 0; i < size; i++) t[i] = Eval(xs, ys, ms, i / (double)(size - 1));
+        for (int i = 0; i < size; i++) t[i] = MapLevels(Eval(xs, ys, ms, i / (double)(size - 1)));
         return t;
     }
 
@@ -198,9 +325,9 @@ public sealed class RgbCurves
     public RgbCurves Clone()
     {
         var c = new RgbCurves();
-        c.R.Restore(R.Knots);
-        c.G.Restore(G.Knots);
-        c.B.Restore(B.Knots);
+        c.R.CopyFrom(R);
+        c.G.CopyFrom(G);
+        c.B.CopyFrom(B);
         return c;
     }
 

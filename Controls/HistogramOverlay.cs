@@ -48,6 +48,7 @@ public sealed class HistogramOverlay : FrameworkElement
     private Func<double, double>? _displayToEv;
     private Func<double, double>? _evToDisplay;
     private int _grabIdx = -1;
+    private bool _grabLevels;
     private bool _moved;
     private long _lastRaiseTicks;
 
@@ -76,7 +77,7 @@ public sealed class HistogramOverlay : FrameworkElement
     }
 
     private const string LumaTip = "Drag a point on the histogram — the stretch is converted to Exposure/Highlights/Shadows/Whites/Blacks sliders (double-click — remove points)";
-    private const string CurveTip = "Channel curve: click to add a point, drag it up/down (right-click — remove point, double-click — reset channel)";
+    private const string CurveTip = "Channel curve: click to add a point, drag it up/down. Bottom edge: drag points left/right to stretch this channel's histogram (right-click — remove point, double-click — reset curve or bottom-edge points)";
 
     /// <summary>Copy of the R/G/B curves, null when none has an effect.</summary>
     public RgbCurves? CurvesSnapshot() => _curves.HasEffect ? _curves.Clone() : null;
@@ -85,17 +86,24 @@ public sealed class HistogramOverlay : FrameworkElement
 
     public double[][] CurvePairs(HistChannel ch) => _curves[ch].ToPairs();
 
-    public void RestoreCurves(double[][]? r, double[][]? g, double[][]? b)
+    public double[][] LevelPairs(HistChannel ch) => _curves[ch].LevelPairs();
+
+    public void RestoreCurves(double[][]? r, double[][]? g, double[][]? b,
+        double[][]? lr = null, double[][]? lg = null, double[][]? lb = null)
     {
         _curves.R.FromPairs(r);
         _curves.G.FromPairs(g);
         _curves.B.FromPairs(b);
+        _curves.R.FromLevelPairs(lr);
+        _curves.G.FromLevelPairs(lg);
+        _curves.B.FromLevelPairs(lb);
         InvalidateVisual();
     }
 
     public void ClearCurves()
     {
-        if (_curves.R.Count + _curves.G.Count + _curves.B.Count == 0) return;
+        if (_curves.R.Count + _curves.G.Count + _curves.B.Count
+            + _curves.R.LevelCount + _curves.G.LevelCount + _curves.B.LevelCount == 0) return;
         _curves.Clear();
         InvalidateVisual();
     }
@@ -266,9 +274,18 @@ public sealed class HistogramOverlay : FrameworkElement
     {
         if (_channel == HistChannel.Rgb || _lum is null) return;
         var c = _curves[_channel];
-        int hit = HitCurveKnot(c, e.GetPosition(this));
-        if (hit < 0) return;
-        c.RemoveAt(hit);
+        var p = e.GetPosition(this);
+        int hit = HitCurveKnot(c, p);
+        if (hit >= 0)
+        {
+            c.RemoveAt(hit);
+        }
+        else
+        {
+            int lh = InLevelsZone(p) ? HitLevelKnot(c, OutAt(p)) : -1;
+            if (lh < 0) return;
+            c.RemoveLevelAt(lh);
+        }
         _grabIdx = -1;
         InvalidateVisual();
         CurvesEdited?.Invoke(this, EventArgs.Empty);
@@ -311,8 +328,27 @@ public sealed class HistogramOverlay : FrameworkElement
         double best = 7.0;
         for (int i = 0; i < c.Count; i++)
         {
-            var kp = CurvePoint(c.Knots[i].In, c.Knots[i].Out);
+            var kp = CurvePoint(c.Knots[i].In, c.MapLevels(c.Knots[i].Out));
             double d = Math.Sqrt((kp.X - p.X) * (kp.X - p.X) + (kp.Y - p.Y) * (kp.Y - p.Y));
+            if (d < best)
+            {
+                best = d;
+                hit = i;
+            }
+        }
+        return hit;
+    }
+
+    /// <summary>Bottom strip of the plot where the levels points live.</summary>
+    private bool InLevelsZone(Point p) => p.Y >= ActualHeight - Pad - 10;
+
+    private static int HitLevelKnot(ChannelCurve c, double u)
+    {
+        int hit = -1;
+        double best = 0.02;
+        for (int i = 0; i < c.LevelCount; i++)
+        {
+            double d = Math.Abs(c.Levels[i].Out - u);
             if (d < best)
             {
                 best = d;
@@ -326,15 +362,29 @@ public sealed class HistogramOverlay : FrameworkElement
     {
         var c = _curves[_channel];
         var p = e.GetPosition(this);
+        bool levels = InLevelsZone(p) && HitCurveKnot(c, p) < 0;
         if (e.ClickCount == 2)
         {
-            if (c.Count > 0)
+            if (levels ? c.LevelCount > 0 : c.Count > 0)
             {
-                c.Clear();
+                if (levels) c.ClearLevels();
+                else c.ClearCurve();
                 _grabIdx = -1;
                 InvalidateVisual();
                 CurvesEdited?.Invoke(this, EventArgs.Empty);
             }
+            e.Handled = true;
+            return;
+        }
+        _grabLevels = levels;
+        if (levels)
+        {
+            double u = OutAt(p);
+            int lh = HitLevelKnot(c, u);
+            _grabIdx = lh >= 0 ? lh : c.UpsertLevel(c.InverseLevels(u), u);
+            _moved = false;
+            CaptureMouse();
+            InvalidateVisual();
             e.Handled = true;
             return;
         }
@@ -346,7 +396,7 @@ public sealed class HistogramOverlay : FrameworkElement
         else
         {
             var (x, _) = CurveCoords(p);
-            _grabIdx = c.Upsert(x, c.Map(x));
+            _grabIdx = c.Upsert(x, c.MapCurve(x));
         }
         _moved = false;
         CaptureMouse();
@@ -357,6 +407,22 @@ public sealed class HistogramOverlay : FrameworkElement
     private void CurveMove(MouseEventArgs e)
     {
         var c = _curves[_channel];
+        if (_grabLevels)
+        {
+            if (_grabIdx >= c.LevelCount)
+            {
+                _grabIdx = -1;
+                return;
+            }
+            double lb = c.Levels[_grabIdx].Out;
+            c.SetLevelOut(_grabIdx, OutAt(e.GetPosition(this)));
+            if (Math.Abs(c.Levels[_grabIdx].Out - lb) < 1e-4) return;
+            _moved = true;
+            InvalidateVisual();
+            RaiseThrottled();
+            e.Handled = true;
+            return;
+        }
         if (_grabIdx >= c.Count)
         {
             _grabIdx = -1;
@@ -364,7 +430,7 @@ public sealed class HistogramOverlay : FrameworkElement
         }
         var (_, y) = CurveCoords(e.GetPosition(this));
         double before = c.Knots[_grabIdx].Out;
-        c.SetOut(_grabIdx, y);
+        c.SetOut(_grabIdx, c.InverseLevels(y));
         if (Math.Abs(c.Knots[_grabIdx].Out - before) < 1e-4) return;
         _moved = true;
         InvalidateVisual();
@@ -465,7 +531,12 @@ public sealed class HistogramOverlay : FrameworkElement
         for (int i = 0; i < cur.Count; i++)
         {
             var k = cur.Knots[i];
-            dc.DrawEllipse(i == _grabIdx ? KnotFill : kb, KnotPen, CurvePoint(k.In, k.Out), 4, 4);
+            dc.DrawEllipse(i == _grabIdx && !_grabLevels ? KnotFill : kb, KnotPen, CurvePoint(k.In, cur.MapLevels(k.Out)), 4, 4);
+        }
+        for (int i = 0; i < cur.LevelCount; i++)
+        {
+            double mx = pl + cur.Levels[i].Out * plotW;
+            dc.DrawEllipse(i == _grabIdx && _grabLevels ? KnotFill : kb, KnotPen, new Point(mx, yb - 2), 4, 4);
         }
     }
 

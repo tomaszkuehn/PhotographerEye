@@ -698,7 +698,8 @@ public readonly partial struct RegionDownKernel(ReadWriteBuffer<int> pr, ReadWri
             for (int x = lx * s; x < x1; x++)
             {
                 int i = y * w + x;
-                float yl = (0.2126f * pr[i] + 0.7152f * pg[i] + 0.0722f * pb[i]) / 65535f;
+                // ToneRegions.ToneNorm: luminance with a quarter of the largest channel.
+                float yl = (0.75f * (0.2126f * pr[i] + 0.7152f * pg[i] + 0.0722f * pb[i]) + 0.25f * Hlsl.Max(pr[i], Hlsl.Max(pg[i], pb[i]))) / 65535f;
                 acc += Hlsl.Max(Hlsl.Log2(Hlsl.Max(yl, 1e-9f) / 0.18f), -12f);
                 cnt++;
             }
@@ -720,7 +721,7 @@ public readonly partial struct RegionApplyKernel(ReadWriteBuffer<int> pr, ReadWr
         float r = pr[i];
         float g = pg[i];
         float b = pb[i];
-        float yl = (0.2126f * r + 0.7152f * g + 0.0722f * b) / 65535f;
+        float yl = (0.75f * (0.2126f * r + 0.7152f * g + 0.0722f * b) + 0.25f * Hlsl.Max(r, Hlsl.Max(g, b))) / 65535f;
         if (yl <= 0f) return;
         float l = Hlsl.Max(Hlsl.Log2(Hlsl.Max(yl, 1e-9f) / 0.18f), -12f);
 
@@ -742,11 +743,24 @@ public readonly partial struct RegionApplyKernel(ReadWriteBuffer<int> pr, ReadWr
         float delta = hl * 1.7f * SmoothEV(-1f, 2.8f, baseEv) + sh * 1.7f * m * Hlsl.Sqrt(m);
         if (Hlsl.Abs(delta) < 1e-4f) return;
         float k = Hlsl.Pow(2f, delta);
-        float o = k <= 1f ? yl * k : yl * k / (1f + (k - 1f) * Hlsl.Min(yl, 1f));
-        float scale = o / yl;
-        r *= scale;
-        g *= scale;
-        b *= scale;
+        float scale = (k <= 1f ? yl * k : yl * k / (1f + (k - 1f) * Hlsl.Min(yl, 1f))) / yl;
+        // ToneRegions.Scale: brightening lifts luminance by scale, the colour difference only by scale^0.7 (ChromaGainExpLinear).
+        float y0l = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        if (scale <= 1f)
+        {
+            r *= scale;
+            g *= scale;
+            b *= scale;
+        }
+        else
+        {
+            float yo = y0l * scale;
+            float c = Hlsl.Pow(scale, 0.7f);
+            r = Hlsl.Max(yo + (r - y0l) * c, 0f);
+            g = Hlsl.Max(yo + (g - y0l) * c, 0f);
+            b = Hlsl.Max(yo + (b - y0l) * c, 0f);
+        }
+        float o = (0.2126f * r + 0.7152f * g + 0.0722f * b) / 65535f;
         float mx = Hlsl.Max(r, Hlsl.Max(g, b));
         if (mx > 65535f)
         {

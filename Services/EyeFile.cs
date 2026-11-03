@@ -18,6 +18,9 @@ public sealed record EyeState
     public double[][]? CurveR { get; init; }
     public double[][]? CurveG { get; init; }
     public double[][]? CurveB { get; init; }
+    public double[][]? LevelR { get; init; }
+    public double[][]? LevelG { get; init; }
+    public double[][]? LevelB { get; init; }
     public int Mono { get; init; }
     public double Exposure { get; init; }
     public double Contrast { get; init; }

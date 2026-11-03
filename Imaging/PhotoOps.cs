@@ -516,7 +516,7 @@ public static class PhotoOps
                 int o = y * w * 4;
                 for (int x = 0; x < w; x++, o += 4)
                 {
-                    float le = (0.2126f * buffer[o + 2] + 0.7152f * buffer[o + 1] + 0.0722f * buffer[o]) / 255.0f;
+                    float le = ToneRegions.ToneNorm(buffer[o + 2], buffer[o + 1], buffer[o]) / 255.0f;
                     float l = ToneRegions.LogLum(MathF.Pow(le, 2.2f));
                     lumEnc[y * w + x] = le;
                     logL[y * w + x] = l;
@@ -540,9 +540,10 @@ public static class PhotoOps
                 // Gain acts on encoded values (display-referred strength), masks on linear EV.
                 float t0 = ToneRegions.TargetLum(le, d);
                 float scale = t0 / le;
-                float r = buffer[o + 2] * scale;
-                float g = buffer[o + 1] * scale;
-                float b = buffer[o] * scale;
+                float r = buffer[o + 2];
+                float g = buffer[o + 1];
+                float b = buffer[o];
+                ToneRegions.Scale(ref r, ref g, ref b, scale);
                 float mx = MathF.Max(r, MathF.Max(g, b));
                 if (mx > 255f)
                 {

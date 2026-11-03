@@ -40,6 +40,35 @@ internal static partial class Program
         back.FromPairs(new[] { new[] { double.NaN, 0.5 }, new[] { 0.4 } });
         Check(back.Count == 0, "curves: invalid pairs ignored");
 
+        // Levels (bottom-edge points): piecewise linear stretch after the curve.
+        var lv = new ChannelCurve();
+        int li = lv.UpsertLevel(0.5, 0.5);
+        Check(!lv.HasEffect && Math.Abs(lv.Map(0.3) - 0.3) < 1e-9, "levels: point on the diagonal has no effect");
+        lv.SetLevelOut(li, 0.7);
+        Check(lv.HasEffect && lv.HasLevelsEffect && !lv.HasCurveEffect && Math.Abs(lv.Map(0.5) - 0.7) < 1e-9 &&
+              Math.Abs(lv.Map(0.25) - 0.35) < 1e-9 && Math.Abs(lv.Map(0.75) - 0.85) < 1e-9 && lv.Map(0) == 0 && lv.Map(1) == 1,
+              "levels: dragged point stretches linearly, ends fixed");
+        Check(Math.Abs(lv.Inverse(lv.Map(0.6)) - 0.6) < 1e-9 && Math.Abs(lv.InverseLevels(0.7) - 0.5) < 1e-9, "levels: inverse round trip");
+        int l2 = lv.UpsertLevel(0.8, 0.9);
+        lv.SetLevelOut(l2, 0.1);
+        Check(lv.Levels[1].Out >= lv.Levels[0].Out, "levels: dragging past the left neighbour is clamped");
+        lv.RemoveLevelAt(1);
+        lv.Upsert(0.25, 0.4);
+        var tl = lv.Table(257);
+        Check(Math.Abs(tl[128] - lv.MapLevels(lv.MapCurve(0.5))) < 1e-9 && Math.Abs(lv.Map(0.25) - lv.MapLevels(0.4)) < 1e-9 &&
+              Enumerable.Range(1, tl.Length - 1).All(i => tl[i] >= tl[i - 1] - 1e-12), "levels: table composes curve then levels");
+        var lc = lv.Clone();
+        var lp = new ChannelCurve();
+        lp.FromPairs(lv.ToPairs());
+        lp.FromLevelPairs(lv.LevelPairs());
+        Check(lc.LevelCount == 1 && lp.LevelCount == 1 && Math.Abs(lc.Map(0.6) - lv.Map(0.6)) < 1e-12 &&
+              Math.Abs(lp.Map(0.6) - lv.Map(0.6)) < 1e-12, "levels: clone and pairs round trip");
+        lv.ClearCurve();
+        Check(lv.Count == 0 && lv.LevelCount == 1 && lv.HasEffect, "levels: ClearCurve keeps the bottom-edge points");
+        var lrgb = new RgbCurves();
+        lrgb.G.UpsertLevel(0.4, 0.2);
+        Check(lrgb.HasEffect && lrgb.Clone().G.LevelCount == 1, "levels: levels-only edit counts as RGB curves effect");
+
         // Red-only curve changes only R, in 16-bit and 8-bit.
         var rgb = new RgbCurves();
         rgb.R.Upsert(0.5, 0.75);

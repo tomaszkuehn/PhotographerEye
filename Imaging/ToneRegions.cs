@@ -15,6 +15,43 @@ public static class ToneRegions
 
     public static int Factor(int w, int h) => Math.Max(1, (int)Math.Ceiling(Math.Max(w, h) / (double)GridLong));
 
+    /// <summary>
+    /// Brightness that drives Shadows/Highlights: luminance with a quarter of the largest channel mixed in. Plain
+    /// luminance rates a saturated red or blue (R 83, G 20, B 10 → Y 34) as deep shadow, so the lift turned dark
+    /// reds into bright ones.
+    /// </summary>
+    public static float ToneNorm(float r, float g, float b) =>
+        0.75f * (0.2126f * r + 0.7152f * g + 0.0722f * b) + 0.25f * MathF.Max(r, MathF.Max(g, b));
+
+    /// <summary>
+    /// Exponent of the gain applied to the colour difference when brightening (luminance gets the full gain):
+    /// 0.35 on display-encoded values (8-bit path), 0.7 on linear values, which is about the same look after encoding.
+    /// </summary>
+    public const float ChromaGainExp = 0.35f;
+    public const float ChromaGainExpLinear = 0.7f;
+
+    /// <summary>
+    /// Applies a Shadows/Highlights gain. Darkening scales all channels; brightening lifts the luminance by
+    /// <paramref name="scale"/> but the colour difference from it only by scale^<see cref="ChromaGainExp"/>, so lifted shadows get lighter
+    /// rather than more saturated.
+    /// </summary>
+    public static void Scale(ref float r, ref float g, ref float b, float scale, bool linear = false)
+    {
+        if (scale <= 1.0f)
+        {
+            r *= scale;
+            g *= scale;
+            b *= scale;
+            return;
+        }
+        float y = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        float yo = y * scale;
+        float c = MathF.Pow(scale, linear ? ChromaGainExpLinear : ChromaGainExp);
+        r = MathF.Max(yo + (r - y) * c, 0f);
+        g = MathF.Max(yo + (g - y) * c, 0f);
+        b = MathF.Max(yo + (b - y) * c, 0f);
+    }
+
     public static float LogLum(float y) => MathF.Max(MathF.Log2(MathF.Max(y, 1e-9f) / 0.18f), FloorEv);
 
     public static ToneRegionGrid Solve(float[] low, int lw, int lh, int s, int fullW, int fullH)

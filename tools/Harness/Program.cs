@@ -30,6 +30,22 @@ internal static partial class Program
             AutoEnhanceProbe(args[1], args.Length > 2 ? args[2] : null);
             return;
         }
+        if (args.Length > 0 && args[0] == "--shadows")
+        {
+            TestShadowColor();
+            return;
+        }
+        if (args.Length > 1 && args[0] == "--shprobe")
+        {
+            ShadowProbe(args[1], args.Length > 2 ? double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 1.0);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--adjmask")
+        {
+            TestAdjustMask();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--curves")
         {
             TestChannelCurves();
@@ -224,6 +240,8 @@ internal static partial class Program
         TestAutoEnhance();
         TestColorBalance();
         TestChannelCurves();
+        TestShadowColor();
+        TestAdjustMask();
         TestPhotoMeta();
         TestRawPreview();
         TestHeif();

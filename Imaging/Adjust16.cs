@@ -211,7 +211,7 @@ public static partial class Adjust16
                     for (int x = 0; x < w; x++)
                     {
                         int i = row + x;
-                        acc[x / s] += ToneRegions.LogLum((0.2126f * pr[i] + 0.7152f * pg[i] + 0.0722f * pb[i]) / 65535.0f);
+                        acc[x / s] += ToneRegions.LogLum(ToneRegions.ToneNorm(pr[i], pg[i], pb[i]) / 65535.0f);
                         cnt[x / s]++;
                     }
                 }
@@ -231,15 +231,13 @@ public static partial class Adjust16
                     float r = pr[i];
                     float g = pg[i];
                     float b = pb[i];
-                    float yl = (0.2126f * r + 0.7152f * g + 0.0722f * b) / 65535.0f;
+                    float yl = ToneRegions.ToneNorm(r, g, b) / 65535.0f;
                     if (yl <= 0.0f) continue;
                     float d = ToneRegions.DeltaEv(ToneRegions.Base(grid, x, y, ToneRegions.LogLum(yl)), hl, sh);
                     if (MathF.Abs(d) < 1e-4f) continue;
-                    float o = ToneRegions.TargetLum(yl, d);
-                    float scale = o / yl;
-                    r *= scale;
-                    g *= scale;
-                    b *= scale;
+                    float scale = ToneRegions.TargetLum(yl, d) / yl;
+                    ToneRegions.Scale(ref r, ref g, ref b, scale, linear: true);
+                    float o = (0.2126f * r + 0.7152f * g + 0.0722f * b) / 65535.0f;
                     float mx = MathF.Max(r, MathF.Max(g, b));
                     if (mx > 65535f)
                     {
