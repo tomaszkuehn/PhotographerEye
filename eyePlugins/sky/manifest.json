@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.sky",
+  "name": "Sky mask",
+  "version": "2.0",
+  "author": "PhotographerEye",
+  "description": "Mask provider selecting bright blue areas (usable with any maskable filter).",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.SkyMask.dll",
+  "permissions": []
+}

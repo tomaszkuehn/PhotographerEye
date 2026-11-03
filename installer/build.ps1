@@ -8,10 +8,14 @@ $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 $main = "ImgViewer.csproj"
 
-Write-Host "Build -> plugins-samples"
-dotnet build plugins-samples\ImgViewer.Plugins.Samples.csproj -c Release --nologo -v q
-if ($LASTEXITCODE -ne 0) { throw "build plugins-samples failed" }
-if (-not (Test-Path "plugins-samples\bin\Release\netstandard2.0\ImgViewer.Plugins.Samples.dll")) { throw "sample plugin dll missing" }
+# Bundled plugins: one project per folder eyePlugins\<name>, each shipped as plugins\<folder>.
+foreach ($proj in Get-ChildItem -Path "eyePlugins\*" -Directory | ForEach-Object { Get-ChildItem $_.FullName -Filter "*.csproj" }) {
+    Write-Host "Build -> $($proj.Directory.Name)"
+    dotnet build $proj.FullName -c Release --nologo -v q
+    if ($LASTEXITCODE -ne 0) { throw "build $($proj.Directory.Name) failed" }
+}
+# Old layout (all samples in one folder) must not survive in the publish dirs.
+Remove-Item -Recurse -Force dist\plugins\samples, dist-win7\plugins\samples -ErrorAction SilentlyContinue
 
 function Publish([string]$out, [string[]]$tfmProps) {
     Write-Host "Publish -> $out"

@@ -30,10 +30,7 @@
   <ItemGroup>
     <Compile Remove="tools\**" />
     <Compile Remove="PluginSdk\**" />
-    <Compile Remove="plugins-samples\**" />
-    <Compile Remove="plugins-auto\**" />
-    <Compile Remove="plugins-colorbalance\**" />
-    <Compile Remove="plugins-heal\**" />
+    <Compile Remove="eyePlugins\**" />
     <Resource Include="Assets\icon.ico" />
     <None Include="thirdparty\libraw22\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="thirdparty\librawhe\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
@@ -41,87 +38,61 @@
 
   <ItemGroup>
     <ProjectReference Include="PluginSdk\ImgViewer.Plugin.Abstractions.csproj" />
-    <!-- Built together with the app so the bundled sample plugins are never stale; not referenced by the app code. -->
-    <ProjectReference Include="plugins-samples\ImgViewer.Plugins.Samples.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="plugins-auto\ImgViewer.Plugins.AutoEnhance.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="plugins-colorbalance\ImgViewer.Plugins.ColorBalance.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="plugins-heal\ImgViewer.Plugins.Heal.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <!-- Bundled plugins: built together with the app so they are never stale; not referenced by the app code. -->
+    <ProjectReference Include="eyePlugins\auto\ImgViewer.Plugins.AutoEnhance.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\colorbalance\ImgViewer.Plugins.ColorBalance.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\heal\ImgViewer.Plugins.Heal.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\negative\ImgViewer.Plugins.Negative.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\bwred\ImgViewer.Plugins.BwRed.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\splittone\ImgViewer.Plugins.SplitTone.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\vignette\ImgViewer.Plugins.Vignette.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\netpbm\ImgViewer.Plugins.Netpbm.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\webexport\ImgViewer.Plugins.WebExport.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\exposure\ImgViewer.Plugins.ExposureInfo.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\sky\ImgViewer.Plugins.SkyMask.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\eventlog\ImgViewer.Plugins.EventLog.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <PluginSamplesBin>plugins-samples\bin\$(Configuration)\netstandard2.0\</PluginSamplesBin>
-    <PluginAutoBin>plugins-auto\bin\$(Configuration)\netstandard2.0\</PluginAutoBin>
-    <PluginCbBin>plugins-colorbalance\bin\$(Configuration)\netstandard2.0\</PluginCbBin>
-    <PluginHealBin>plugins-heal\bin\$(Configuration)\netstandard2.0\</PluginHealBin>
-  </PropertyGroup>
+  <!-- Each bundled plugin ships as plugins\<Folder>\{manifest.json, <Asm>.dll}. -->
+  <ItemGroup>
+    <BundledPlugin Include="autoenhance" Src="eyePlugins\auto" Asm="ImgViewer.Plugins.AutoEnhance" />
+    <BundledPlugin Include="colorbalance" Src="eyePlugins\colorbalance" Asm="ImgViewer.Plugins.ColorBalance" />
+    <BundledPlugin Include="heal" Src="eyePlugins\heal" Asm="ImgViewer.Plugins.Heal" />
+    <BundledPlugin Include="negative" Src="eyePlugins\negative" Asm="ImgViewer.Plugins.Negative" />
+    <BundledPlugin Include="bwred" Src="eyePlugins\bwred" Asm="ImgViewer.Plugins.BwRed" />
+    <BundledPlugin Include="splittone" Src="eyePlugins\splittone" Asm="ImgViewer.Plugins.SplitTone" />
+    <BundledPlugin Include="vignette" Src="eyePlugins\vignette" Asm="ImgViewer.Plugins.Vignette" />
+    <BundledPlugin Include="netpbm" Src="eyePlugins\netpbm" Asm="ImgViewer.Plugins.Netpbm" />
+    <BundledPlugin Include="webexport" Src="eyePlugins\webexport" Asm="ImgViewer.Plugins.WebExport" />
+    <BundledPlugin Include="exposure" Src="eyePlugins\exposure" Asm="ImgViewer.Plugins.ExposureInfo" />
+    <BundledPlugin Include="sky" Src="eyePlugins\sky" Asm="ImgViewer.Plugins.SkyMask" />
+    <BundledPlugin Include="eventlog" Src="eyePlugins\eventlog" Asm="ImgViewer.Plugins.EventLog" />
+  </ItemGroup>
 
   <Target Name="CopyLibRaw22ToPublish" AfterTargets="Publish">
     <Copy SourceFiles="thirdparty\libraw22\dcraw_emu.exe;thirdparty\libraw22\libraw.dll" DestinationFolder="$(PublishDir)thirdparty\libraw22" SkipUnchangedFiles="true" />
     <Copy SourceFiles="thirdparty\librawhe\dcraw_emu.exe" DestinationFolder="$(PublishDir)thirdparty\librawhe" SkipUnchangedFiles="true" />
   </Target>
 
-  <!-- Sample plugins ship as an installed package folder: plugins\samples\{manifest.json, ImgViewer.Plugins.Samples.dll}. -->
-  <Target Name="CopyPluginSamplesToPublish" AfterTargets="Publish">
-    <ItemGroup Condition="Exists('$(PluginSamplesBin)ImgViewer.Plugins.Samples.dll')">
-      <PluginSampleBin Include="$(PluginSamplesBin)ImgViewer.Plugins.Samples.dll;plugins-samples\manifest.json" />
+  <Target Name="CopyBundledPluginsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_BundledPluginFile Include="%(BundledPlugin.Src)\bin\$(Configuration)\netstandard2.0\%(BundledPlugin.Asm).dll;%(BundledPlugin.Src)\manifest.json" Folder="%(BundledPlugin.Identity)" />
+      <_BundledPluginFile Remove="@(_BundledPluginFile)" Condition="!Exists('%(FullPath)')" />
     </ItemGroup>
-    <Copy SourceFiles="@(PluginSampleBin)" DestinationFolder="$(PublishDir)plugins\samples" SkipUnchangedFiles="true" Condition="@(PluginSampleBin->Count()) &gt; 0" />
-    <Delete Files="$(PublishDir)plugins\ImgViewer.Plugins.Samples.dll" ContinueOnError="true" />
+    <Copy SourceFiles="@(_BundledPluginFile)" DestinationFiles="@(_BundledPluginFile->'$(PublishDir)plugins\%(Folder)\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <!-- Older layouts: all samples in plugins\samples, plugin dlls loose in plugins\. -->
+    <RemoveDir Directories="$(PublishDir)plugins\samples" ContinueOnError="true" />
+    <Delete Files="$(PublishDir)plugins\ImgViewer.Plugins.Samples.dll;$(PublishDir)plugins\ImgViewer.Plugins.AutoEnhance.dll" ContinueOnError="true" />
   </Target>
 
-  <Target Name="CopyPluginSamplesToOutput" AfterTargets="Build">
-    <ItemGroup Condition="Exists('$(PluginSamplesBin)ImgViewer.Plugins.Samples.dll')">
-      <PluginSampleBin Include="$(PluginSamplesBin)ImgViewer.Plugins.Samples.dll;plugins-samples\manifest.json" />
+  <Target Name="CopyBundledPluginsToOutput" AfterTargets="Build">
+    <ItemGroup>
+      <_BundledPluginFile Include="%(BundledPlugin.Src)\bin\$(Configuration)\netstandard2.0\%(BundledPlugin.Asm).dll;%(BundledPlugin.Src)\manifest.json" Folder="%(BundledPlugin.Identity)" />
+      <_BundledPluginFile Remove="@(_BundledPluginFile)" Condition="!Exists('%(FullPath)')" />
     </ItemGroup>
-    <Copy SourceFiles="@(PluginSampleBin)" DestinationFolder="$(OutDir)plugins\samples" SkipUnchangedFiles="true" Condition="@(PluginSampleBin->Count()) &gt; 0" />
-    <Delete Files="$(OutDir)plugins\ImgViewer.Plugins.Samples.dll" ContinueOnError="true" />
-  </Target>
-
-  <!-- Auto enhance plugin ships as plugins\autoenhance\{manifest.json, ImgViewer.Plugins.AutoEnhance.dll}. -->
-  <Target Name="CopyPluginAutoToPublish" AfterTargets="Publish">
-    <ItemGroup Condition="Exists('$(PluginAutoBin)ImgViewer.Plugins.AutoEnhance.dll')">
-      <PluginAutoFile Include="$(PluginAutoBin)ImgViewer.Plugins.AutoEnhance.dll;plugins-auto\manifest.json" />
-    </ItemGroup>
-    <Copy SourceFiles="@(PluginAutoFile)" DestinationFolder="$(PublishDir)plugins\autoenhance" SkipUnchangedFiles="true" Condition="@(PluginAutoFile->Count()) &gt; 0" />
-    <Delete Files="$(PublishDir)plugins\ImgViewer.Plugins.AutoEnhance.dll" ContinueOnError="true" />
-  </Target>
-
-  <Target Name="CopyPluginAutoToOutput" AfterTargets="Build">
-    <ItemGroup Condition="Exists('$(PluginAutoBin)ImgViewer.Plugins.AutoEnhance.dll')">
-      <PluginAutoFile Include="$(PluginAutoBin)ImgViewer.Plugins.AutoEnhance.dll;plugins-auto\manifest.json" />
-    </ItemGroup>
-    <Copy SourceFiles="@(PluginAutoFile)" DestinationFolder="$(OutDir)plugins\autoenhance" SkipUnchangedFiles="true" Condition="@(PluginAutoFile->Count()) &gt; 0" />
-    <Delete Files="$(OutDir)plugins\ImgViewer.Plugins.AutoEnhance.dll" ContinueOnError="true" />
-  </Target>
-
-  <!-- Color balance plugin ships as plugins\colorbalance\{manifest.json, ImgViewer.Plugins.ColorBalance.dll}. -->
-  <Target Name="CopyPluginCbToPublish" AfterTargets="Publish">
-    <ItemGroup Condition="Exists('$(PluginCbBin)ImgViewer.Plugins.ColorBalance.dll')">
-      <PluginCbFile Include="$(PluginCbBin)ImgViewer.Plugins.ColorBalance.dll;plugins-colorbalance\manifest.json" />
-    </ItemGroup>
-    <Copy SourceFiles="@(PluginCbFile)" DestinationFolder="$(PublishDir)plugins\colorbalance" SkipUnchangedFiles="true" Condition="@(PluginCbFile->Count()) &gt; 0" />
-  </Target>
-
-  <Target Name="CopyPluginCbToOutput" AfterTargets="Build">
-    <ItemGroup Condition="Exists('$(PluginCbBin)ImgViewer.Plugins.ColorBalance.dll')">
-      <PluginCbFile Include="$(PluginCbBin)ImgViewer.Plugins.ColorBalance.dll;plugins-colorbalance\manifest.json" />
-    </ItemGroup>
-    <Copy SourceFiles="@(PluginCbFile)" DestinationFolder="$(OutDir)plugins\colorbalance" SkipUnchangedFiles="true" Condition="@(PluginCbFile->Count()) &gt; 0" />
-  </Target>
-
-  <!-- Heal plugin ships as plugins\heal\{manifest.json, ImgViewer.Plugins.Heal.dll}. -->
-  <Target Name="CopyPluginHealToPublish" AfterTargets="Publish">
-    <ItemGroup Condition="Exists('$(PluginHealBin)ImgViewer.Plugins.Heal.dll')">
-      <PluginHealFile Include="$(PluginHealBin)ImgViewer.Plugins.Heal.dll;plugins-heal\manifest.json" />
-    </ItemGroup>
-    <Copy SourceFiles="@(PluginHealFile)" DestinationFolder="$(PublishDir)plugins\heal" SkipUnchangedFiles="true" Condition="@(PluginHealFile->Count()) &gt; 0" />
-  </Target>
-
-  <Target Name="CopyPluginHealToOutput" AfterTargets="Build">
-    <ItemGroup Condition="Exists('$(PluginHealBin)ImgViewer.Plugins.Heal.dll')">
-      <PluginHealFile Include="$(PluginHealBin)ImgViewer.Plugins.Heal.dll;plugins-heal\manifest.json" />
-    </ItemGroup>
-    <Copy SourceFiles="@(PluginHealFile)" DestinationFolder="$(OutDir)plugins\heal" SkipUnchangedFiles="true" Condition="@(PluginHealFile->Count()) &gt; 0" />
+    <Copy SourceFiles="@(_BundledPluginFile)" DestinationFiles="@(_BundledPluginFile->'$(OutDir)plugins\%(Folder)\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <RemoveDir Directories="$(OutDir)plugins\samples" ContinueOnError="true" />
+    <Delete Files="$(OutDir)plugins\ImgViewer.Plugins.Samples.dll;$(OutDir)plugins\ImgViewer.Plugins.AutoEnhance.dll" ContinueOnError="true" />
   </Target>
 
 </Project>

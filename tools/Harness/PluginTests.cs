@@ -84,6 +84,14 @@ internal static partial class Program
         return true;
     }
 
+    /// <summary>Sample plugins, one project and package each: folder (eyePlugins\folder), assembly suffix, plugin id.</summary>
+    private static readonly List<(string Folder, string Asm, string Id)> SamplePlugins = new()
+    {
+        ("negative", "Negative", "sample.negative"), ("bwred", "BwRed", "sample.bwred"), ("splittone", "SplitTone", "sample.grade"),
+        ("vignette", "Vignette", "sample.vignette"), ("netpbm", "Netpbm", "sample.netpbm"), ("webexport", "WebExport", "sample.web"),
+        ("exposure", "ExposureInfo", "sample.exposure"), ("sky", "SkyMask", "sample.sky"), ("eventlog", "EventLog", "sample.eventlog")
+    };
+
     private static void TestPluginSamples()
     {
         var appData = Environment.GetEnvironmentVariable("PHOTOGRAPHEREYE_APPDATA") ?? "";
@@ -91,18 +99,20 @@ internal static partial class Program
         try { if (Directory.Exists(appData)) Directory.Delete(appData, true); } catch (Exception) { }
         Directory.CreateDirectory(appData);
 
-        var path = FindSamplePluginDll();
-        if (path is null)
+        var dlls = SamplePlugins.Select(s => FindPluginDll(s.Folder, "ImgViewer.Plugins." + s.Asm + ".dll")).ToList();
+        if (dlls.Any(d => d is null))
         {
-            Check(false, "plugin samples dll present (build plugins-samples first)");
+            Check(false, "sample plugin dlls present (build eyePlugins/negative, bwred, ... first)");
             return;
         }
 
-        // ---------------- load + registry ----------------
-        var entry = PluginManager.LoadFromFile(path);
-        Check(entry.Error is null && entry.Plugins.Count >= 9 && entry.Plugins.All(p => p.Error is null && p.Api == 2),
-            $"v2 samples load ({entry.Error ?? entry.Plugins.Count + " plugins"})");
-        var reg = new PluginRegistry(entry.Plugins);
+        // ---------------- load + registry (one package per plugin) ----------------
+        var entries = dlls.Select(d => PluginManager.LoadFromFile(d!)).ToList();
+        Check(entries.All(e => e.Error is null && e.Plugins.Count == 1 && e.Plugins[0].Error is null && e.Plugins[0].Api == 2),
+            $"v2 samples load, one plugin per dll ({string.Join(", ", entries.Select(e => e.Error ?? e.Plugins.Count.ToString()))})");
+        var all = entries.SelectMany(e => e.Plugins).ToList();
+        Check(all.Select(p => p.Id).SequenceEqual(SamplePlugins.Select(s => s.Id)), "sample plugin ids unchanged (saved edits keep working)");
+        var reg = new PluginRegistry(all);
         var neg = reg.FindFilter("sample.negative:negative");
         var bw = reg.FindFilter("sample.bwred:bwred");
         var vig = reg.FindFilter("sample.vignette:vignette");
@@ -314,29 +324,29 @@ internal static partial class Program
         }
 
         // ---------------- package: create / inspect / install / import ----------------
-        var pkgSrc = Path.Combine(appData, "pkgsrc");
-        Directory.CreateDirectory(pkgSrc);
-        File.Copy(path, Path.Combine(pkgSrc, Path.GetFileName(path)), true);
-        var manifest = new PackageManifest
+        string MakePkg(string folder, string dll, string[] perms)
         {
-            Id = "photographereye.samples",
-            Name = "Samples",
-            Version = "2.0",
-            Entry = Path.GetFileName(path),
-            Permissions = new[] { "filesystem" }
-        };
-        var pkg = Path.Combine(appData, "samples" + PluginPackage.Extension);
-        PluginPackage.Create(pkgSrc, manifest, pkg);
+            var dir = Path.Combine(appData, "pkgsrc-" + folder);
+            Directory.CreateDirectory(dir);
+            File.Copy(dll, Path.Combine(dir, Path.GetFileName(dll)), true);
+            var pkgPath = Path.Combine(appData, folder + PluginPackage.Extension);
+            PluginPackage.Create(dir, new PackageManifest { Id = "photographereye." + folder, Name = folder, Version = "2.0", Entry = Path.GetFileName(dll), Permissions = perms }, pkgPath);
+            return pkgPath;
+        }
+        string negDll = dlls[0]!, pbmDll = dlls[SamplePlugins.FindIndex(s => s.Folder == "netpbm")]!;
+        var pkg = MakePkg("negative", negDll, Array.Empty<string>());
+        var pkgPbm = MakePkg("netpbm", pbmDll, new[] { "filesystem" });
         var insp = PluginPackage.Inspect(pkg);
-        Check(insp.IsPackage && insp.PackageSha256.Length == 64 && insp.EntrySha256 == PluginTrust.Sha256File(path) &&
-              insp.PluginIds.Contains("photographereye.samples") && insp.PluginTypes.Count >= 9 && !insp.Signature.Signed,
+        Check(insp.IsPackage && insp.PackageSha256.Length == 64 && insp.EntrySha256 == PluginTrust.Sha256File(negDll) &&
+              insp.PluginIds.Contains("photographereye.negative") && insp.PluginTypes.Count == 1 && !insp.Signature.Signed,
             $"pepkg inspect: sha256, ids, types without executing code ({insp.PluginTypes.Count} types, {insp.Signature.Display})");
 
         var mgr = PluginManager.Instance;
         mgr.ScanDirs.Clear();
         mgr.ScanDirs.Add((PluginManager.ImportDir, "imported"));
         mgr.Install(insp);
-        var installed = mgr.Files.FirstOrDefault(f => f.IsPackage);
+        mgr.Install(PluginPackage.Inspect(pkgPbm));
+        var installed = mgr.Files.FirstOrDefault(f => f.IsPackage && f.Plugins.Any(p => p.Id == "sample.negative"));
         Check(installed is not null && installed.Error is null && mgr.Registry.FindFilter("sample.negative:negative") is not null &&
               File.Exists(Path.Combine(PluginManager.ImportDir, insp.InstallFolder, PluginPackage.ManifestFileName)),
             "pepkg installs into import dir and loads after Reload");
@@ -362,12 +372,11 @@ internal static partial class Program
         Check(ppmOk, "netpbm importer loads P6 through PluginImport");
 
         mgr.SetPluginEnabled("sample.negative", false);
-        Check(mgr.Registry.FindFilter("sample.negative:negative") is null && mgr.Registry.FindFilter("sample.bwred:bwred") is not null,
-            "per-plugin disable inside a package");
+        Check(mgr.Registry.FindFilter("sample.negative:negative") is null && mgr.Registry.FindImporter("x.ppm") is not null,
+            "disabling one plugin leaves the other packages loaded");
         mgr.Install(PluginPackage.Inspect(pkg));
         Check(mgr.Registry.FindFilter("sample.negative:negative") is not null, "reinstalling a package re-enables its plugins");
-        installed = mgr.Files.FirstOrDefault(f => f.IsPackage);
-        mgr.Remove(installed?.FileName ?? "");
-        Check(mgr.Files.Count == 0 && !Directory.Exists(Path.Combine(PluginManager.ImportDir, insp.InstallFolder)), "imported package removed");
+        foreach (var f in mgr.Files.Where(f => f.IsPackage).ToList()) mgr.Remove(f.FileName);
+        Check(mgr.Files.Count == 0 && !Directory.Exists(Path.Combine(PluginManager.ImportDir, insp.InstallFolder)), "imported packages removed");
     }
 }

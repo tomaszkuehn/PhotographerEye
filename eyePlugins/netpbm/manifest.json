@@ -1,0 +1,12 @@
+{
+  "id": "photographereye.netpbm",
+  "name": "Netpbm import",
+  "version": "2.0",
+  "author": "PhotographerEye",
+  "description": "Opens .ppm and .pgm images (P2/P3/P5/P6, 8 or 16 bit).",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.Netpbm.dll",
+  "permissions": [
+    "filesystem"
+  ]
+}

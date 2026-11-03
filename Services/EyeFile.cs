@@ -73,9 +73,25 @@ public static class EyeFile
 
     public static string SidecarPath(string imagePath) => Path.ChangeExtension(imagePath, ".eye");
 
-    public static void Save(string imagePath, EyeState state)
+    public static void Save(string imagePath, EyeState state) => WriteJson(imagePath, Serialize(state));
+
+    public static string Serialize(EyeState state) => JsonSerializer.Serialize(state, JsonOptions);
+
+    /// <summary>Write through a temp file so a crash or full disk never leaves a half-written fingerprint.</summary>
+    public static void WriteJson(string imagePath, string json)
     {
-        File.WriteAllText(SidecarPath(imagePath), JsonSerializer.Serialize(state, JsonOptions));
+        var dest = SidecarPath(imagePath);
+        var tmp = dest + ".tmp";
+        try
+        {
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, dest, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(tmp); } catch { }
+            throw;
+        }
     }
 
     public static bool TryLoad(string imagePath, out EyeState state)

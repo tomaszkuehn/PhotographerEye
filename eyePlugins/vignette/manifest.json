@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.vignette",
+  "name": "Post-crop vignette",
+  "version": "2.0",
+  "author": "PhotographerEye",
+  "description": "Darkens or lightens the frame edges after crop. The center can be picked on the photo.",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.Vignette.dll",
+  "permissions": []
+}

@@ -53,6 +53,8 @@ Source: "{#RootDir}\{#DistDir}\thirdparty\*"; DestDir: "{app}\thirdparty"; Flags
 
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\thirdparty"
+; sample plugins used to ship together in plugins\samples (now one folder per plugin)
+Type: filesandordirs; Name: "{app}\plugins\samples"
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppName}.exe"

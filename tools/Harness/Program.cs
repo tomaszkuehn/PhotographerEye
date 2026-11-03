@@ -82,6 +82,12 @@ internal static partial class Program
             Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
             return;
         }
+        if (args.Length > 0 && args[0] == "--eyeauto")
+        {
+            TestEyeAutoSave();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--heal")
         {
             TestHeal();
@@ -277,6 +283,7 @@ internal static partial class Program
         TestAutoEnhance();
         TestColorBalance();
         TestHeal();
+        TestEyeAutoSave();
         TestPointMarkers();
         TestChannelCurves();
         TestShadowColor();
@@ -298,17 +305,6 @@ internal static partial class Program
     {
         Console.WriteLine($"{(ok ? "PASS" : "FAIL")}  {name}");
         if (!ok) _fails++;
-    }
-
-    private static string? FindSamplePluginDll()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        for (int i = 0; i < 6 && dir is not null; i++, dir = dir.Parent)
-        {
-            var p = Path.Combine(dir.FullName, "plugins-samples", "bin", "Release", "netstandard2.0", "ImgViewer.Plugins.Samples.dll");
-            if (File.Exists(p)) return p;
-        }
-        return null;
     }
 
     private static BitmapSource MakeSource(int w, int h, double dpiX = 96, double dpiY = 96)

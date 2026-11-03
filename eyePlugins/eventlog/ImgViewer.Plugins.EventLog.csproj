@@ -2,21 +2,21 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <RootNamespace>ImgViewer.Plugins.ColorBalance</RootNamespace>
-    <AssemblyName>ImgViewer.Plugins.ColorBalance</AssemblyName>
+    <RootNamespace>ImgViewer.Plugins.EventLog</RootNamespace>
+    <AssemblyName>ImgViewer.Plugins.EventLog</AssemblyName>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\PluginSdk\ImgViewer.Plugin.Abstractions.csproj" Private="false" />
+    <ProjectReference Include="..\..\PluginSdk\ImgViewer.Plugin.Abstractions.csproj" Private="false" />
   </ItemGroup>
 
-  <!-- Distributable package: bin\<cfg>\ImgViewer.Plugins.ColorBalance.pepkg (zip with manifest.json + the assembly). -->
+  <!-- Distributable package: bin\<cfg>\ImgViewer.Plugins.EventLog.pepkg (zip with manifest.json + the assembly). -->
   <Target Name="PackPepkg" AfterTargets="Build">
     <PropertyGroup>
       <PepkgStage>$(BaseIntermediateOutputPath)pepkg\</PepkgStage>
-      <PepkgFile>$(OutDir)..\ImgViewer.Plugins.ColorBalance.pepkg</PepkgFile>
+      <PepkgFile>$(OutDir)..\ImgViewer.Plugins.EventLog.pepkg</PepkgFile>
     </PropertyGroup>
     <RemoveDir Directories="$(PepkgStage)" />
     <Copy SourceFiles="$(TargetPath);manifest.json" DestinationFolder="$(PepkgStage)" />

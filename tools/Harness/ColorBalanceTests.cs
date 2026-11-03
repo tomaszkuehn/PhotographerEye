@@ -14,7 +14,7 @@ internal static partial class Program
         for (int i = 0; i < 6 && dir is not null; i++, dir = dir.Parent)
         {
             var found = new[] { "Release", "Debug" }
-                .Select(cfg => Path.Combine(dir.FullName, folder, "bin", cfg, "netstandard2.0", dll))
+                .Select(cfg => Path.Combine(dir.FullName, "eyePlugins", folder, "bin", cfg, "netstandard2.0", dll))
                 .Where(File.Exists)
                 .OrderByDescending(File.GetLastWriteTimeUtc)
                 .FirstOrDefault();
@@ -25,8 +25,8 @@ internal static partial class Program
 
     private static void TestColorBalance()
     {
-        var path = FindPluginDll("plugins-colorbalance", "ImgViewer.Plugins.ColorBalance.dll");
-        if (path is null) { Check(false, "color balance dll present (build plugins-colorbalance first)"); return; }
+        var path = FindPluginDll("colorbalance", "ImgViewer.Plugins.ColorBalance.dll");
+        if (path is null) { Check(false, "color balance dll present (build eyePlugins/colorbalance first)"); return; }
         var entry = PluginManager.LoadFromFile(path);
         Check(entry.Error is null && entry.Plugins.Count == 1 && entry.Plugins[0].Error is null, $"color balance loads ({entry.Error})");
         var reg = new PluginRegistry(entry.Plugins);

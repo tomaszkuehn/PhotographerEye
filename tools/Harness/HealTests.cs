@@ -6,13 +6,14 @@ using System.Threading;
 using ImgViewer;
 using ImgViewer.Imaging;
 using ImgViewer.Plugins;
+using ImgViewer.Services;
 
 internal static partial class Program
 {
     private static void TestHeal()
     {
-        var path = FindPluginDll("plugins-heal", "ImgViewer.Plugins.Heal.dll");
-        if (path is null) { Check(false, "heal dll present (build plugins-heal first)"); return; }
+        var path = FindPluginDll("heal", "ImgViewer.Plugins.Heal.dll");
+        if (path is null) { Check(false, "heal dll present (build eyePlugins/heal first)"); return; }
         var entry = PluginManager.LoadFromFile(path);
         Check(entry.Error is null && entry.Plugins.Count == 1 && entry.Plugins[0].Error is null, $"heal loads ({entry.Error})");
         var reg = new PluginRegistry(entry.Plugins);
@@ -166,5 +167,27 @@ internal static partial class Program
         Check(Run(null, null) is null, "heal: pipeline skips a spot without points");
         var ran = Run(Pt(0.3, 0.5), Pt(0.7, 0.5));
         Check(ran is not null && Enumerable.Range(0, raw.R.Length).Any(i => ran.R[i] != raw.R[i]), "heal: pipeline applies a spot with both points");
+
+        // .eye round-trip: spots (points, size, mode) survive save + reopen.
+        {
+            var st = new PluginEditState();
+            ParamDef D(Registered<FilterDescriptor> sf, string id) => sf.D.Params.First(p => p.Id == id);
+            var sp2 = spots[1]!;
+            st.SetText(f, D(f, "target"), Pt(0.3, 0.5));
+            st.SetText(f, D(f, "source"), Pt(0.7, 0.5));
+            st.SetValue(f, D(f, "size"), 3.2);
+            st.SetText(sp2, D(sp2, "target"), Pt(0.1, 0.2));
+            st.SetText(sp2, D(sp2, "source"), Pt(0.2, 0.2));
+            st.SetText(sp2, D(sp2, "mode"), "clone");
+            var sv = st.Save();
+            var img = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "heal_eye_rt.jpg");
+            EyeFile.Save(img, new EyeState { PluginValues = sv.Values, PluginActive = sv.Active, PluginText = sv.Text, PluginOrder = sv.Order, PluginMasks = sv.Masks });
+            bool ok = EyeFile.TryLoad(img, out var back);
+            var st2 = new PluginEditState();
+            st2.Load(back, reg);
+            try { System.IO.File.Delete(EyeFile.SidecarPath(img)); } catch { }
+            Check(ok && st2.ContentEquals(st) && st2.IsFilterActive(f) && st2.IsFilterActive(sp2) && st2.GetText(sp2, D(sp2, "mode")) == "clone",
+                  $"heal: spots survive the .eye round-trip ({back.PluginText?.Count ?? 0} text, {back.PluginValues?.Count ?? 0} values)");
+        }
     }
 }

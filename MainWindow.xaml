@@ -77,6 +77,7 @@
                                 <MenuItem x:Name="MnuPreviewSharp" Header="Sharp (2× window size)" IsCheckable="True" Tag="sharp" Click="OnPreviewQualityClick" />
                                 <MenuItem x:Name="MnuPreviewFull" Header="Full resolution (slow)" IsCheckable="True" Tag="full" Click="OnPreviewQualityClick" />
                             </MenuItem>
+                            <MenuItem x:Name="MnuAutoSaveEdits" Header="Auto-save edits (.eye)" IsCheckable="True" Click="OnAutoSaveEditsClick" ToolTip="Keep every edit in the .eye file next to the photo as you work, so it is back after a restart. Off: edits are written only with Save Photo." />
                             <MenuItem x:Name="MnuRememberPreviews" Header="Remember rendered previews" IsCheckable="True" Click="OnRememberPreviewsClick" ToolTip="Show the last rendered look of a photo at once when it is opened again, while the real render runs in the background." />
                             <MenuItem Header="Clear preview cache" Click="OnClearPreviewCacheClick" />
                             <Separator />

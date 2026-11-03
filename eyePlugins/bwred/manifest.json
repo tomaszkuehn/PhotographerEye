@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.bwred",
+  "name": "B&W red mix",
+  "version": "2.0",
+  "author": "PhotographerEye",
+  "description": "Monochrome conversion with a red channel mix (red filter look), optional color key.",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.BwRed.dll",
+  "permissions": []
+}

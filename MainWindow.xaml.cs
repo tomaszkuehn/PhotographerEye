@@ -35,7 +35,7 @@ public partial class MainWindow : Window
     private string? _histLastKey;
     private bool _histSuppress;
     private DispatcherTimer? _histCommitTimer;
-    private const int HistMax = 10;
+    private const int HistMax = 50;
     private readonly List<string> _cacheOrder = new();
     private readonly object _cacheOrderLock = new();
 
@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     /// <summary>Live RAW preview resolution setting and the downscaled copy last made (source, longer side, copy).</summary>
     private string _previewQuality = PreviewQuality.Window;
     private readonly RenderedPreviewCache _renderedCache = new(RenderedPreviewCache.DefaultDirectory);
+    private readonly EyeAutoSave _eyeAutoSave = new();
     /// <summary>A cached render of the current photo is on screen; the embedded RAW preview must not replace it.</summary>
     private bool _instantShown;
     private RenderedSnap? _lastRendered;
@@ -111,6 +112,8 @@ public partial class MainWindow : Window
         _previewQuality = PreviewQuality.Normalize(settings.PreviewQuality);
         _renderedCache.Enabled = settings.RememberPreviews ?? true;
         MnuRememberPreviews.IsChecked = _renderedCache.Enabled;
+        _eyeAutoSave.Enabled = settings.AutoSaveEdits ?? true;
+        MnuAutoSaveEdits.IsChecked = _eyeAutoSave.Enabled;
         UpdatePreviewQualityMenu();
 
         Viewer.ZoomChanged += OnViewerZoomChanged;
@@ -183,6 +186,7 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         Closing += (_, _) =>
         {
+            CommitHistNow();
             _loadCts?.Cancel();
             _applyCts?.Cancel();
             FlushRendered(sync: true);
@@ -735,6 +739,14 @@ public partial class MainWindow : Window
         Debug.Log($"CACHED RENDER: {Path.GetFileName(path)} {bmp.PixelWidth}x{bmp.PixelHeight}");
     }
 
+    private void OnAutoSaveEditsClick(object sender, RoutedEventArgs e)
+    {
+        _eyeAutoSave.Enabled = MnuAutoSaveEdits.IsChecked;
+        SettingsStore.Save(SettingsStore.Load() with { AutoSaveEdits = _eyeAutoSave.Enabled });
+        if (_eyeAutoSave.Enabled) SyncSessionHist();
+        SetStatus(_eyeAutoSave.Enabled ? "Edits are saved to the .eye file next to the photo as you work" : "Edits are saved only with Save Photo", error: false);
+    }
+
     private void OnRememberPreviewsClick(object sender, RoutedEventArgs e)
     {
         _renderedCache.Enabled = MnuRememberPreviews.IsChecked;
@@ -842,7 +854,12 @@ public partial class MainWindow : Window
     {
         if (_currentPath is null) return;
         var cur = CaptureEyeState();
-        _session[_currentPath] = cur with { History = new List<EyeState>(_hist), HistoryPos = _histPos };
+        var withHist = cur with { History = new List<EyeState>(_hist), HistoryPos = _histPos };
+        _session[_currentPath] = withHist;
+        // Edits reach the .eye file at once (history has more than the opening state once anything changed).
+        string? prevErr = _eyeAutoSave.LastError;
+        if (!_eyeAutoSave.Save(_currentPath, withHist, edited: _hist.Count > 1) && _eyeAutoSave.LastError is { } err && err != prevErr)
+            SetStatus($"Edits not saved to .eye: {err}", error: true);
     }
 
     private void ScheduleHistCommit()
@@ -1584,6 +1601,7 @@ public partial class MainWindow : Window
                 try
                 {
                     EyeFile.Save(path, eyeState);
+                    Dispatcher.BeginInvoke(() => _eyeAutoSave.Written(path, eyeState));
                 }
                 catch (Exception eyeEx)
                 {

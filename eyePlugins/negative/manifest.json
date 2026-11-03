@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.negative",
+  "name": "Negative",
+  "version": "2.0",
+  "author": "PhotographerEye",
+  "description": "Inverts the image. Toolbar toggle, also Ctrl+Shift+N.",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.Negative.dll",
+  "permissions": []
+}

@@ -2,21 +2,21 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <RootNamespace>ImgViewer.Plugins.AutoEnhance</RootNamespace>
-    <AssemblyName>ImgViewer.Plugins.AutoEnhance</AssemblyName>
+    <RootNamespace>ImgViewer.Plugins.ExposureInfo</RootNamespace>
+    <AssemblyName>ImgViewer.Plugins.ExposureInfo</AssemblyName>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\PluginSdk\ImgViewer.Plugin.Abstractions.csproj" Private="false" />
+    <ProjectReference Include="..\..\PluginSdk\ImgViewer.Plugin.Abstractions.csproj" Private="false" />
   </ItemGroup>
 
-  <!-- Distributable package: bin\<cfg>\ImgViewer.Plugins.AutoEnhance.pepkg (zip with manifest.json + the assembly). -->
+  <!-- Distributable package: bin\<cfg>\ImgViewer.Plugins.ExposureInfo.pepkg (zip with manifest.json + the assembly). -->
   <Target Name="PackPepkg" AfterTargets="Build">
     <PropertyGroup>
       <PepkgStage>$(BaseIntermediateOutputPath)pepkg\</PepkgStage>
-      <PepkgFile>$(OutDir)..\ImgViewer.Plugins.AutoEnhance.pepkg</PepkgFile>
+      <PepkgFile>$(OutDir)..\ImgViewer.Plugins.ExposureInfo.pepkg</PepkgFile>
     </PropertyGroup>
     <RemoveDir Directories="$(PepkgStage)" />
     <Copy SourceFiles="$(TargetPath);manifest.json" DestinationFolder="$(PepkgStage)" />

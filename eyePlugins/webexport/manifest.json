@@ -1,0 +1,12 @@
+{
+  "id": "photographereye.webexport",
+  "name": "Web export",
+  "version": "2.0",
+  "author": "PhotographerEye",
+  "description": "Resized JPEG for the web, and a one-click publish to an outbox folder.",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.WebExport.dll",
+  "permissions": [
+    "filesystem"
+  ]
+}

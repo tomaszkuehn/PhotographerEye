@@ -18,6 +18,8 @@ public sealed record ViewerSettings
     public string? PreviewQuality { get; init; }
     /// <summary>Remember the last rendered preview of each photo and show it at once when the photo is opened (null = on).</summary>
     public bool? RememberPreviews { get; init; }
+    /// <summary>Write the .eye file as soon as an edit is committed (null = on).</summary>
+    public bool? AutoSaveEdits { get; init; }
 }
 
 public static class SettingsStore
