@@ -180,6 +180,7 @@
                     Click="OnNextClick"
                     ToolTip="Next image (&#x2192;)" />
             <v:CropOverlay x:Name="CropOverlay" Visibility="Collapsed" />
+            <v:PointMarkerOverlay x:Name="PointMarkers" Visibility="Collapsed" />
             <v:MaskOverlay x:Name="MaskOverlay" Visibility="Collapsed" />
             <Grid x:Name="HistHost"
                   Width="250" Height="130"

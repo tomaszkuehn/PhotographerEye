@@ -31,6 +31,10 @@ public partial class MainWindow
     private readonly Dictionary<string, (Dictionary<string, double> Values, Dictionary<string, string> Text)> _exportOptions = new(StringComparer.Ordinal);
     private string? _maskEditFilter;
     private (Registered<FilterDescriptor> F, ParamDef D)? _pointPick;
+    /// <summary>Runs after a successful point pick (Add of a repeat-group item).</summary>
+    private Action? _pointPickDone;
+    /// <summary>Selected item of each repeat group ("pluginId|group" → filter FullId).</summary>
+    private readonly Dictionary<string, string> _repeatSelected = new(StringComparer.Ordinal);
     private ImageMeta? _pluginMeta;
     private string? _openedRaisedFor;
     private int _maskPreviewSeq;
@@ -52,6 +56,9 @@ public partial class MainWindow
         _pluginReg = PluginManager.Instance.Registry;
         _importerExts = new HashSet<string>(_pluginReg.ImporterExtensions, StringComparer.OrdinalIgnoreCase);
         MaskOverlay.Attach(Viewer);
+        PointMarkers.Attach(Viewer);
+        PointMarkers.MarkerMoved += OnPointMarkerMoved;
+        PointMarkers.MarkerGrabbed += OnPointMarkerGrabbed;
         MaskOverlay.SpecChanged += OnMaskSpecChanged;
         PluginManager.Instance.Changed += OnPluginsChanged;
         PluginManager.Instance.PluginFaulted += OnPluginFaulted;
@@ -427,6 +434,7 @@ public partial class MainWindow
     private void OnPluginUiChanged()
     {
         UpdatePluginSectionBadges();
+        RefreshPointMarkers();
         if (_maskEditFilter is not null) UpdateMaskBar();
         _showHistogram = true;
         HistHost.Visibility = RightPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Hidden;
@@ -458,6 +466,7 @@ public partial class MainWindow
         _pluginExpandedUser[pluginId] = expanded;
         if (expanded) _pluginExpandedSession.Add(pluginId);
         else _pluginExpandedSession.Remove(pluginId);
+        RefreshPointMarkers();
         try
         {
             SettingsStore.Save(SettingsStore.Load() with { PluginSectionExpanded = new Dictionary<string, bool>(_pluginExpandedUser) });
@@ -507,6 +516,8 @@ public partial class MainWindow
     private FrameworkElement BuildPluginSection(string pluginId, List<Registered<FilterDescriptor>> filters, Brush muted, Brush border)
     {
         var first = filters[0];
+        if (filters.Count > 1 && first.D.RepeatGroup is { Length: > 0 } rg && filters.All(f => f.D.RepeatGroup == rg))
+            return BuildRepeatSection(pluginId, filters, muted);
         bool single = filters.Count == 1;
         bool active = filters.Any(_pluginState.IsFilterActive);
         bool faulted = first.Owner is { Faulted: true };
@@ -547,6 +558,224 @@ public partial class MainWindow
             tools, body, active, defaultOpen: false, out var badge, headerAutomationId: "PluginGroupHeader_" + pluginId);
         _pluginSectionBadges.Add((badge, filters));
         return frame;
+    }
+
+    // ------------------------------------------------------------------
+    //  Repeat groups (several instances of one tool, e.g. heal spots)
+    // ------------------------------------------------------------------
+
+    private static string RepeatKey(Registered<FilterDescriptor> f) => f.PluginId + "|" + f.D.RepeatGroup;
+
+    private static string RepeatPlural(string noun, int n) => n == 1 ? noun.ToLowerInvariant() : noun.ToLowerInvariant() + "s";
+
+    /// <summary>All instances of the repeat group of <paramref name="f"/>, in slot order.</summary>
+    private List<Registered<FilterDescriptor>> RepeatInstances(Registered<FilterDescriptor> f) =>
+        _pluginReg.Filters.Where(o => o.PluginId == f.PluginId && o.D.RepeatGroup == f.D.RepeatGroup)
+            .OrderBy(o => o.D.Order).ThenBy(o => o.Index).ToList();
+
+    /// <summary>An instance is in use once one of its points is set (or, without points, any parameter is changed).</summary>
+    private bool RepeatUsed(Registered<FilterDescriptor> f) =>
+        f.D.Params.Any(d => d.Kind == ParamKind.Point)
+            ? f.D.Params.Any(d => d.Kind == ParamKind.Point && FilterParams.ParsePoint(_pluginState.GetText(f, d), out _, out _))
+            : _pluginState.IsFilterOn(f) || _pluginState.Active.Contains(f.FullId);
+
+    private Registered<FilterDescriptor>? RepeatSelected(List<Registered<FilterDescriptor>> inst)
+    {
+        var used = inst.Where(RepeatUsed).ToList();
+        if (used.Count == 0) return null;
+        if (_repeatSelected.TryGetValue(RepeatKey(inst[0]), out var id) && used.FirstOrDefault(u => u.FullId == id) is { } s) return s;
+        return used[^1];
+    }
+
+    /// <summary>One section for a repeat group: chips of the used items, Add / Remove, the selected item's controls.</summary>
+    private FrameworkElement BuildRepeatSection(string pluginId, List<Registered<FilterDescriptor>> filters, Brush muted)
+    {
+        var inst = filters.OrderBy(f => f.D.Order).ThenBy(f => f.Index).ToList();
+        var first = inst[0];
+        string noun = first.D.RepeatGroup;
+        bool faulted = first.Owner is { Faulted: true };
+        var used = inst.Where(RepeatUsed).ToList();
+        var sel = RepeatSelected(inst);
+        bool active = filters.Any(_pluginState.IsFilterActive);
+
+        var tools = new List<UIElement>();
+        var clear = SmallButton("\uE74D", $"Remove all {RepeatPlural(noun, 2)}");
+        clear.IsEnabled = used.Count > 0;
+        clear.Click += (_, _) =>
+        {
+            foreach (var f in inst) ResetFilterKeepMask(f);
+            _repeatSelected.Remove(RepeatKey(first));
+            DeferRebuild();
+            OnPluginUiChanged();
+        };
+        tools.Add(clear);
+
+        string sub = (used.Count == 0 ? "" : $"{used.Count} {RepeatPlural(noun, used.Count)}") +
+                     (StageBadge(first) is { Length: > 0 } b ? (used.Count == 0 ? b : " · " + b) : "");
+
+        var body = new StackPanel { IsEnabled = !faulted };
+        AutomationProperties.SetAutomationId(body, "PluginRepeat_" + pluginId);
+        if (faulted)
+        {
+            var t = new TextBlock { Text = "Disabled — the plugin failed. Re-enable it in Settings ▸ Plugins.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
+            t.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush");
+            body.Children.Add(t);
+        }
+
+        var row = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+        foreach (var u in used)
+        {
+            int n = inst.IndexOf(u) + 1;
+            var chip = new System.Windows.Controls.Primitives.ToggleButton
+            {
+                Content = n.ToString(CultureInfo.InvariantCulture),
+                IsChecked = u == sel,
+                Width = 26, Height = 22, Margin = new Thickness(0, 0, 4, 4),
+                FontWeight = u == sel ? FontWeights.Bold : FontWeights.Normal,
+                BorderThickness = new Thickness(u == sel ? 1 : 0),
+                ToolTip = $"{noun} {n} — click to edit (or grab its circle on the photo)"
+            };
+            chip.SetResourceReference(StyleProperty, "ToolToggle");
+            if (u == sel) chip.SetResourceReference(BorderBrushProperty, "AccentBrush");
+            AutomationProperties.SetAutomationId(chip, "RepeatItem_" + u.FullId);
+            var target = u;
+            chip.Click += (_, _) =>
+            {
+                _repeatSelected[RepeatKey(target)] = target.FullId;
+                DeferRebuild();
+                RefreshPointMarkers();
+            };
+            row.Children.Add(chip);
+        }
+        bool full = used.Count >= inst.Count;
+        var add = new Button
+        {
+            Content = "+ Add " + noun.ToLowerInvariant(), Height = 22, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(0, 0, 4, 4),
+            IsEnabled = !full,
+            ToolTip = full ? $"Limit reached ({inst.Count} {RepeatPlural(noun, inst.Count)}) — remove one first"
+                           : $"Add a {noun.ToLowerInvariant()}: click it on the photo (Esc cancels). Up to {inst.Count}."
+        };
+        ToolTipService.SetShowOnDisabled(add, true);
+        add.SetResourceReference(StyleProperty, "ToolButton");
+        AutomationProperties.SetAutomationId(add, "RepeatAdd_" + pluginId);
+        add.Click += (_, _) => StartRepeatAdd(inst, sel);
+        row.Children.Add(add);
+        body.Children.Add(row);
+
+        if (sel is null)
+        {
+            body.Children.Add(new TextBlock
+            {
+                Text = $"No {RepeatPlural(noun, 2)} yet. Click Add {noun.ToLowerInvariant()}, then click the photo.",
+                Foreground = muted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0)
+            });
+        }
+        else
+        {
+            int n = inst.IndexOf(sel) + 1;
+            var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 6, 0, 0) };
+            var remove = SmallButton("\uE74D", $"Remove {noun.ToLowerInvariant()} {n}");
+            AutomationProperties.SetAutomationId(remove, "RepeatRemove_" + pluginId);
+            remove.Click += (_, _) =>
+            {
+                ResetFilterKeepMask(sel);
+                _repeatSelected.Remove(RepeatKey(sel));
+                DeferRebuild();
+                OnPluginUiChanged();
+                SetStatus($"{noun} {n} removed", error: false);
+            };
+            DockPanel.SetDock(remove, Dock.Right);
+            header.Children.Add(remove);
+            header.Children.Add(new TextBlock { Text = $"{noun} {n}", FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            body.Children.Add(header);
+            body.Children.Add(BuildFilterBody(sel, muted));
+        }
+
+        var frame = MakeCollapsibleSection(pluginId, "PluginGroup_" + pluginId, SectionName(first), sub, SectionTooltip(first, new List<Registered<FilterDescriptor>> { first }),
+            tools, body, active, defaultOpen: false, out var badge, headerAutomationId: "PluginGroupHeader_" + pluginId);
+        _pluginSectionBadges.Add((badge, filters));
+        return frame;
+    }
+
+    /// <summary>Add: pick the first point of a free instance on the photo, then fill in the rest.</summary>
+    private void StartRepeatAdd(List<Registered<FilterDescriptor>> inst, Registered<FilterDescriptor>? from)
+    {
+        var free = inst.FirstOrDefault(f => !RepeatUsed(f));
+        if (free is null) return;
+        var pd = free.D.Params.FirstOrDefault(d => d.Kind == ParamKind.Point);
+        if (pd is null)
+        {
+            CopyRepeatParams(from, free);
+            _pluginState.Active.Add(free.FullId);
+            _repeatSelected[RepeatKey(free)] = free.FullId;
+            DeferRebuild();
+            OnPluginUiChanged();
+            return;
+        }
+        string label = $"{free.D.RepeatGroup} {inst.IndexOf(free) + 1}";
+        StartPointPick(free, pd, () =>
+        {
+            CopyRepeatParams(from, free);
+            PlaceLinkedPoints(free, pd);
+            _repeatSelected[RepeatKey(free)] = free.FullId;
+            bool linked = free.D.Params.Any(d => d.Kind == ParamKind.Point && d.MarkerLink == pd.Id);
+            SetStatus(linked ? $"{label} added — drag the dashed circle to a clean area to change the source" : $"{label} added", error: false);
+        }, label);
+    }
+
+    /// <summary>New item starts with the non-point settings of the selected one (size, feather, mode...).</summary>
+    private void CopyRepeatParams(Registered<FilterDescriptor>? from, Registered<FilterDescriptor> to)
+    {
+        if (from is null || from == to) return;
+        foreach (var d in to.D.Params)
+        {
+            if (d.Kind == ParamKind.Point) continue;
+            if (d.IsText) { var t = _pluginState.GetText(from, d); _pluginState.SetText(to, d, t == d.DefaultText ? null : t); }
+            else _pluginState.SetValue(to, d, _pluginState.GetValue(from, d));
+        }
+    }
+
+    /// <summary>Unset points linked to <paramref name="anchor"/> are placed next to it, inside the photo.</summary>
+    private void PlaceLinkedPoints(Registered<FilterDescriptor> f, ParamDef anchor)
+    {
+        if (!FilterParams.ParsePoint(_pluginState.GetText(f, anchor), out var ax, out var ay)) return;
+        double w = 1, h = 1;
+        if (_baseInfo is ImageInfo bi && bi.Width > 0 && bi.Height > 0) { w = bi.Width; h = bi.Height; }
+        double lng = Math.Max(w, h);
+        foreach (var d in f.D.Params.Where(d => d.Kind == ParamKind.Point && d.MarkerLink == anchor.Id))
+        {
+            if (FilterParams.ParsePoint(_pluginState.GetText(f, d), out _, out _)) continue;
+            double r = 0.02;
+            if (d.MarkerRadius is { Length: > 0 } rid && f.D.Params.FirstOrDefault(q => q.Id == rid && q.Kind == ParamKind.Slider) is { } rd)
+                r = Math.Max(0.002, _pluginState.GetValue(f, rd) / 100.0);
+            var p = RepeatSourceSpot(ax, ay, r * lng / w, r * lng / h);
+            _pluginState.SetText(f, d, Inv(p.X) + "," + Inv(p.Y));
+        }
+    }
+
+    /// <summary>A spot 2.5 radii away (right, left, below, above, diagonals) that keeps the circle inside the photo.</summary>
+    public static Point RepeatSourceSpot(double ax, double ay, double rx, double ry)
+    {
+        var dirs = new (double X, double Y)[] { (1, 0), (-1, 0), (0, 1), (0, -1), (0.7071, 0.7071), (-0.7071, 0.7071), (0.7071, -0.7071), (-0.7071, -0.7071) };
+        foreach (var (dx, dy) in dirs)
+        {
+            double x = ax + dx * 2.5 * rx, y = ay + dy * 2.5 * ry;
+            if (x - rx >= 0 && x + rx <= 1 && y - ry >= 0 && y + ry <= 1) return new Point(x, y);
+        }
+        // Huge spot: the farthest corner direction, clamped.
+        double fx = ax < 0.5 ? 1 : -1, fy = ay < 0.5 ? 1 : -1;
+        return new Point(Math.Clamp(ax + fx * 2.5 * rx, 0, 1), Math.Clamp(ay + fy * 2.5 * ry, 0, 1));
+    }
+
+    /// <summary>Grabbing a repeat-group marker on the photo selects that item in the panel.</summary>
+    private void OnPointMarkerGrabbed(string key)
+    {
+        int bar = key.LastIndexOf('|');
+        if (bar <= 0 || _pluginReg.FindFilter(key[..bar]) is not { } f || f.D.RepeatGroup.Length == 0) return;
+        if (_repeatSelected.TryGetValue(RepeatKey(f), out var cur) && cur == f.FullId) return;
+        _repeatSelected[RepeatKey(f)] = f.FullId;
+        DeferRebuild();
+        Dispatcher.BeginInvoke(RefreshPointMarkers, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private static string StageSuffix(Registered<FilterDescriptor> f) => StageBadge(f) is { Length: > 0 } b ? " · " + b : "";
@@ -1071,28 +1300,34 @@ public partial class MainWindow
     //  Point parameter (click on the photo)
     // ------------------------------------------------------------------
 
-    private void StartPointPick(Registered<FilterDescriptor> f, ParamDef d)
+    private void StartPointPick(Registered<FilterDescriptor> f, ParamDef d, Action? done = null, string? label = null)
     {
         if (_baseBitmap is null)
         {
             SetStatus("Open a photo first", error: true);
             return;
         }
+        CancelPointPick();
         _pointPick = (f, d);
+        _pointPickDone = done;
+        PointMarkers.Interactive = false;
         Mouse.OverrideCursor = Cursors.Cross;
-        SetStatus($"{f.D.Label}: click the photo to set \"{d.Label}\" (Esc cancels)", error: false);
+        SetStatus($"{label ?? f.D.Label}: click the photo to set \"{d.Label}\" (Esc cancels)", error: false);
     }
 
     private void CancelPointPick()
     {
         if (_pointPick is null) return;
         _pointPick = null;
+        _pointPickDone = null;
+        PointMarkers.Interactive = !_wbPicking;
         Mouse.OverrideCursor = null;
     }
 
     private void HandlePointPick(MouseButtonEventArgs e)
     {
         var (f, d) = _pointPick!.Value;
+        var done = _pointPickDone;
         CancelPointPick();
         e.Handled = true;
         var disp = _lastDisplayed ?? _baseBitmap;
@@ -1106,9 +1341,101 @@ public partial class MainWindow
         var val = f.D.Stage == FilterStage.Output ? PhotoGeo.MapToOutput(_geo, bi.Width, bi.Height, src) : src;
         val = new Point(Math.Clamp(val.X, 0, 1), Math.Clamp(val.Y, 0, 1));
         _pluginState.SetText(f, d, Inv(val.X) + "," + Inv(val.Y));
+        if (done is not null)
+        {
+            done();
+            RebuildPluginUi();
+            OnPluginUiChanged();
+            return;
+        }
         RebuildPluginUi();
         OnPluginUiChanged();
         SetStatus($"{f.D.Label}: {d.Label} set to {val.X:0.00}, {val.Y:0.00}", error: false);
+    }
+
+    // ------------------------------------------------------------------
+    //  Point markers (set Point parameters drawn on the photo)
+    // ------------------------------------------------------------------
+
+    /// <summary>Open state of a panel section without the side effects of <see cref="IsSectionExpanded"/>.</summary>
+    private bool IsSectionOpenNow(string key) =>
+        _pluginExpandedUser is not null && _pluginExpandedUser.TryGetValue(key, out var user) ? user : _pluginExpandedSession.Contains(key);
+
+    /// <summary>
+    /// Draws the set Point parameters of the filters whose plugin section is open: circles when the parameter names a
+    /// radius slider (<see cref="ParamDef.MarkerRadius"/>), dashed with an arrow for a linked point (<see cref="ParamDef.MarkerLink"/>).
+    /// </summary>
+    private void RefreshPointMarkers()
+    {
+        if (PointMarkers is null) return;
+        if (_cropMode || _baseInfo is not ImageInfo bi || _lastDisplayed is null && _baseBitmap is null)
+        {
+            if (PointMarkers.Visibility == Visibility.Visible) PointMarkers.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var list = new List<PointMarkerOverlay.Marker>();
+        var open = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var f in _pluginReg.Filters)
+        {
+            if (!f.D.Params.Any(d => d.Kind == ParamKind.Point) || f.Owner is { Faulted: true }) continue;
+            if (!open.TryGetValue(f.PluginId, out var isOpen)) open[f.PluginId] = isOpen = IsSectionOpenNow(f.PluginId);
+            if (!isOpen || !_pluginState.IsFilterOn(f)) continue;
+            int nPoints = f.D.Params.Count(d => d.Kind == ParamKind.Point);
+            bool many = _pluginReg.Filters.Count(o => o.PluginId == f.PluginId) > 1;
+            string? repeatLabel = null;
+            bool selected = false;
+            if (f.D.RepeatGroup.Length > 0)
+            {
+                var inst = RepeatInstances(f);
+                repeatLabel = $"{f.D.RepeatGroup} {inst.IndexOf(f) + 1}";
+                selected = RepeatSelected(inst) == f;
+            }
+            Point? Src(ParamDef d)
+            {
+                if (!FilterParams.ParsePoint(_pluginState.GetText(f, d), out var x, out var y)) return null;
+                var p = new Point(x, y);
+                return f.D.Stage == FilterStage.Output ? PhotoGeo.MapFromOutput(_geo, bi.Width, bi.Height, p) : p;
+            }
+            foreach (var d in f.D.Params.Where(d => d.Kind == ParamKind.Point))
+            {
+                if (Src(d) is not { } p) continue;
+                double r = 0;
+                if (d.MarkerRadius is { Length: > 0 } rid && f.D.Params.FirstOrDefault(q => q.Id == rid && q.Kind == ParamKind.Slider) is { } rd)
+                    r = Math.Max(0, _pluginState.GetValue(f, rd)) / 100.0;
+                bool linked = d.MarkerLink is { Length: > 0 } lid && f.D.Params.Any(q => q.Id == lid && q.Kind == ParamKind.Point);
+                string label = linked ? "" : repeatLabel ?? (many ? f.D.Label : nPoints > 1 ? d.Label : f.D.Label);
+                list.Add(new PointMarkerOverlay.Marker(MarkerKey(f, d), p, r, linked, label, linked ? f.FullId + "|" + d.MarkerLink : null, selected));
+            }
+        }
+        if (list.Count == 0)
+        {
+            if (PointMarkers.Visibility == Visibility.Visible) PointMarkers.Visibility = Visibility.Collapsed;
+            PointMarkers.SetMarkers(list);
+            return;
+        }
+        PointMarkers.Visibility = Visibility.Visible;
+        PointMarkers.SetMapping(CurrentDisplayGeo(), bi.Width, bi.Height);
+        PointMarkers.SetMarkers(list);
+    }
+
+    private static string MarkerKey(Registered<FilterDescriptor> f, ParamDef d) => f.FullId + "|" + d.Id;
+
+    /// <summary>A marker dragged on the photo: store the point (live render while dragging, panel text on release).</summary>
+    private void OnPointMarkerMoved(string key, Point src, bool final)
+    {
+        int bar = key.LastIndexOf('|');
+        if (bar <= 0 || _baseInfo is not ImageInfo bi || _pluginReg.FindFilter(key[..bar]) is not { } f) return;
+        var d = f.D.Params.FirstOrDefault(p => p.Id == key[(bar + 1)..] && p.Kind == ParamKind.Point);
+        if (d is null) return;
+        var val = f.D.Stage == FilterStage.Output ? PhotoGeo.MapToOutput(_geo, bi.Width, bi.Height, src) : src;
+        val = new Point(Math.Clamp(val.X, 0, 1), Math.Clamp(val.Y, 0, 1));
+        _pluginState.SetText(f, d, Inv(val.X) + "," + Inv(val.Y));
+        if (final)
+        {
+            DeferRebuild();
+            SetStatus($"{f.D.Label}: {d.Label} moved to {val.X:0.00}, {val.Y:0.00}", error: false);
+        }
+        OnPluginUiChanged();
     }
 
     // ------------------------------------------------------------------

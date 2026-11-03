@@ -285,6 +285,17 @@ public sealed class ParamDef
     /// <summary>Open-file dialog filter for <see cref="ParamKind.File"/>.</summary>
     public string FileFilter { get; set; } = "All files|*.*";
     public string Tooltip { get; set; } = "";
+    /// <summary>
+    /// <see cref="ParamKind.Point"/> only: id of a Slider parameter of the same filter giving a radius in % of the
+    /// photo's long side. The host then draws the point as a circle of that size on the photo (while the plugin's
+    /// panel section is open); without it a set point is drawn as a small cross.
+    /// </summary>
+    public string MarkerRadius { get; set; } = "";
+    /// <summary>
+    /// <see cref="ParamKind.Point"/> only: id of another Point parameter of the same filter. This point is drawn dashed
+    /// with an arrow to that one (e.g. a clone source pointing at its target).
+    /// </summary>
+    public string MarkerLink { get; set; } = "";
 
     public bool IsText => Kind == ParamKind.Choice || Kind == ParamKind.Color || Kind == ParamKind.Curve || Kind == ParamKind.Point || Kind == ParamKind.File;
 
@@ -541,6 +552,15 @@ public sealed class FilterDescriptor
     public int Order { get; set; }
     /// <summary>Whether the user may attach a local mask (gradient, radial, brush, range, plugin mask). Ignored for the Output stage.</summary>
     public bool SupportsMask { get; set; } = true;
+    /// <summary>
+    /// Optional: filters of one plugin with the same non-empty RepeatGroup are instances of one tool (e.g. heal spots).
+    /// The host shows them as a single panel section with a list of the used instances (select / edit / remove) and an
+    /// Add button, up to the number of registered instances. The value is the item name shown in the UI ("Spot").
+    /// An instance with Point parameters counts as used once one of its points is set; Add picks the first Point
+    /// parameter on the photo, places unset points linked to it (<see cref="ParamDef.MarkerLink"/>) next to it and
+    /// copies the other parameters from the selected instance.
+    /// </summary>
+    public string RepeatGroup { get; set; } = "";
     public IReadOnlyList<ParamDef> Params { get; set; } = new ParamDef[0];
     /// <summary>Optional: return true when the parameters produce no change (the host then skips the filter).</summary>
     public Func<FilterParams, bool> IsIdentity { get; set; }

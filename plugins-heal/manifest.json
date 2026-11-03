@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.heal",
+  "name": "Heal",
+  "version": "1.0",
+  "author": "PhotographerEye",
+  "description": "Removes dust, spots and small defects by copying another part of the photo over them (heal matches the tone of the surroundings, clone copies as is).",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.Heal.dll",
+  "permissions": []
+}

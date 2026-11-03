@@ -33,6 +33,7 @@
     <Compile Remove="plugins-samples\**" />
     <Compile Remove="plugins-auto\**" />
     <Compile Remove="plugins-colorbalance\**" />
+    <Compile Remove="plugins-heal\**" />
     <Resource Include="Assets\icon.ico" />
     <None Include="thirdparty\libraw22\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="thirdparty\librawhe\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
@@ -44,12 +45,14 @@
     <ProjectReference Include="plugins-samples\ImgViewer.Plugins.Samples.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="plugins-auto\ImgViewer.Plugins.AutoEnhance.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="plugins-colorbalance\ImgViewer.Plugins.ColorBalance.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="plugins-heal\ImgViewer.Plugins.Heal.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <PropertyGroup>
     <PluginSamplesBin>plugins-samples\bin\$(Configuration)\netstandard2.0\</PluginSamplesBin>
     <PluginAutoBin>plugins-auto\bin\$(Configuration)\netstandard2.0\</PluginAutoBin>
     <PluginCbBin>plugins-colorbalance\bin\$(Configuration)\netstandard2.0\</PluginCbBin>
+    <PluginHealBin>plugins-heal\bin\$(Configuration)\netstandard2.0\</PluginHealBin>
   </PropertyGroup>
 
   <Target Name="CopyLibRaw22ToPublish" AfterTargets="Publish">
@@ -104,6 +107,21 @@
       <PluginCbFile Include="$(PluginCbBin)ImgViewer.Plugins.ColorBalance.dll;plugins-colorbalance\manifest.json" />
     </ItemGroup>
     <Copy SourceFiles="@(PluginCbFile)" DestinationFolder="$(OutDir)plugins\colorbalance" SkipUnchangedFiles="true" Condition="@(PluginCbFile->Count()) &gt; 0" />
+  </Target>
+
+  <!-- Heal plugin ships as plugins\heal\{manifest.json, ImgViewer.Plugins.Heal.dll}. -->
+  <Target Name="CopyPluginHealToPublish" AfterTargets="Publish">
+    <ItemGroup Condition="Exists('$(PluginHealBin)ImgViewer.Plugins.Heal.dll')">
+      <PluginHealFile Include="$(PluginHealBin)ImgViewer.Plugins.Heal.dll;plugins-heal\manifest.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginHealFile)" DestinationFolder="$(PublishDir)plugins\heal" SkipUnchangedFiles="true" Condition="@(PluginHealFile->Count()) &gt; 0" />
+  </Target>
+
+  <Target Name="CopyPluginHealToOutput" AfterTargets="Build">
+    <ItemGroup Condition="Exists('$(PluginHealBin)ImgViewer.Plugins.Heal.dll')">
+      <PluginHealFile Include="$(PluginHealBin)ImgViewer.Plugins.Heal.dll;plugins-heal\manifest.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginHealFile)" DestinationFolder="$(OutDir)plugins\heal" SkipUnchangedFiles="true" Condition="@(PluginHealFile->Count()) &gt; 0" />
   </Target>
 
 </Project>

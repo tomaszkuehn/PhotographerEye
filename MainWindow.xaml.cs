@@ -757,6 +757,7 @@ public partial class MainWindow : Window
         Viewer.SetSource(src, box);
         if (_cropMode && !CropOverlay.IsInteracting) CropOverlay.Sync();
         RefreshMaskOverlay();
+        RefreshPointMarkers();
     }
 
     private void UpdateHistogram(string path, BitmapSource src)
@@ -1923,6 +1924,7 @@ public partial class MainWindow : Window
     private void OnWbPickerClick(object sender, RoutedEventArgs e)
     {
         _wbPicking = !_wbPicking;
+        PointMarkers.Interactive = !_wbPicking && _pointPick is null;
         Mouse.OverrideCursor = _wbPicking ? Cursors.Cross : null;
         SetStatus(_wbPicking
             ? "White point eyedropper — click a neutral area of the photo (Esc — cancel)"
@@ -1935,6 +1937,7 @@ public partial class MainWindow : Window
         if (!_wbPicking) return;
         e.Handled = true;
         _wbPicking = false;
+        PointMarkers.Interactive = !_wbPicking && _pointPick is null;
         Mouse.OverrideCursor = null;
 
         var disp = _lastDisplayed ?? _baseBitmap;
@@ -2328,6 +2331,7 @@ public partial class MainWindow : Window
         if (_wbPicking)
         {
             _wbPicking = false;
+            PointMarkers.Interactive = !_wbPicking && _pointPick is null;
             Mouse.OverrideCursor = null;
             SetStatus("White point eyedropper — cancelled", error: false);
             if (e.Key != Key.Escape) return;

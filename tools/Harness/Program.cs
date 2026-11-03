@@ -82,6 +82,13 @@ internal static partial class Program
             Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
             return;
         }
+        if (args.Length > 0 && args[0] == "--heal")
+        {
+            TestHeal();
+            TestPointMarkers();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--colorbalance")
         {
             TestColorBalance();
@@ -269,6 +276,8 @@ internal static partial class Program
         TestPluginSamples();
         TestAutoEnhance();
         TestColorBalance();
+        TestHeal();
+        TestPointMarkers();
         TestChannelCurves();
         TestShadowColor();
         TestHistoryCoalesce();
