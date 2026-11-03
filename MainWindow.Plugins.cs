@@ -194,10 +194,20 @@ public partial class MainWindow
     /// </summary>
     private static Raw16Image Correct16(Raw16Image raw16, double baseEv, PhotoAdjustments? extra, double s, double g, ManualStretchMap? manual,
         MonoMode mono, int seed, CameraToneCurve? curve, PluginRenderJob job, int fullW, int fullH, CancellationToken ct,
-        out HistogramData? hist, out bool blended)
+        out HistogramData? hist, out bool blended, StageCache? cache = null)
     {
-        var rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0, ct);
-        rendered = PluginPipeline.ApplyRaw16(rendered, FilterStage.SceneLinear, job, fullW, fullH) ?? rendered;
+        Raw16Image rendered;
+        if (cache is not null)
+        {
+            // Live preview: gain and SceneLinear plugins reused while their inputs are unchanged.
+            rendered = cache.Gain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0, ct);
+            rendered = cache.SceneLinear(rendered, job, fullW, fullH);
+        }
+        else
+        {
+            rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0, ct);
+            rendered = PluginPipeline.ApplyRaw16(rendered, FilterStage.SceneLinear, job, fullW, fullH) ?? rendered;
+        }
         var extra2 = StripExposureTemp(extra);
         var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: curve)
             ?? Adjust16.Apply(rendered, s, g, manual, out hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: curve);
@@ -218,6 +228,10 @@ public partial class MainWindow
         blended = true;
         return AdjustMask.Blend16(corrected, neutral, amask, job, fullW, fullH);
     }
+
+    /// <summary>The live preview may run on the GPU end to end: no SceneLinear/Display plugin and no Adjustments mask.</summary>
+    private static bool GpuDisplayAllowed(PluginRenderJob job) =>
+        AdjustMask.For(job.State) is null && !job.Has(FilterStage.SceneLinear) && !job.Has(FilterStage.Display);
 
     /// <summary>8-bit counterpart of <see cref="Correct16"/>; <paramref name="src"/> already went through SceneLinear.</summary>
     private static BitmapSource? Correct8(BitmapSource src, PhotoAdjustments? extra, double s, double g, ManualStretchMap? manual,
@@ -417,11 +431,7 @@ public partial class MainWindow
         _showHistogram = true;
         HistHost.Visibility = RightPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Hidden;
         UpdateSaveState();
-        if (_adjustTimer is not null)
-        {
-            _adjustTimer.Stop();
-            _adjustTimer.Start();
-        }
+        RequestRender();
         ScheduleHistCommit();
     }
 

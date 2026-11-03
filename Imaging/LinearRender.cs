@@ -26,14 +26,17 @@ public static class LinearRender
     public static Raw16Image ApplyGain(Raw16Image src, double ev, double temperature, CancellationToken ct = default) =>
         ApplyGain(src, ev, temperature, 0.0, ct);
 
-    public static Raw16Image ApplyGain(Raw16Image src, double ev, double temperature, double tint, CancellationToken ct = default)
+    /// <summary>Per-channel multipliers of <see cref="ApplyGain(Raw16Image, double, double, double, CancellationToken)"/>.</summary>
+    public static (float R, float G, float B) Gains(double ev, double temperature, double tint)
     {
         double evGain = Math.Pow(2.0, ev);
         var (gainR, gainG, gainB) = PhotoOps.WbGains(temperature, tint);
+        return ((float)(evGain * gainR), (float)(evGain * gainG), (float)(evGain * gainB));
+    }
 
-        float gr = (float)(evGain * gainR);
-        float gg = (float)(evGain * gainG);
-        float gb = (float)(evGain * gainB);
+    public static Raw16Image ApplyGain(Raw16Image src, double ev, double temperature, double tint, CancellationToken ct = default)
+    {
+        var (gr, gg, gb) = Gains(ev, temperature, tint);
 
         int length = src.R.Length;
         var outImg = new Raw16Image(new ushort[length], new ushort[length], new ushort[length], src.W, src.H);

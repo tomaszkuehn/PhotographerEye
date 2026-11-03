@@ -149,6 +149,30 @@ public sealed class PluginEditState
         return true;
     }
 
+    /// <summary>
+    /// Text identifying everything the active filters of <paramref name="stage"/> render from (order, parameters,
+    /// masks): equal keys give equal output for the same input buffer.
+    /// </summary>
+    public string StageKey(PluginRegistry reg, FilterStage stage)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var f in Ordered(reg, stage))
+        {
+            if (!IsFilterActive(f)) continue;
+            sb.Append(f.FullId).Append('{');
+            foreach (var d in f.D.Params)
+            {
+                sb.Append(d.Id).Append('=');
+                if (d.IsText) sb.Append(GetText(f, d).Replace(";", ";;"));
+                else sb.Append(GetValue(f, d).ToString("R", System.Globalization.CultureInfo.InvariantCulture));
+                sb.Append(';');
+            }
+            if (MaskFor(f) is { } m) sb.Append("mask=").Append(JsonSerializer.Serialize(m));
+            sb.Append('}');
+        }
+        return sb.ToString();
+    }
+
     public void Clear()
     {
         Values.Clear();

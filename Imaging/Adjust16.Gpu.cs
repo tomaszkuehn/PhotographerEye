@@ -144,20 +144,44 @@ public static partial class Adjust16
         var b = _bufs!;
         var opts = new ParallelOptions { CancellationToken = ct };
 
-        Upload(b.R, source.R, n);
-        Upload(b.G, source.G, n);
-        Upload(b.B, source.B, n);
+        bool nr = extra is not null && !extra.IsDefault && NoiseReduction.Active(extra.Denoise, extra.ColorNoise);
+        bool denoised = nr && TryReuseDenoise(d, b, w, h, n, source, 1f, 1f, 1f, extra!.Denoise, extra.ColorNoise);
+        if (!denoised)
+        {
+            Upload(b.R, source.R, n);
+            Upload(b.G, source.G, n);
+            Upload(b.B, source.B, n);
+            ct.ThrowIfCancellationRequested();
+            if (nr)
+            {
+                Denoise(d, b, w, h, extra!.Denoise, extra.ColorNoise, ct);
+                StoreDenoise(d, b, w, h, n, source, 1f, 1f, 1f, extra.Denoise, extra.ColorNoise);
+                denoised = true;
+            }
+        }
         ct.ThrowIfCancellationRequested();
 
-        ct.ThrowIfCancellationRequested();
+        RunStages(d, b, w, h, shadowLift, gamma, manual, mono, grainSeed, extra, ct, cameraTone, skipDenoise: denoised);
 
+        ct.ThrowIfCancellationRequested();
+        var r = Download(b.R, n);
+        var g = Download(b.G, n);
+        var bl = Download(b.B, n);
+        var img = new Raw16Image(r, g, bl, w, h);
+        histogram = ComputeHistogram16(img, opts);
+        return img;
+    }
+
+    /// <summary>The Adjust16 passes on b.R/G/B (linear in, display-encoded out).</summary>
+    private static void RunStages(GraphicsDevice d, GpuBufs b, int w, int h, double shadowLift, double gamma, ManualStretchMap? manual, MonoMode mono, int grainSeed, PhotoAdjustments? extra, CancellationToken ct, CameraToneCurve? cameraTone, bool skipDenoise)
+    {
         bool shadow = Math.Abs(shadowLift) > 0.0001;
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
         bool curveDehaze = cameraTone is not null && extra is not null && Math.Abs(extra.Dehaze) > 0.0005;
 
         if (extra is not null && !extra.IsDefault)
         {
-            if (NoiseReduction.Active(extra.Denoise, extra.ColorNoise)) Denoise(d, b, w, h, extra.Denoise, extra.ColorNoise, ct);
+            if (!skipDenoise && NoiseReduction.Active(extra.Denoise, extra.ColorNoise)) Denoise(d, b, w, h, extra.Denoise, extra.ColorNoise, ct);
             ColorLut(d, b, w, h, extra, ct, wbOnly: curveDehaze);
             if (shadow || Math.Abs(extra.Highlights) > 0.0005) ShadowsHighlights(d, b, w, h, extra.Highlights, shadow ? shadowLift : 0.0, ct);
             if (Math.Abs(extra.Clarity) > 0.0005) Detail(d, b, w, h, extra.Clarity, sharpen: false, ct);
@@ -199,14 +223,6 @@ public static partial class Adjust16
                 Grain(d, b, w, h, grainSeed, ct);
                 break;
         }
-
-        ct.ThrowIfCancellationRequested();
-        var r = Download(b.R, n);
-        var g = Download(b.G, n);
-        var bl = Download(b.B, n);
-        var img = new Raw16Image(r, g, bl, w, h);
-        histogram = ComputeHistogram16(img, opts);
-        return img;
     }
 
     // Same algorithm as NoiseReduction.Apply16; per-scale noise is measured on a sparse grid read

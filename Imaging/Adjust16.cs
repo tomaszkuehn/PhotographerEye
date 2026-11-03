@@ -32,7 +32,8 @@ public static partial class Adjust16
         }
 
         var opts = new ParallelOptions { CancellationToken = ct };
-        var img = source.Clone();
+        bool nr = extra is not null && !extra.IsDefault && NoiseReduction.Active(extra.Denoise, extra.ColorNoise);
+        var img = nr ? Denoised16(source, extra!.Denoise, extra.ColorNoise, opts) : source.Clone();
         ct.ThrowIfCancellationRequested();
 
         bool shadow = Math.Abs(shadowLift) > 0.0001;
@@ -40,7 +41,6 @@ public static partial class Adjust16
 
         if (extra is not null && !extra.IsDefault)
         {
-            NoiseReduction.Apply16(img.R, img.G, img.B, w, h, extra.Denoise, extra.ColorNoise, opts);
             ApplyWbDehaze16(img, extra, opts, wbOnly: curveDehaze);
             if (shadow || Math.Abs(extra.Highlights) > 0.0005) ApplyShadowsHighlights16(img, extra.Highlights, shadow ? shadowLift : 0.0, opts);
             if (Math.Abs(extra.Clarity) > 0.0005) ApplyClarity16(img, w, h, extra.Clarity, opts);
@@ -88,6 +88,43 @@ public static partial class Adjust16
         ApplyTone16(img, new PhotoAdjustments(), null, opts, cameraTone);
         EncodeSrgb16(img, opts);
         return img;
+    }
+
+    private static readonly object CpuNrLock = new();
+    private static (Raw16Image Src, double Luma, double Color, Raw16Image Out)? _cpuNr;
+    private const long CpuNrCacheMaxPixels = 30_000_000;
+
+    /// <summary>Diagnostics for tests: denoise results reused from the cache.</summary>
+    public static int CpuDenoiseReuse { get; private set; }
+
+    /// <summary>
+    /// Copy of <paramref name="source"/> with the noise reduction applied. The last result is kept by source buffer
+    /// and strength, so changing later settings (tone, colour, detail) does not denoise again.
+    /// </summary>
+    private static Raw16Image Denoised16(Raw16Image source, double luma, double color, ParallelOptions opts)
+    {
+        lock (CpuNrLock)
+        {
+            if (_cpuNr is { } c && ReferenceEquals(c.Src, source) && c.Luma == luma && c.Color == color)
+            {
+                CpuDenoiseReuse++;
+                return c.Out.Clone();
+            }
+        }
+        var img = source.Clone();
+        NoiseReduction.Apply16(img.R, img.G, img.B, source.W, source.H, luma, color, opts);
+        if ((long)source.W * source.H <= CpuNrCacheMaxPixels)
+        {
+            var keep = img.Clone();
+            lock (CpuNrLock) _cpuNr = (source, luma, color, keep);
+        }
+        return img;
+    }
+
+    /// <summary>Drops the cached denoise result (photo closed).</summary>
+    public static void ClearStageCaches()
+    {
+        lock (CpuNrLock) _cpuNr = null;
     }
 
     private static Raw16Image Clone(this Raw16Image src) =>

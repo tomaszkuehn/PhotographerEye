@@ -42,6 +42,23 @@ public partial class MainWindow : Window
     private readonly SemaphoreSlim _decodeGate = new(1, 1);
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _applyCts;
+    /// <summary>Live render pump: a render is running / controls moved meanwhile / id of the newest render.</summary>
+    private bool _renderBusy;
+    private bool _renderDirty;
+    private bool _renderQueued;
+    private int _renderSeq;
+    /// <summary>Live RAW preview resolution setting and the downscaled copy last made (source, longer side, copy).</summary>
+    private string _previewQuality = PreviewQuality.Window;
+    private readonly RenderedPreviewCache _renderedCache = new(RenderedPreviewCache.DefaultDirectory);
+    /// <summary>A cached render of the current photo is on screen; the embedded RAW preview must not replace it.</summary>
+    private bool _instantShown;
+    private RenderedSnap? _lastRendered;
+    private sealed record RenderedSnap(string Path, EyeState State, double FileBaseEv, double[][]? FileCurve, BitmapSource Bitmap, Size Box);
+    private sealed record PreviewCopy(Raw16Image Src, int Long, Raw16Image Copy);
+    private volatile PreviewCopy? _previewCopy;
+    /// <summary>Longer side the last RAW render used (0 = full image).</summary>
+    private int _previewLongUsed;
+    private readonly StageCache _stageCache = new();
 
     private BitmapSource? _baseBitmap;
     private Raw16Image? _baseRaw16;
@@ -91,6 +108,10 @@ public partial class MainWindow : Window
         var settings = SettingsStore.Load();
         ShadowSlider.Value = Math.Clamp(settings.ShadowLift, ShadowSlider.Minimum, ShadowSlider.Maximum);
         GammaSlider.Value = Math.Clamp(settings.Gamma, GammaSlider.Minimum, GammaSlider.Maximum);
+        _previewQuality = PreviewQuality.Normalize(settings.PreviewQuality);
+        _renderedCache.Enabled = settings.RememberPreviews ?? true;
+        MnuRememberPreviews.IsChecked = _renderedCache.Enabled;
+        UpdatePreviewQualityMenu();
 
         Viewer.ZoomChanged += OnViewerZoomChanged;
         CropOverlay.Attach(Viewer);
@@ -148,8 +169,7 @@ public partial class MainWindow : Window
         _adjustTimer.Tick += (_, _) =>
         {
             _adjustTimer.Stop();
-            if (IsGeoInteracting) return;
-            ReapplyAdjustments();
+            RequestRender();
         };
 
         _redecodeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -165,6 +185,7 @@ public partial class MainWindow : Window
         {
             _loadCts?.Cancel();
             _applyCts?.Cancel();
+            FlushRendered(sync: true);
             SettingsStore.Save(SettingsStore.Load() with
             {
                 ShadowLift = ShadowSlider.Value,
@@ -234,6 +255,8 @@ public partial class MainWindow : Window
             var cur = CaptureEyeState();
             _session[_currentPath] = cur with { History = new List<EyeState>(_hist), HistoryPos = _histPos };
         }
+        FlushRendered(sync: false);
+        _instantShown = false;
         _currentPath = path;
         SetCropMode(false);
         _lastDisplayed = null;
@@ -252,6 +275,11 @@ public partial class MainWindow : Window
         _baseCurve = null;
         _baseBitmap = null;
         _baseRaw16 = null;
+        // Stage caches of the previous photo (CPU buffers now, GPU buffers off the UI thread).
+        _stageCache.Clear();
+        _previewCopy = null;
+        Adjust16.ClearStageCaches();
+        _ = Task.Run(Adjust16.ReleaseDisplayBuffers);
         _baseInfo = null;
         _baseEv = 0.0;
         _fullDecodeBox = default;
@@ -271,6 +299,7 @@ public partial class MainWindow : Window
             ApplyEyeStateSuppressed(st);
             _histPendingSt = st;
         }
+        ShowCachedRender(path);
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
         HintPanel.Visibility = Visibility.Collapsed;
@@ -382,6 +411,7 @@ public partial class MainWindow : Window
         _baseBitmap = raw;
         _baseInfo = info;
         _baseIsFull = isFull;
+        if (isFull) _instantShown = false;
         _baseNativeBox = requestedBox.Width > 0 ? requestedBox : new Size(info.Width, info.Height);
         if (isFull)
         {
@@ -415,11 +445,14 @@ public partial class MainWindow : Window
             SetStatus(_lastDimsText, error: false);
         }
         UpdateStatusMeta(path, isFull);
+        // The cached render stays until the full image is decoded (or an adjustment is changed).
+        if (!isFull && _instantShown) return;
         ReapplyAdjustments(path, info);
     }
 
     private void ReapplyAdjustments()
     {
+        _instantShown = false;
         if (_baseBitmap is not null && _currentPath is not null && _baseInfo is ImageInfo info)
         {
             ReapplyAdjustments(_currentPath, info);
@@ -434,6 +467,13 @@ public partial class MainWindow : Window
         if (_currentPath is null || baseBitmap is null || _baseInfo is not ImageInfo info) return;
         if (!_baseIsFull) return;
 
+        if (_baseRaw16 is { } r16 && _previewLongUsed > 0)
+        {
+            // Zoomed in past the preview copy: render again with more pixels (or the full image).
+            var nbox = _baseNativeBox.Width > 0 ? _baseNativeBox : info.DisplaySize;
+            int want = PreviewTargetLong(r16, nbox);
+            if (want == 0 || want > _previewLongUsed) RequestRender();
+        }
         var box = GetViewportBox(FullMultiplier());
         int neededW = Math.Min(info.Width, Math.Max(1, (int)box.Width));
         int neededH = Math.Min(info.Height, Math.Max(1, (int)box.Height));
@@ -490,6 +530,7 @@ public partial class MainWindow : Window
 
         bool geoAngle = PhotoGeo.IsHeavy(displayGeo);
         bool geoActive = !displayGeo.IsDefault;
+        var stSnap = _baseIsFull && !_cropMode && _renderedCache.Enabled ? CaptureEyeState() : null;
 
         _lastApplyTicks = Environment.TickCount64;
         double s = ShadowSlider.Value / 100.0;
@@ -510,6 +551,7 @@ public partial class MainWindow : Window
             StoreUnGeo(raw, box);
             var (fast, fastBox) = PhotoGeo.Apply(raw, box, displayGeo);
             SetDisplayed(fast, fastBox);
+            RememberRendered(path, stSnap, fast, fastBox);
             if (geoActive) UpdateHistogram(path, fast);
             else UpdateHistogram(path, raw);
             return;
@@ -523,12 +565,19 @@ public partial class MainWindow : Window
         double baseEv = CurrentBaseEv();
         var toneCurve = CurrentCurve();
         int fullW = info.Width, fullH = info.Height;
-        int bufLong = raw16 is not null ? Math.Max(raw16.W, raw16.H) : Math.Max(raw.PixelWidth, raw.PixelHeight);
+        int previewLong = raw16 is not null ? PreviewTargetLong(raw16, box) : 0;
+        if (raw16 is not null) _previewLongUsed = previewLong;
+        var src16 = raw16 is null ? null : PreviewSource16(raw16, previewLong, peekOnly: true);
+        int bufLong = raw16 is not null
+            ? (previewLong > 0 ? previewLong : Math.Max(raw16.W, raw16.H))
+            : Math.Max(raw.PixelWidth, raw.PixelHeight);
         double pScale = Math.Min(1.0, bufLong / (double)Math.Max(1, Math.Max(fullW, fullH)));
         var job = PluginJob(preview: true, pScale, ct);
         var mono = _monoMode;
         int seed = _monoSeed;
         bool runOutput = !_cropMode;
+        int renderSeq = ++_renderSeq;
+        _renderBusy = true;
 
         _ = Task.Run(() =>
         {
@@ -537,16 +586,31 @@ public partial class MainWindow : Window
                 if (raw16 is not null)
                 {
                     var sw = System.Diagnostics.Stopwatch.StartNew();
-                    var corrected = Correct16(raw16, baseEv, extra, s, g, manual, mono, seed, toneCurve, job, fullW, fullH, ct, out var hist, out bool blended);
+                    var work16 = src16 ?? PreviewSource16(raw16, previewLong, peekOnly: false)!;
+                    long downMs = sw.ElapsedMilliseconds;
+                    if (ct.IsCancellationRequested) return;
                     var extra2 = StripExposureTemp(extra);
-                    if (ct.IsCancellationRequested) return;
-                    var post = PluginPipeline.ApplyRaw16(corrected, FilterStage.Display, job, fullW, fullH);
-                    bool postRan = post is not null || blended;
-                    corrected = post ?? corrected;
+                    HistogramData? hist = null;
+                    bool postRan = false;
+                    // GPU end to end (resident source, 4 B/px back) unless a plugin or the mask needs the 16-bit buffer.
+                    var disp = GpuDisplayAllowed(job)
+                        ? Adjust16.TryRenderDisplayGpu(work16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0,
+                            s, g, manual, out hist, mono, seed, extra2, ct, toneCurve)
+                        : null;
+                    bool gpuDisp = disp is not null;
+                    if (disp is null)
+                    {
+                        var corrected = Correct16(work16, baseEv, extra, s, g, manual, mono, seed, toneCurve, job, fullW, fullH, ct, out hist, out bool blended, _stageCache);
+                        if (ct.IsCancellationRequested) return;
+                        var post = PluginPipeline.ApplyRaw16(corrected, FilterStage.Display, job, fullW, fullH);
+                        postRan = post is not null || blended;
+                        corrected = post ?? corrected;
+                        if (ct.IsCancellationRequested) return;
+                        disp = corrected.ToDisplay(dither: true);
+                    }
                     sw.Stop();
-                    Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms size={raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} baseEv={baseEv:0.00} manual={manual} mono={mono:D} extra={extra2 is not null} plugins={job.Report.Ran}");
+                    Debug.Log($"APPLY16: {sw.ElapsedMilliseconds} ms (downscale {downMs}) size={work16.W}x{work16.H} of {raw16.W}x{raw16.H} s={s:0.##} g={g:0.##} baseEv={baseEv:0.00} manual={manual} mono={mono:D} extra={extra2 is not null} plugins={job.Report.Ran} gpuDisplay={gpuDisp}");
                     if (ct.IsCancellationRequested) return;
-                    var disp = corrected.ToDisplay(dither: true);
                     var (gdisp, gbox) = PhotoGeo.Apply(disp, box, displayGeo);
                     if (runOutput)
                     {
@@ -561,6 +625,7 @@ public partial class MainWindow : Window
                         if (_compareOn) return;
                         StoreUnGeo(disp, box);
                         SetDisplayed(gdisp, gbox);
+                        RememberRendered(path, stSnap, gdisp, gbox);
                         if (geoActive || postRan) UpdateHistogram(path, gdisp);
                         else if (hist is not null) ApplyHistogram(path, hist);
                     });
@@ -591,6 +656,7 @@ public partial class MainWindow : Window
                     if (_compareOn) return;
                     StoreUnGeo(processedOut, box);
                     SetDisplayed(gprocessed, gbox8);
+                    RememberRendered(path, stSnap, gprocessed, gbox8);
                     if (geoActive || postRan8) UpdateHistogram(path, gprocessed);
                     else if (hist8 is not null) ApplyHistogram(path, hist8);
                 });
@@ -602,7 +668,86 @@ public partial class MainWindow : Window
             {
                 Debug.Log($"APPLY ERROR: [{ex.GetType().Name}] {ex.Message} {ex.StackTrace}");
             }
+            finally
+            {
+                Dispatcher.BeginInvoke(() => OnRenderFinished(renderSeq));
+            }
         });
+    }
+
+    /// <summary>Longer side of the live preview buffer for <paramref name="full"/> (0 = render the full image).</summary>
+    private int PreviewTargetLong(Raw16Image full, Size box)
+    {
+        double boxLong = Math.Max(box.Width, box.Height);
+        return PreviewQuality.TargetLong(_previewQuality, boxLong, Viewer.Zoom, Math.Max(full.W, full.H));
+    }
+
+    /// <summary>
+    /// Downscaled copy of <paramref name="full"/> for the live preview (the image itself for 0). With
+    /// <paramref name="peekOnly"/> only a cached copy is returned (null when it still has to be made, off the UI thread).
+    /// </summary>
+    private Raw16Image? PreviewSource16(Raw16Image full, int targetLong, bool peekOnly)
+    {
+        if (targetLong <= 0) return full;
+        var c = _previewCopy;
+        if (c is not null && ReferenceEquals(c.Src, full) && c.Long == targetLong) return c.Copy;
+        if (peekOnly) return null;
+        var copy = full.Downscale(targetLong);
+        _previewCopy = new PreviewCopy(full, targetLong, copy);
+        return copy;
+    }
+
+    /// <summary>Context of the cached-render signature: this build of the app and the loaded plugins.</summary>
+    private string RenderedContext() =>
+        typeof(MainWindow).Assembly.ManifestModule.ModuleVersionId + "|" +
+        string.Join(";", _pluginReg.Plugins.Select(p => p.Id + "@" + p.Version).OrderBy(x => x, StringComparer.Ordinal));
+
+    /// <summary>Latest finished render of the current photo (stored in the cache when the photo is left).</summary>
+    private void RememberRendered(string path, EyeState? st, BitmapSource bmp, Size box)
+    {
+        if (st is null || !bmp.IsFrozen || _compareOn || _cropMode || !_baseIsFull || !IsCurrent(path)) return;
+        _lastRendered = new RenderedSnap(path, st, _baseEv, _baseCurve?.KnotPairs(), bmp, box);
+    }
+
+    private void FlushRendered(bool sync)
+    {
+        if (_lastRendered is not { } r) return;
+        _lastRendered = null;
+        if (!_renderedCache.Enabled) return;
+        var meta = RenderedPreviewCache.MakeMeta(r.Path, r.State, RenderedContext(), r.FileBaseEv, r.FileCurve, r.Box);
+        if (meta is null) return;
+        _renderedCache.Put(meta, r.Bitmap);
+        if (sync) _renderedCache.Persist(meta, r.Bitmap);
+        else _ = Task.Run(() => _renderedCache.Persist(meta, r.Bitmap));
+    }
+
+    /// <summary>Shows the cached render of <paramref name="path"/> when its file and edits are unchanged.</summary>
+    private void ShowCachedRender(string path)
+    {
+        if (!_renderedCache.Enabled) return;
+        var cur = CaptureEyeState() with { ToneCurve = _eyeCurveSet ? _eyeCurve?.KnotPairs() : null };
+        string ctx = RenderedContext();
+        bool evKnown = !double.IsNaN(_eyeBaseEv), curveKnown = _eyeCurveSet;
+        if (!_renderedCache.TryGet(path, m => RenderedPreviewCache.Signature(RenderedPreviewCache.StateFor(cur, m, evKnown, curveKnown), ctx),
+                out var bmp, out var box) || bmp is null) return;
+        SetDisplayed(bmp, box);
+        _instantShown = true;
+        Debug.Log($"CACHED RENDER: {Path.GetFileName(path)} {bmp.PixelWidth}x{bmp.PixelHeight}");
+    }
+
+    private void OnRememberPreviewsClick(object sender, RoutedEventArgs e)
+    {
+        _renderedCache.Enabled = MnuRememberPreviews.IsChecked;
+        if (!_renderedCache.Enabled) { _lastRendered = null; _renderedCache.Clear(disk: false); }
+        SettingsStore.Save(SettingsStore.Load() with { RememberPreviews = _renderedCache.Enabled });
+        SetStatus(_renderedCache.Enabled ? "Rendered previews are remembered" : "Rendered previews are not remembered", error: false);
+    }
+
+    private void OnClearPreviewCacheClick(object sender, RoutedEventArgs e)
+    {
+        _lastRendered = null;
+        _renderedCache.Clear(disk: true);
+        SetStatus("Preview cache cleared", error: false);
     }
 
     private void SetDisplayed(BitmapSource src, Size box)
@@ -860,6 +1005,44 @@ public partial class MainWindow : Window
         SetStatus("Histogram stretch transferred to sliders", error: false);
         ReapplyAdjustments();
         ScheduleHistCommit();
+    }
+
+    /// <summary>
+    /// Live render while a control moves: renders at once when idle; while a render runs, only marks the preview
+    /// stale, and the finished render starts the next one with the newest values (intermediate values are skipped).
+    /// </summary>
+    private void RequestRender()
+    {
+        // Several controls changed by one input (synced sliders, presets) give one render.
+        if (_renderQueued) return;
+        _renderQueued = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+        {
+            _renderQueued = false;
+            RequestRenderNow();
+        });
+    }
+
+    private void RequestRenderNow()
+    {
+        if (IsGeoInteracting) return;
+        if (_renderBusy)
+        {
+            _renderDirty = true;
+            return;
+        }
+        _renderDirty = false;
+        ReapplyAdjustments();
+    }
+
+    private void OnRenderFinished(int seq)
+    {
+        if (seq != _renderSeq) return;
+        _renderBusy = false;
+        if (!_renderDirty) return;
+        _renderDirty = false;
+        if (IsGeoInteracting) return;
+        ReapplyAdjustments();
     }
 
     private void ScheduleApplyWithThrottle()
@@ -1573,6 +1756,28 @@ public partial class MainWindow : Window
         menu.IsOpen = true;
     }
 
+    private void OnPreviewQualityClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: string q }) return;
+        _previewQuality = PreviewQuality.Normalize(q);
+        UpdatePreviewQualityMenu();
+        SettingsStore.Save(SettingsStore.Load() with { PreviewQuality = _previewQuality });
+        ReapplyAdjustments();
+        SetStatus(_previewQuality switch
+        {
+            PreviewQuality.Full => "Preview quality: full resolution",
+            PreviewQuality.Sharp => "Preview quality: sharp (2× window size)",
+            _ => "Preview quality: fast (window size)"
+        }, error: false);
+    }
+
+    private void UpdatePreviewQualityMenu()
+    {
+        MnuPreviewWindow.IsChecked = _previewQuality == PreviewQuality.Window;
+        MnuPreviewSharp.IsChecked = _previewQuality == PreviewQuality.Sharp;
+        MnuPreviewFull.IsChecked = _previewQuality == PreviewQuality.Full;
+    }
+
     private void OnAboutClick(object sender, RoutedEventArgs e)
     {
         var about = new AboutWindow { Owner = this };
@@ -1625,11 +1830,7 @@ public partial class MainWindow : Window
         ShadowValue.Text = $"{Math.Round(ShadowSlider.Value)}";
         GammaValue.Text = GammaSlider.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
         UpdateSaveState();
-        if (_adjustTimer is not null)
-        {
-            _adjustTimer.Stop();
-            _adjustTimer.Start();
-        }
+        RequestRender();
         if (_saveTimer is not null)
         {
             _saveTimer.Stop();
@@ -1826,11 +2027,7 @@ public partial class MainWindow : Window
         HistHost.Visibility = RightPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Hidden;
         UpdatePanelLabels();
         UpdateSaveState();
-        if (_adjustTimer is not null)
-        {
-            _adjustTimer.Stop();
-            _adjustTimer.Start();
-        }
+        RequestRender();
         ScheduleHistCommit();
     }
 

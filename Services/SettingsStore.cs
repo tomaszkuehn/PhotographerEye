@@ -14,6 +14,10 @@ public sealed record ViewerSettings
     public Dictionary<string, string>? PluginDisabledReason { get; init; }
     /// <summary>Adjustments panel: expanded (true) / collapsed (false) plugin sections chosen by the user (key = plugin id).</summary>
     public Dictionary<string, bool>? PluginSectionExpanded { get; init; }
+    /// <summary>Live RAW preview resolution: "window", "sharp" (2x window) or "full" (see <see cref="PreviewQuality"/>).</summary>
+    public string? PreviewQuality { get; init; }
+    /// <summary>Remember the last rendered preview of each photo and show it at once when the photo is opened (null = on).</summary>
+    public bool? RememberPreviews { get; init; }
 }
 
 public static class SettingsStore
