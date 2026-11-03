@@ -31,6 +31,8 @@ public partial class MainWindow : Window
     private readonly ConcurrentDictionary<string, EyeState> _session = new(StringComparer.OrdinalIgnoreCase);
     private List<EyeState> _hist = new();
     private int _histPos = -1;
+    /// <summary>What the newest history step changed; the next edit of the same thing replaces that step.</summary>
+    private string? _histLastKey;
     private bool _histSuppress;
     private DispatcherTimer? _histCommitTimer;
     private const int HistMax = 10;
@@ -241,6 +243,7 @@ public partial class MainWindow : Window
         _monoSeed = MonoSeed(path);
         _hist = new List<EyeState>();
         _histPos = -1;
+        _histLastKey = null;
         _histPending = true;
         _histPendingSt = null;
         _eyeBaseEv = double.NaN;
@@ -720,10 +723,9 @@ public partial class MainWindow : Window
             UpdateUndoButtons();
             return;
         }
-        if (_histPos < _hist.Count - 1) _hist.RemoveRange(_histPos + 1, _hist.Count - 1 - _histPos);
-        _hist.Add(cur);
-        if (_hist.Count > HistMax) _hist.RemoveAt(0);
-        _histPos = _hist.Count - 1;
+        // Consecutive edits of the same control keep only the last value as one step.
+        _histLastKey = HistoryCoalesce.Commit(_hist, ref _histPos, cur, _histLastKey, HistMax, HistEqual);
+        Debug.Log($"HIST: stored count={_hist.Count} pos={_histPos} key={_histLastKey}");
         SyncSessionHist();
         UpdateUndoButtons();
     }
@@ -774,6 +776,7 @@ public partial class MainWindow : Window
             _hist = new List<EyeState> { st with { History = null, HistoryPos = null } };
             _histPos = 0;
         }
+        _histLastKey = null;
         Debug.Log($"HIST: init count={_hist.Count} pos={_histPos} exp={_hist[_histPos].Exposure:0.###} eye={st.History is { Count: > 0 }}");
         UpdateUndoButtons();
     }
@@ -783,6 +786,7 @@ public partial class MainWindow : Window
         CommitHistNow();
         if (_currentPath is null || _histPos <= 0) { SetStatus("Nothing to undo", error: false); return; }
         _histPos--;
+        _histLastKey = null;
         var st = _hist[_histPos];
         Debug.Log($"HIST: undo -> pos={_histPos} exp={st.Exposure:0.###} sh={st.ShadowLift:0.#} knots={st.StretchEv?.Length ?? 0}");
         ApplyEyeStateSuppressed(st);
@@ -795,6 +799,7 @@ public partial class MainWindow : Window
     {
         if (_currentPath is null || _histPos >= _hist.Count - 1) { SetStatus("Nothing to redo", error: false); return; }
         _histPos++;
+        _histLastKey = null;
         var st = _hist[_histPos];
         Debug.Log($"HIST: redo -> pos={_histPos} exp={st.Exposure:0.###}");
         ApplyEyeStateSuppressed(st);

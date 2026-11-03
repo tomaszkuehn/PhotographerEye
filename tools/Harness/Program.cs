@@ -46,6 +46,12 @@ internal static partial class Program
             Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
             return;
         }
+        if (args.Length > 0 && args[0] == "--history")
+        {
+            TestHistoryCoalesce();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--curves")
         {
             TestChannelCurves();
@@ -241,6 +247,7 @@ internal static partial class Program
         TestColorBalance();
         TestChannelCurves();
         TestShadowColor();
+        TestHistoryCoalesce();
         TestAdjustMask();
         TestPhotoMeta();
         TestRawPreview();
