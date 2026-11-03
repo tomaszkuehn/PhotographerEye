@@ -70,10 +70,12 @@ PhotographerEye loads .NET plugins that target `netstandard2.0` and reference `I
   - commands (`AddCommand`)
   - presets (`AddPreset`)
   - list panels (`AddListPanel`): a section in the Adjustments panel with a selectable list (mouse, arrow keys, Home/End); the plugin supplies `Items`, `Selected` and `Select`, and calls `IListPanel.Refresh()` when its data change
+  - settings (`AddSetting`, `SettingDescriptor`): a plugin-wide choice, not stored per photo, shown under Settings > "Plugin settings". The host keeps the choice in `settings.json` in the plugin's data folder. `IPluginSetting.Value` holds the stored choice as soon as `AddSetting` returns. `Changed` runs on the UI thread when the user picks a different choice, and may change a filter's `Stage`; the host then clears its stage caches, rebuilds the plugin panels and re-renders. A setting change is not an undo step.
 - `host.History` (`IEditHistory`) exposes the undo steps of the current photo (`Steps` with labels, `Position`), `GoTo(index)` (like undo/redo to that step; the next edit drops the later steps) and a `Changed` event raised on the UI thread after each committed step, undo/redo and photo switch.
 - `host.Events` exposes `ImageOpened`, `BeforeSave` (which can cancel the save), `AfterSave` and `AfterExport`. `host.DataDirectory` is a writable folder for each plugin. `host.Imaging` provides blur, resize and JPEG/PNG encoding, and uses the GPU when one is available (`host.GpuAvailable`).
 - **Filters** receive a `PluginImage` with float RGB planes in 0..1, the `FilterParams`, and a `RenderContext`. The context carries the stage, color space, preview flag, preview scale, full-resolution size, `ImageMeta`, cancellation token and progress callback.
 - **Stages** decide where a filter runs:
+  - `Base`: linear light, before everything else, including the manual exposure and white balance. Its result does not depend on them; they are applied on top of it. For a RAW photo it runs after the default brightness and before the camera tone curve. It is cached separately, so moving the exposure slider does not run it again.
   - `SceneLinear`: linear light, before the core adjustments.
   - `Display`: sRGB, after the core adjustments.
   - `Output`: after crop and rotate (for example a vignette).
@@ -125,7 +127,13 @@ The v2 sample plugins are separate projects, one plugin each: `eyePlugins/negati
 | `sample.sky` | Sky mask provider |
 | `sample.eventlog` | Logs host events |
 
-Other bundled plugins: `eyePlugins/auto` (auto enhance), `eyePlugins/colorbalance`, `eyePlugins/heal` (spot healing, repeat group) and `eyePlugins/history` (`photographereye.history`, edit history list panel; `TestHistoryPlugin`, harness `--histplugin`).
+Other bundled plugins: `eyePlugins/auto` (auto enhance, Ctrl+Shift+A). Its mode is chosen under Settings > Plugin settings > "Auto enhance mode":
+- **Measure once** (the default): Auto runs after develop, but measures the photo only once, the first time it renders with Auto on. The measurement is a small copy of the photo, kept in the plugin data folder (`baseline\`), so preview, export and later sessions agree. Later manual corrections then stay visible instead of being normalised away. The command "Auto enhance: measure photo again" takes a new measurement of the photo as it looks now.
+- **Base**: Auto runs first (`FilterStage.Base`) on the photo before the manual exposure and white balance, and the manual corrections act on its result.
+
+Harness tests: `TestAutoModes` (part of `--auto`). `--automodes <raw dir> [out dir]` compares the two modes on RAW files.
+
+Further bundled plugins: `eyePlugins/colorbalance`, `eyePlugins/heal` (spot healing, repeat group) and `eyePlugins/history` (`photographereye.history`, edit history list panel; `TestHistoryPlugin`, harness `--histplugin`).
 
 - **Build**: `dotnet build eyePlugins\bwred\ImgViewer.Plugins.BwRed.csproj -c Release` (and so on for each folder; each build also packs a `.pepkg`). Building the app builds all bundled plugins and copies each one to its own `plugins\<folder>\` (`manifest.json` + DLL) in the output and publish folders (list: `BundledPlugin` items in `ImgViewer.csproj`). The installers ship those folders.
 - **Harness coverage**: `TestPluginSamples` in `tools/Harness/PluginTests.cs` tests the following, using an isolated app-data dir (`PHOTOGRAPHEREYE_APPDATA`):

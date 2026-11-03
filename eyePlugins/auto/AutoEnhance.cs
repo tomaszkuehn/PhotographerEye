@@ -11,12 +11,23 @@ namespace ImgViewer.Plugins.AutoEnhance;
 /// "Auto" toolbar toggle: automatic noise reduction (strength from the noise measured in the photo),
 /// histogram balance (levels + clipped partial equalization), contrast towards a target spread and
 /// horizon straightening (Hough on long near-horizontal / near-vertical edges, rotation zoomed to fill the frame).
-/// Strengths are adjustable in the Adjustments panel.
+/// Strengths are adjustable in the Adjustments panel. Setting "mode" (Settings > Plugin settings):
+/// <list type="bullet">
+/// <item>"once" (default): runs after develop, but measures the photo only once (first render with Auto on, kept
+/// on disk), so later manual corrections are not undone by a new measurement;</item>
+/// <item>"base": runs first, on the photo before the manual exposure / white balance (FilterStage.Base); the manual
+/// corrections act on its result.</item>
+/// </list>
 /// </summary>
 public sealed class AutoEnhancePlugin : IEyePlugin
 {
     public const string FilterId = "auto";
+    public const string ModeOnce = "once";
+    public const string ModeBase = "base";
     private IPluginHost _host;
+    private FilterDescriptor _filter;
+
+    public static FilterStage StageFor(string mode) => mode == ModeBase ? FilterStage.Base : FilterStage.Display;
 
     public PluginManifest Manifest { get; } = new PluginManifest
     {
@@ -30,13 +41,29 @@ public sealed class AutoEnhancePlugin : IEyePlugin
     public void Initialize(IPluginHost host)
     {
         _host = host;
-        host.AddFilter(new FilterDescriptor
+        try { AutoEnhance.BaselineDir = System.IO.Path.Combine(host.DataDirectory, "baseline"); }
+        catch (Exception ex) { host.Log("baseline folder unavailable: " + ex.Message); }
+        var mode = host.AddSetting(new SettingDescriptor
+        {
+            Id = "mode",
+            Label = "Auto enhance mode",
+            Description = "Measure once: Auto runs after the manual corrections but measures the photo only once, so your edits are not undone.\n" +
+                          "Base: Auto runs first, on the photo before the manual exposure and white balance; the manual corrections act on its result.",
+            Choices = new[]
+            {
+                new ParamChoice(ModeOnce, "Measure once, after the manual corrections"),
+                new ParamChoice(ModeBase, "Base, before the manual corrections")
+            },
+            DefaultId = ModeOnce,
+            Changed = v => { if (_filter != null) _filter.Stage = StageFor(v); }
+        });
+        host.AddFilter(_filter = new FilterDescriptor
         {
             Id = FilterId,
             Label = "Auto",
             Description = "Automatic noise reduction, white balance, histogram balance, contrast, color and horizon straightening (Ctrl+Shift+A)",
             Group = "Auto",
-            Stage = FilterStage.Display,
+            Stage = StageFor(mode.Value),
             Placement = FilterPlacement.Toolbar,
             Order = -100,
             SupportsMask = false,
@@ -59,6 +86,22 @@ public sealed class AutoEnhancePlugin : IEyePlugin
                 bool on = !c.IsActive(FilterId);
                 c.SetActive(FilterId, on);
                 c.SetStatus(on ? "Auto enhance on" : "Auto enhance off");
+            }
+        });
+        host.AddCommand(new CommandDescriptor
+        {
+            Id = "remeasure",
+            Label = "Auto enhance: measure photo again",
+            Placement = CommandPlacement.Menu,
+            Execute = c =>
+            {
+                if (string.IsNullOrEmpty(c.CurrentPath)) { c.SetStatus("No photo open"); return; }
+                AutoEnhance.ForgetBaseline(c.CurrentPath);
+                // Marks the photo for a re-render; the state itself does not change.
+                c.SetActive(FilterId, c.IsActive(FilterId));
+                c.SetStatus(_filter?.Stage == FilterStage.Base
+                    ? "Auto enhance (base mode) measures the photo before the manual corrections on every render"
+                    : "Auto enhance will measure the photo as it looks now");
             }
         });
         host.AddPreset(new PresetDescriptor
@@ -131,6 +174,158 @@ public static class AutoEnhance
     /// <summary>Forgets cached horizon angles (all images).</summary>
     public static void ClearTiltCache() => TiltCache.Clear();
 
+    // ---------------------------------------------------------------
+    //  Measure once: small copy of the photo as Auto first saw it
+    // ---------------------------------------------------------------
+
+    /// <summary>Long side of the stored measurement copy.</summary>
+    public const int BaselineSize = 256;
+
+    /// <summary>Folder for measurement copies (null: memory only, e.g. tests).</summary>
+    public static string BaselineDir { get; set; }
+
+    public sealed class Baseline
+    {
+        public string Key;
+        public int W, H;
+        public float[] R, G, B;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Baseline> Baselines = new();
+
+    /// <summary>Forgets the measurement of one photo (memory and disk) or of all photos (null).</summary>
+    public static void ForgetBaseline(string path)
+    {
+        if (path is null) { Baselines.Clear(); return; }
+        string prefix = Norm(path) + "|";
+        foreach (var k in Baselines.Keys)
+            if (k.StartsWith(prefix, StringComparison.Ordinal)) Baselines.TryRemove(k, out _);
+        var f = BaselineFile(path);
+        try { if (f != null && System.IO.File.Exists(f)) System.IO.File.Delete(f); } catch { }
+    }
+
+    /// <summary>Forgets the in-memory measurements only (stored files are read again on the next render).</summary>
+    public static void ClearBaselineMemory() => Baselines.Clear();
+
+    /// <summary>True when a measurement of <paramref name="path"/> is kept in memory.</summary>
+    public static bool HasBaseline(string path)
+    {
+        string prefix = Norm(path) + "|";
+        foreach (var k in Baselines.Keys)
+            if (k.StartsWith(prefix, StringComparison.Ordinal)) return true;
+        return false;
+    }
+
+    private static string Norm(string path)
+    {
+        try { return System.IO.Path.GetFullPath(path).ToLowerInvariant(); } catch { return path.ToLowerInvariant(); }
+    }
+
+    private static string BaselineKey(RenderContext ctx)
+    {
+        string path = ctx?.Meta?.SourcePath;
+        if (string.IsNullOrEmpty(path)) return null;
+        long stamp = 0;
+        try { stamp = System.IO.File.GetLastWriteTimeUtc(path).Ticks; } catch { }
+        return FormattableString.Invariant($"{Norm(path)}|{stamp}|{ctx.FullWidth}x{ctx.FullHeight}");
+    }
+
+    private static string BaselineFile(string path)
+    {
+        var dir = BaselineDir;
+        if (string.IsNullOrEmpty(dir)) return null;
+        using (var sha = System.Security.Cryptography.SHA1.Create())
+        {
+            var h = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(Norm(path)));
+            return System.IO.Path.Combine(dir, BitConverter.ToString(h).Replace("-", "").ToLowerInvariant() + ".bin");
+        }
+    }
+
+    /// <summary>The stored measurement copy for this photo, or a new one taken from <paramref name="img"/>.</summary>
+    private static Baseline GetBaseline(string key, PluginImage img)
+    {
+        if (Baselines.TryGetValue(key, out var b)) return b;
+        string path = key.Substring(0, key.IndexOf('|'));
+        b = LoadBaseline(path, key);
+        if (b == null)
+        {
+            b = new Baseline { Key = key };
+            b.R = Downscale(img.R, img.Width, img.Height, BaselineSize, out b.W, out b.H);
+            b.G = Downscale(img.G, img.Width, img.Height, BaselineSize, out _, out _);
+            b.B = Downscale(img.B, img.Width, img.Height, BaselineSize, out _, out _);
+            b = Baselines.GetOrAdd(key, b);
+            SaveBaseline(path, b);
+        }
+        else b = Baselines.GetOrAdd(key, b);
+        if (Baselines.Count > 64)
+            foreach (var k in Baselines.Keys)
+                if (k != key) { Baselines.TryRemove(k, out _); if (Baselines.Count <= 48) break; }
+        return b;
+    }
+
+    private const int BaselineMagic = 0x31424145; // "EAB1"
+
+    private static Baseline LoadBaseline(string path, string key)
+    {
+        var f = BaselineFile(path);
+        if (f == null || !System.IO.File.Exists(f)) return null;
+        try
+        {
+            using (var br = new System.IO.BinaryReader(System.IO.File.OpenRead(f)))
+            {
+                if (br.ReadInt32() != BaselineMagic || br.ReadString() != key) return null;
+                var b = new Baseline { Key = key, W = br.ReadInt32(), H = br.ReadInt32() };
+                int n = b.W * b.H;
+                if (b.W <= 0 || b.H <= 0 || n > BaselineSize * BaselineSize) return null;
+                float[] Plane()
+                {
+                    var p = new float[n];
+                    for (int i = 0; i < n; i++) p[i] = br.ReadUInt16() / 65535f;
+                    return p;
+                }
+                b.R = Plane(); b.G = Plane(); b.B = Plane();
+                return b;
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void SaveBaseline(string path, Baseline b)
+    {
+        var f = BaselineFile(path);
+        if (f == null) return;
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(f));
+            var tmp = f + ".tmp";
+            using (var bw = new System.IO.BinaryWriter(System.IO.File.Create(tmp)))
+            {
+                bw.Write(BaselineMagic);
+                bw.Write(b.Key);
+                bw.Write(b.W);
+                bw.Write(b.H);
+                foreach (var p in new[] { b.R, b.G, b.B })
+                    foreach (var v in p) bw.Write((ushort)Math.Round(Clamp01(v) * 65535f));
+            }
+            if (System.IO.File.Exists(f)) System.IO.File.Delete(f);
+            System.IO.File.Move(tmp, f);
+            // Keep the folder small: oldest copies go first.
+            var files = new System.IO.DirectoryInfo(System.IO.Path.GetDirectoryName(f)).GetFiles("*.bin");
+            if (files.Length > 400)
+            {
+                Array.Sort(files, (x, y) => x.LastWriteTimeUtc.CompareTo(y.LastWriteTimeUtc));
+                for (int i = 0; i < files.Length - 300; i++) { try { files[i].Delete(); } catch { } }
+            }
+        }
+        catch
+        {
+            // Memory copy still works for this session.
+        }
+    }
+
     private static string TiltKey(RenderContext ctx, double maxAngle)
     {
         string path = ctx?.Meta?.SourcePath;
@@ -159,6 +354,15 @@ public static class AutoEnhance
         var t0 = new float[n];
         var t1 = new float[n];
 
+        // After develop the input already holds the manual corrections: measure the photo once and keep it, so later
+        // corrections are not measured (and undone) again. The Base stage sees the photo before them: measure live.
+        Baseline bl = null;
+        if (ctx != null && ctx.Stage == FilterStage.Display && (balance > 0 || contrast > 0 || wb > 0 || color > 0))
+        {
+            string bkey = BaselineKey(ctx);
+            if (bkey != null) bl = GetBaseline(bkey, img);
+        }
+
         if (denoise > 0)
         {
             var t2 = new float[n];
@@ -168,7 +372,14 @@ public static class AutoEnhance
         ct.ThrowIfCancellationRequested();
 
         // Analysis on a small copy so the preview and the full-size export decide the same.
-        if (wb > 0 || color > 0)
+        if (bl != null)
+        {
+            if (wb > 0 && EstimateWhiteBalance(bl.R, bl.G, bl.B, wb, res))
+                ApplyGains(img, res.GainR, res.GainG, res.GainB);
+            if (color > 0)
+                res.Vibrance = VibranceStrength(bl.R, bl.G, bl.B, res, color);
+        }
+        else if (wb > 0 || color > 0)
         {
             var aR = Downscale(img.R, w, h, ColorAnalysisSize, out _, out _);
             var aG = Downscale(img.G, w, h, ColorAnalysisSize, out _, out _);
@@ -207,7 +418,7 @@ public static class AutoEnhance
 
         if (balance > 0 || contrast > 0)
         {
-            var lut = BuildToneLut(aL, balance, contrast, res);
+            var lut = BuildToneLut(bl != null ? BaselineLuma(bl, res) : aL, balance, contrast, res);
             ApplyLumaLut(img, t0, lut);
         }
         ct.ThrowIfCancellationRequested();
@@ -1020,6 +1231,17 @@ public static class AutoEnhance
     // =================================================================
     //  Helpers
     // =================================================================
+
+    /// <summary>Luma of the measurement copy after the white balance gains of <paramref name="res"/>.</summary>
+    private static float[] BaselineLuma(Baseline b, AutoResult res)
+    {
+        var im = new PluginImage(b.W, b.H, (float[])b.R.Clone(), (float[])b.G.Clone(), (float[])b.B.Clone());
+        if (Math.Abs(res.GainR - 1) > 1e-6 || Math.Abs(res.GainG - 1) > 1e-6 || Math.Abs(res.GainB - 1) > 1e-6)
+            ApplyGains(im, res.GainR, res.GainG, res.GainB);
+        var l = new float[im.Length];
+        Luma(im, l);
+        return l;
+    }
 
     private static void Luma(PluginImage img, float[] dst)
     {

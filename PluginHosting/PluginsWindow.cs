@@ -175,6 +175,7 @@ public sealed class PluginsWindow : Window
                 if (plug.MetaProviders.Count > 0) parts.Add("metadata");
                 if (plug.Presets.Count > 0) parts.Add($"{plug.Presets.Count} preset(s)");
                 if (plug.ListPanels.Count > 0) parts.Add($"{plug.ListPanels.Count} panel(s)");
+                if (plug.Settings.Count > 0) parts.Add($"{plug.Settings.Count} setting(s)");
                 if (parts.Count > 0)
                     info.Children.Add(new TextBlock { Text = string.Join("  \u00B7  ", parts), Foreground = muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
                 var api = plug.IsV1 ? "API v1 (legacy adapter)" : $"API v{plug.Api}";

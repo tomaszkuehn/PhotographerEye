@@ -638,7 +638,7 @@ public partial class MainWindow : Window
                 }
 
                 var sw8 = System.Diagnostics.Stopwatch.StartNew();
-                var src8 = PluginPipeline.ApplyBitmap(raw, FilterStage.SceneLinear, job, fullW, fullH) ?? raw;
+                var src8 = PluginPipeline.ApplyBitmapLinearStages(raw, job, fullW, fullH) ?? raw;
                 var processed = Correct8(src8, extra, s, g, manual, mono, seed, job, fullW, fullH, out var hist8, out bool blended8);
                 if (processed is null || ct.IsCancellationRequested) return;
                 BitmapSource processedOut = processed;
@@ -705,7 +705,8 @@ public partial class MainWindow : Window
     /// <summary>Context of the cached-render signature: this build of the app and the loaded plugins.</summary>
     private string RenderedContext() =>
         typeof(MainWindow).Assembly.ManifestModule.ModuleVersionId + "|" +
-        string.Join(";", _pluginReg.Plugins.Select(p => p.Id + "@" + p.Version).OrderBy(x => x, StringComparer.Ordinal));
+        string.Join(";", _pluginReg.Plugins.Select(p => p.Id + "@" + p.Version).OrderBy(x => x, StringComparer.Ordinal)) + "|" +
+        string.Join(";", _pluginReg.Settings.Select(s => s.FullId + "=" + s.D.Value).OrderBy(x => x, StringComparer.Ordinal));
 
     /// <summary>Latest finished render of the current photo (stored in the cache when the photo is left).</summary>
     private void RememberRendered(string path, EyeState? st, BitmapSource bmp, Size box)

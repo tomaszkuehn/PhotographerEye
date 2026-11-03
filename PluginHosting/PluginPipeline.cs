@@ -147,12 +147,23 @@ public static class PluginPipeline
     //  Stage helpers used by the viewer and save paths
     // ------------------------------------------------------------------
 
+    /// <summary>Stages whose filters see linear light.</summary>
+    public static bool IsLinear(FilterStage stage) => stage is FilterStage.SceneLinear or FilterStage.Base;
+
+    /// <summary>Base then SceneLinear on an 8-bit source (photos whose exposure is applied later, in 8 bits). Null when neither ran.</summary>
+    public static BitmapSource? ApplyBitmapLinearStages(BitmapSource src, PluginRenderJob job, int fullW, int fullH)
+    {
+        var b = ApplyBitmap(src, FilterStage.Base, job, fullW, fullH);
+        var s = ApplyBitmap(b ?? src, FilterStage.SceneLinear, job, fullW, fullH);
+        return s ?? b;
+    }
+
     /// <summary>Runs a stage on a 16-bit image. Returns null when no filter of the stage is active.</summary>
     public static Raw16Image? ApplyRaw16(Raw16Image src, FilterStage stage, PluginRenderJob job, int fullW, int fullH)
     {
         if (!job.Has(stage)) return null;
         var img = FromRaw16(src);
-        var space = stage == FilterStage.SceneLinear ? PluginColorSpace.LinearSrgb : PluginColorSpace.Srgb;
+        var space = IsLinear(stage) ? PluginColorSpace.LinearSrgb : PluginColorSpace.Srgb;
         return Run(img, stage, space, job, fullW, fullH) > 0 ? ToRaw16(img) : null;
     }
 
@@ -161,7 +172,7 @@ public static class PluginPipeline
     {
         if (!job.Has(stage)) return null;
         var img = FromBitmap(src, out var bgra, out var stride);
-        bool linear = stage == FilterStage.SceneLinear;
+        bool linear = IsLinear(stage);
         if (linear) ToLinear(img);
         int ran = Run(img, stage, linear ? PluginColorSpace.LinearSrgb : PluginColorSpace.Srgb, job, fullW, fullH);
         if (ran == 0) return null;

@@ -158,6 +158,74 @@ internal sealed class PluginHostImpl : IPluginHost
         _p.ListPanels.Add(Wrap(id, handle, _p.ListPanels.Count));
         return handle;
     }
+
+    public IPluginSetting AddSetting(SettingDescriptor setting)
+    {
+        var id = CheckId(setting?.Id, "setting", _p.Settings.Select(f => f.LocalId));
+        var choices = (setting!.Choices ?? Array.Empty<ParamChoice>()).Where(c => c is not null && !string.IsNullOrWhiteSpace(c.Id)).ToList();
+        if (choices.Count == 0) throw new ArgumentException($"setting '{id}' has no choices");
+        if (choices.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count() != choices.Count)
+            throw new ArgumentException($"setting '{id}': duplicate choice id");
+        setting.Id = id;
+        setting.Choices = choices;
+        if (string.IsNullOrWhiteSpace(setting.Label)) setting.Label = id;
+        if (setting.DefaultId is null || !choices.Any(c => c.Id == setting.DefaultId)) setting.DefaultId = choices[0].Id;
+        var safe = string.Concat(_p.Id.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+        var handle = new PluginSettingHandle(setting, Path.Combine(PluginManager.PluginDataRoot, safe, PluginSettingHandle.FileName));
+        _p.Settings.Add(Wrap(id, handle, _p.Settings.Count));
+        return handle;
+    }
+}
+
+/// <summary>Registered plugin setting; the choice is kept in settings.json of the plugin's data directory.</summary>
+public sealed class PluginSettingHandle : IPluginSetting
+{
+    public const string FileName = "settings.json";
+    public SettingDescriptor D { get; }
+    public string FilePath { get; }
+    public string Value { get; private set; }
+
+    public PluginSettingHandle(SettingDescriptor d, string filePath)
+    {
+        D = d;
+        FilePath = filePath;
+        var stored = Read(filePath).TryGetValue(d.Id, out var v) ? v : null;
+        Value = stored is not null && d.Choices.Any(c => c.Id == stored) ? stored : d.DefaultId ?? d.Choices[0].Id;
+    }
+
+    private static Dictionary<string, string> Read(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path))
+                    ?? new Dictionary<string, string>();
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"PLUGINS: settings read failed {path}: {ex.Message}");
+        }
+        return new Dictionary<string, string>();
+    }
+
+    /// <summary>Stores <paramref name="id"/> (false when unknown or unchanged). The caller raises <see cref="SettingDescriptor.Changed"/>.</summary>
+    public bool Set(string id)
+    {
+        if (id == Value || !D.Choices.Any(c => c.Id == id)) return false;
+        Value = id;
+        try
+        {
+            var all = Read(FilePath);
+            all[D.Id] = id;
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+            File.WriteAllText(FilePath, System.Text.Json.JsonSerializer.Serialize(all, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"PLUGINS: settings write failed {FilePath}: {ex.Message}");
+        }
+        return true;
+    }
 }
 
 /// <summary>Registered list panel; the adjustments panel sets <see cref="OnRefresh"/> while it shows the list.</summary>

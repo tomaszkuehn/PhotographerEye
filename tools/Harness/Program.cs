@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -105,6 +105,11 @@ internal static partial class Program
         {
             TestColorBalance();
             Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
+        if (args.Length > 1 && args[0] == "--automodes")
+        {
+            AutoModeProbe(args[1], args.Length > 2 ? args[2] : null);
             return;
         }
         if (args.Length > 0 && args[0] == "--auto")

@@ -34,7 +34,7 @@ internal static partial class Program
         Check(entry.Error is null && entry.Plugins.Count == 1 && entry.Plugins[0].Error is null, $"auto enhance loads ({entry.Error})");
         var reg = new PluginRegistry(entry.Plugins);
         var f = reg.FindFilter("photographereye.autoenhance:auto");
-        Check(f is not null && f.D.Placement == FilterPlacement.Toolbar && f.D.Stage == FilterStage.Display, "auto filter: toolbar, display stage");
+        Check(f is not null && f.D.Placement == FilterPlacement.Toolbar && (f.D.Stage == FilterStage.Display || f.D.Stage == FilterStage.Base), "auto filter: toolbar, display/base stage");
         Check(reg.Commands.Any(c => c.FullId == "photographereye.autoenhance:toggle" && c.D.Shortcut == "Ctrl+Shift+A"), "auto command Ctrl+Shift+A");
         if (f is null) return;
 
@@ -329,6 +329,133 @@ internal static partial class Program
             double after = o is null ? double.NaN : Tilt(o, w, h);
             Check(o is not null && Math.Abs(after) < 0.3 && sw.Elapsed.TotalSeconds < 20,
                 $"auto enhance 24 MP full render: {sw.Elapsed.TotalSeconds:0.0} s, residual tilt {after:0.00}°");
+        }
+        TestAutoModes(reg, f, Run);
+    }
+
+    private delegate Raw16Image? AutoRun(Raw16Image src, int w, int h, double balance, double contrast, double denoise, bool straighten, bool preview = false, int fullW = 0, int fullH = 0, double wb = 0, double color = 0, string? sourcePath = null);
+
+    /// <summary>Auto modes: "once" (Display stage, measured once per photo) and "base" (Base stage, before the manual corrections).</summary>
+    private static void TestAutoModes(PluginRegistry reg, Registered<FilterDescriptor> f, AutoRun run)
+    {
+        var autoType = AppDomain.CurrentDomain.GetAssemblies()
+            .Select(a => a.GetType("ImgViewer.Plugins.AutoEnhance.AutoEnhance", false)).FirstOrDefault(t => t is not null);
+        Check(autoType is not null, "auto modes: AutoEnhance type found");
+        if (autoType is null) return;
+        var dirProp = autoType.GetProperty("BaselineDir")!;
+        var forget = autoType.GetMethod("ForgetBaseline")!;
+        var has = autoType.GetMethod("HasBaseline")!;
+        var oldDir = dirProp.GetValue(null);
+        var tmp = Path.Combine(Path.GetTempPath(), "eye_auto_modes_" + Environment.ProcessId);
+        Directory.CreateDirectory(tmp);
+        dirProp.SetValue(null, Path.Combine(tmp, "baseline"));
+        var oldStage = f.D.Stage;
+        try
+        {
+            // ---------- setting ----------
+            var mode = reg.Settings.FirstOrDefault(s => s.FullId == "photographereye.autoenhance:mode");
+            Check(mode is not null && mode.D.D.DefaultId == "once" && mode.D.D.Choices.Select(c => c.Id).SequenceEqual(new[] { "once", "base" }),
+                "auto modes: setting mode once/base, default once");
+            Check(f.D.Stage == (mode?.D.Value == "base" ? FilterStage.Base : FilterStage.Display), "auto modes: stage follows the stored setting");
+            Check(reg.Commands.Any(c => c.FullId == "photographereye.autoenhance:remeasure"), "auto modes: remeasure command");
+            if (mode is not null)
+            {
+                mode.D.D.Changed("base");
+                Check(f.D.Stage == FilterStage.Base, "auto modes: Changed(base) moves the filter to the Base stage");
+                mode.D.D.Changed("once");
+                Check(f.D.Stage == FilterStage.Display, "auto modes: Changed(once) moves it back to Display");
+            }
+
+            // ---------- host setting persistence ----------
+            {
+                var file = Path.Combine(tmp, "settings.json");
+                var d = new SettingDescriptor { Id = "m", Choices = new[] { new ParamChoice("a", "A"), new ParamChoice("b", "B") }, DefaultId = "a" };
+                var h1 = new PluginSettingHandle(d, file);
+                bool unchanged = h1.Set("a"), unknown = h1.Set("zz"), changed = h1.Set("b");
+                var h2 = new PluginSettingHandle(d, file);
+                Check(h1.Value == "b" && !unchanged && !unknown && changed && h2.Value == "b", $"plugin setting persisted ({h2.Value})");
+            }
+
+            // Scene: dim, low-contrast, slightly warm gradient.
+            Raw16Image Scene(double gain)
+            {
+                int w = 400, h = 300;
+                var im = new Raw16Image(w, h);
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = y * w + x;
+                        double v = (0.25 + 0.25 * x / (double)w + 0.05 * Math.Sin(y * 0.07)) * gain;
+                        im.R[i] = (ushort)Math.Round(Math.Clamp(v * 1.08, 0, 1) * 65535);
+                        im.G[i] = (ushort)Math.Round(Math.Clamp(v, 0, 1) * 65535);
+                        im.B[i] = (ushort)Math.Round(Math.Clamp(v * 0.9, 0, 1) * 65535);
+                    }
+                return im;
+            }
+            static double Mean(Raw16Image im)
+            {
+                double s = 0;
+                for (int i = 0; i < im.R.Length; i++) s += 0.2126 * im.R[i] + 0.7152 * im.G[i] + 0.0722 * im.B[i];
+                return s / im.R.Length / 65535.0;
+            }
+
+            // ---------- once: a later manual darkening stays visible ----------
+            {
+                var photo = Path.Combine(tmp, "photo.jpg");
+                File.WriteAllText(photo, "x");
+                forget.Invoke(null, new object?[] { photo });
+                var a = run(Scene(1.0), 400, 300, 70, 50, 0, false, wb: 60, color: 30, sourcePath: photo);
+                bool kept = (bool)has.Invoke(null, new object[] { photo })!;
+                var b = run(Scene(0.6), 400, 300, 70, 50, 0, false, wb: 60, color: 30, sourcePath: photo);
+                var la = run(Scene(1.0), 400, 300, 70, 50, 0, false, wb: 60, color: 30);
+                var lb = run(Scene(0.6), 400, 300, 70, 50, 0, false, wb: 60, color: 30);
+                double ma = a is null ? double.NaN : Mean(a), mb = b is null ? double.NaN : Mean(b);
+                double mla = la is null ? double.NaN : Mean(la), mlb = lb is null ? double.NaN : Mean(lb);
+                Check(kept && Math.Abs(ma - mla) < 0.01, $"auto once: first render equals live analysis ({ma:0.000} vs {mla:0.000})");
+                Check(ma - mb > 0.08 && Math.Abs(mla - mlb) < ma - mb, $"auto once: manual darkening kept (once {ma:0.000}->{mb:0.000}, live {mla:0.000}->{mlb:0.000})");
+                var bdir = Path.Combine(tmp, "baseline");
+                var files = Directory.Exists(bdir) ? Directory.GetFiles(bdir, "*.bin") : Array.Empty<string>();
+                Check(files.Length == 1, $"auto once: measurement stored on disk ({files.Length})");
+                // Memory dropped (restart): the disk copy keeps the decision.
+                autoType.GetMethod("ClearBaselineMemory")?.Invoke(null, null);
+                var c = run(Scene(0.6), 400, 300, 70, 50, 0, false, wb: 60, color: 30, sourcePath: photo);
+                double dc = c is null || b is null ? double.NaN : MaxDiff(b, c);
+                Check(dc < 0.003, $"auto once: measurement read back from disk (diff {dc:0.0000})");
+                // Remeasure: forget memory and disk, next render measures the darker photo.
+                forget.Invoke(null, new object?[] { photo });
+                Check(files.Length == 1 && !File.Exists(files[0]), "auto once: forget removes the stored file");
+                var d = run(Scene(0.6), 400, 300, 70, 50, 0, false, wb: 60, color: 30, sourcePath: photo);
+                double md = d is null ? double.NaN : Mean(d);
+                Check(Math.Abs(md - mlb) < 0.01, $"auto once: after remeasure equals live analysis of the current photo ({md:0.000} vs {mlb:0.000})");
+                forget.Invoke(null, new object?[] { photo });
+            }
+
+            // ---------- base: runs before the manual exposure, result independent of it ----------
+            {
+                f.D.Stage = FilterStage.Base;
+                var st = new PluginEditState();
+                st.Active.Add(f.FullId);
+                foreach (var p in f.D.Params) st.SetValue(f, p, p.Id switch { "balance" => 70, "contrast" => 50, "wb" => 60, "color" => 30, _ => 0 });
+                var job = new PluginRenderJob { Registry = reg, State = st, Meta = new ImageMeta { Width = 400, Height = 300, SourcePath = "" }, Cancel = CancellationToken.None };
+                Check(job.Has(FilterStage.Base) && !job.Has(FilterStage.Display), "auto base: job has the Base stage only");
+                var src = Scene(1.0);
+                var r0 = ImgViewer.Services.StageCache.LinearUncached(src, 0, 0, 0, 0, job, 400, 300, CancellationToken.None);
+                var r1 = ImgViewer.Services.StageCache.LinearUncached(src, 0, -1, 0, 0, job, 400, 300, CancellationToken.None);
+                var dark = ImgViewer.Services.StageCache.LinearUncached(Scene(0.5), 0, 0, 0, 0, job, 400, 300, CancellationToken.None);
+                double m0 = Mean(r0), m1 = Mean(r1), mdk = Mean(dark);
+                Check(Math.Abs(m1 - m0 * 0.5) < 0.01, $"auto base: manual -1 EV halves the Auto result ({m0:0.000} -> {m1:0.000})");
+                Check(MaxDiff(r0, src) > 0.02 && mdk / m0 > 0.52, $"auto base: Auto changes the photo before the manual corrections (mean {Mean(src):0.000} -> {m0:0.000}, half-bright input -> {mdk:0.000})");
+                var cache = new ImgViewer.Services.StageCache();
+                var c1 = cache.Linear(src, 0, -1, 0, 0, job, 400, 300, CancellationToken.None);
+                cache.Linear(src, 0, -0.5, 0, 0, job, 400, 300, CancellationToken.None);
+                Check(MaxDiff(c1, r1) < 0.0005 && cache.BaseHits == 1, $"auto base: StageCache.Linear matches, Base reused when only exposure changes (hits {cache.BaseHits})");
+            }
+        }
+        finally
+        {
+            f.D.Stage = oldStage;
+            dirProp.SetValue(null, oldDir);
+            try { Directory.Delete(tmp, true); } catch { }
         }
     }
 

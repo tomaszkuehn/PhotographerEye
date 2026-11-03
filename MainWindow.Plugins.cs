@@ -204,18 +204,10 @@ public partial class MainWindow
         MonoMode mono, int seed, CameraToneCurve? curve, PluginRenderJob job, int fullW, int fullH, CancellationToken ct,
         out HistogramData? hist, out bool blended, StageCache? cache = null)
     {
-        Raw16Image rendered;
-        if (cache is not null)
-        {
-            // Live preview: gain and SceneLinear plugins reused while their inputs are unchanged.
-            rendered = cache.Gain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0, ct);
-            rendered = cache.SceneLinear(rendered, job, fullW, fullH);
-        }
-        else
-        {
-            rendered = LinearRender.ApplyGain(raw16, baseEv + (extra?.Exposure ?? 0.0), extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0, ct);
-            rendered = PluginPipeline.ApplyRaw16(rendered, FilterStage.SceneLinear, job, fullW, fullH) ?? rendered;
-        }
+        // Live preview: gain, Base and SceneLinear plugins reused while their inputs are unchanged.
+        Raw16Image rendered = cache is not null
+            ? cache.Linear(raw16, baseEv, extra?.Exposure ?? 0.0, extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0, job, fullW, fullH, ct)
+            : StageCache.LinearUncached(raw16, baseEv, extra?.Exposure ?? 0.0, extra?.Temperature ?? 0.0, extra?.Tint ?? 0.0, job, fullW, fullH, ct);
         var extra2 = StripExposureTemp(extra);
         var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: curve)
             ?? Adjust16.Apply(rendered, s, g, manual, out hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: curve);
@@ -226,8 +218,7 @@ public partial class MainWindow
         var neutralIn = rendered;
         if (Math.Abs(extra.Exposure) > 1e-9 || Math.Abs(extra.Temperature) > 1e-9 || Math.Abs(extra.Tint) > 1e-9)
         {
-            neutralIn = LinearRender.ApplyGain(raw16, baseEv, 0.0, 0.0, ct);
-            neutralIn = PluginPipeline.ApplyRaw16(neutralIn, FilterStage.SceneLinear, job, fullW, fullH) ?? neutralIn;
+            neutralIn = StageCache.LinearUncached(raw16, baseEv, 0.0, 0.0, 0.0, job, fullW, fullH, ct);
         }
         var neutral = Adjust16.TryApplyGpu(neutralIn, s, g, manual, out _, mono: mono, grainSeed: seed, extra: null, ct: ct, cameraTone: curve)
             ?? Adjust16.Apply(neutralIn, s, g, manual, out _, mono: mono, grainSeed: seed, extra: null, ct: ct, cameraTone: curve);
@@ -237,9 +228,9 @@ public partial class MainWindow
         return AdjustMask.Blend16(corrected, neutral, amask, job, fullW, fullH);
     }
 
-    /// <summary>The live preview may run on the GPU end to end: no SceneLinear/Display plugin and no Adjustments mask.</summary>
+    /// <summary>The live preview may run on the GPU end to end: no Base/SceneLinear/Display plugin and no Adjustments mask.</summary>
     private static bool GpuDisplayAllowed(PluginRenderJob job) =>
-        AdjustMask.For(job.State) is null && !job.Has(FilterStage.SceneLinear) && !job.Has(FilterStage.Display);
+        AdjustMask.For(job.State) is null && !job.Has(FilterStage.Base) && !job.Has(FilterStage.SceneLinear) && !job.Has(FilterStage.Display);
 
     /// <summary>8-bit counterpart of <see cref="Correct16"/>; <paramref name="src"/> already went through SceneLinear.</summary>
     private static BitmapSource? Correct8(BitmapSource src, PhotoAdjustments? extra, double s, double g, ManualStretchMap? manual,
@@ -272,7 +263,7 @@ public partial class MainWindow
         var info = ImageLoader.GetInfo(sn.Path);
         var full = ImageLoader.LoadScaled(sn.Path, info, info.Width, info.Height);
         int w = full.PixelWidth, h = full.PixelHeight;
-        var src = PluginPipeline.ApplyBitmap(full, FilterStage.SceneLinear, job, w, h) ?? full;
+        var src = PluginPipeline.ApplyBitmapLinearStages(full, job, w, h) ?? full;
         var processed = Correct8(src, sn.Extra, sn.S, sn.G, sn.Manual, sn.Mono, sn.Seed, job, w, h, out _, out _)
             ?? throw new InvalidOperationException("Failed to process image");
         BitmapSource outB = PluginPipeline.ApplyBitmap(processed, FilterStage.Display, job, w, h) ?? processed;
@@ -366,6 +357,7 @@ public partial class MainWindow
 
     private static string StageText(FilterStage s) => s switch
     {
+        FilterStage.Base => "first, before the manual corrections (linear)",
         FilterStage.SceneLinear => "before develop (linear)",
         FilterStage.Output => "after crop",
         _ => "after develop"
@@ -494,7 +486,7 @@ public partial class MainWindow
         var border = (Brush)FindResource("BorderBrushCol");
         _pluginSectionBadges.Clear();
         var ordered = new List<Registered<FilterDescriptor>>();
-        foreach (var stage in new[] { FilterStage.SceneLinear, FilterStage.Display, FilterStage.Output })
+        foreach (var stage in new[] { FilterStage.Base, FilterStage.SceneLinear, FilterStage.Display, FilterStage.Output })
             ordered.AddRange(_pluginState.Ordered(_pluginReg, stage)
                 .Where(f => f.D.Params.Count > 0 || f.D.Placement == FilterPlacement.Panel));
         if (ordered.Count == 0 && _pluginReg.ListPanels.Count == 0) return;
@@ -789,6 +781,7 @@ public partial class MainWindow
     {
         FilterStage.Output => "post-crop",
         FilterStage.SceneLinear => "linear",
+        FilterStage.Base => "base",
         _ => ""
     };
 
@@ -1770,7 +1763,7 @@ public partial class MainWindow
                     small = t;
                 }
                 var img = PluginPipeline.FromBitmap(small, out _, out _);
-                bool lin = stage == FilterStage.SceneLinear;
+                bool lin = PluginPipeline.IsLinear(stage);
                 if (lin) PluginPipeline.ToLinear(img);
                 var ctx = new RenderContext
                 {
@@ -2018,6 +2011,53 @@ public partial class MainWindow
             MnuCommands.Items.Add(it);
         }
         MnuCommands.Visibility = MnuCommands.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        if (MnuPluginSettings is null) return;
+        MnuPluginSettings.Items.Clear();
+        foreach (var st in _pluginReg.Settings)
+        {
+            var tip = string.IsNullOrWhiteSpace(st.D.D.Description) ? "Plugin " + st.PluginName : st.D.D.Description + "\nPlugin " + st.PluginName;
+            var group = new MenuItem { Header = st.D.D.Label, ToolTip = tip, IsEnabled = st.Owner is not { Faulted: true } };
+            AutomationProperties.SetAutomationId(group, "PluginSetting_" + st.FullId);
+            foreach (var c in st.D.D.Choices)
+            {
+                var it = new MenuItem { Header = c.Label, IsCheckable = true, IsChecked = st.D.Value == c.Id };
+                var (ss, id) = (st, c.Id);
+                it.Click += (_, _) => ChangePluginSetting(ss, id);
+                group.Items.Add(it);
+            }
+            MnuPluginSettings.Items.Add(group);
+        }
+        MnuPluginSettings.Visibility = MnuPluginSettings.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>Stores a plugin setting, tells the plugin, then rebuilds the panels and re-renders (stages may have moved).</summary>
+    private void ChangePluginSetting(Registered<PluginSettingHandle> st, string id)
+    {
+        if (!st.D.Set(id))
+        {
+            UpdatePluginMenus();
+            return;
+        }
+        try
+        {
+            st.D.D.Changed?.Invoke(id);
+            PluginManager.ReportSuccess(st.Owner);
+        }
+        catch (Exception ex)
+        {
+            PluginManager.Instance.ReportFailure(st.Owner, $"setting {st.FullId}", ex);
+            SetStatus($"{st.D.D.Label}: {ex.Message}", error: true);
+        }
+        _stageCache.Clear();
+        Adjust16.ClearStageCaches();
+        UpdatePluginMenus();
+        RebuildPluginUi();
+        UpdatePluginSectionBadges();
+        RefreshPointMarkers();
+        RequestRender();
+        var label = st.D.D.Choices.FirstOrDefault(c => c.Id == id)?.Label ?? id;
+        SetStatus($"{st.D.D.Label}: {label}", error: false);
     }
 
     private void BuildCommandShortcuts()

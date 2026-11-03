@@ -149,6 +149,11 @@ public interface IPluginHost
     void AddPreset(PresetDescriptor preset);
     /// <summary>Panel in the adjustments column showing a selectable list (mouse or arrow keys). Call inside Initialize.</summary>
     IListPanel AddListPanel(ListPanelDescriptor panel);
+    /// <summary>
+    /// Plugin-wide setting (not per photo) shown in the viewer's Settings menu; the host stores the choice. Call inside
+    /// Initialize; <see cref="IPluginSetting.Value"/> already holds the stored choice when it returns.
+    /// </summary>
+    IPluginSetting AddSetting(SettingDescriptor setting);
 }
 
 // ---------------------------------------------------------------------
@@ -225,7 +230,13 @@ public enum FilterStage
     /// <summary>After the built-in develop pipeline (tone, color, sharpening), sRGB encoded, before crop/rotate.</summary>
     Display = 1,
     /// <summary>After crop/rotate ("post-crop"), sRGB encoded. Runs in preview and on save/export.</summary>
-    Output = 2
+    Output = 2,
+    /// <summary>
+    /// First of all, linear light, before the manual exposure and white balance (RAW: after the default brightness,
+    /// before the camera tone curve; other photos: the decoded image). Its result does not depend on the manual
+    /// corrections, which are applied on top of it. Runs before <see cref="SceneLinear"/>.
+    /// </summary>
+    Base = 3
 }
 
 public sealed class RenderContext
@@ -550,6 +561,7 @@ public sealed class FilterDescriptor
     public string Description { get; set; } = "";
     /// <summary>Panel group header (e.g. "Effects", "Color", "Film").</summary>
     public string Group { get; set; } = "Plugins";
+    /// <summary>Where the filter runs. May be changed later from a setting's <see cref="SettingDescriptor.Changed"/> handler (the host re-renders).</summary>
     public FilterStage Stage { get; set; } = FilterStage.Display;
     public FilterPlacement Placement { get; set; } = FilterPlacement.Panel;
     /// <summary>Default position inside the stage (lower runs first). The user can reorder; the order is stored per photo.</summary>
@@ -795,4 +807,30 @@ public interface IListPanel
 {
     /// <summary>Re-read items and selection (any thread).</summary>
     void Refresh();
+}
+
+// ---------------------------------------------------------------------
+//  Settings
+// ---------------------------------------------------------------------
+
+/// <summary>One choice out of a list, kept by the host across sessions (Settings menu > Plugin settings).</summary>
+public sealed class SettingDescriptor
+{
+    public string Id { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string Description { get; set; }
+    public IReadOnlyList<ParamChoice> Choices { get; set; } = new ParamChoice[0];
+    /// <summary>Choice id used until the user picks another one (first choice when empty or unknown).</summary>
+    public string DefaultId { get; set; }
+    /// <summary>
+    /// The user picked another choice (UI thread, not called at startup). The plugin may change its filters'
+    /// <see cref="FilterDescriptor.Stage"/> here; the host then rebuilds its panels and re-renders the photo.
+    /// </summary>
+    public Action<string> Changed { get; set; }
+}
+
+public interface IPluginSetting
+{
+    /// <summary>Id of the current choice.</summary>
+    string Value { get; }
 }
