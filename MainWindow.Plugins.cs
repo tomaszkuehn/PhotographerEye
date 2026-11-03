@@ -53,6 +53,7 @@ public partial class MainWindow
 
     private void InitPlugins()
     {
+        InitEditHistoryBridge();
         _pluginReg = PluginManager.Instance.Registry;
         _importerExts = new HashSet<string>(_pluginReg.ImporterExtensions, StringComparer.OrdinalIgnoreCase);
         MaskOverlay.Attach(Viewer);
@@ -337,8 +338,10 @@ public partial class MainWindow
     {
         if (PluginToolbarHost is null || PluginPanelHost is null) return;
         _pluginUiBuilding = true;
+        string? focusedList = FocusedListPanel();
         try
         {
+            _listPanelBoxes.Clear();
             _pluginToggles.Clear();
             PluginToolbarHost.Children.Clear();
             PluginPanelHost.Children.Clear();
@@ -347,6 +350,7 @@ public partial class MainWindow
             BuildAdjustMaskUi();
             BuildCommandShortcuts();
             UpdatePluginMenus();
+            RestoreListPanelFocus(focusedList);
         }
         catch (Exception ex)
         {
@@ -493,7 +497,7 @@ public partial class MainWindow
         foreach (var stage in new[] { FilterStage.SceneLinear, FilterStage.Display, FilterStage.Output })
             ordered.AddRange(_pluginState.Ordered(_pluginReg, stage)
                 .Where(f => f.D.Params.Count > 0 || f.D.Placement == FilterPlacement.Panel));
-        if (ordered.Count == 0) return;
+        if (ordered.Count == 0 && _pluginReg.ListPanels.Count == 0) return;
 
         PluginPanelHost.Children.Add(new Border
         {
@@ -511,6 +515,7 @@ public partial class MainWindow
             .ToList();
         foreach (var g in sections)
             PluginPanelHost.Children.Add(BuildPluginSection(g.Key, g.ToList(), muted, border));
+        BuildListPanels(muted);
     }
 
     private FrameworkElement BuildPluginSection(string pluginId, List<Registered<FilterDescriptor>> filters, Brush muted, Brush border)

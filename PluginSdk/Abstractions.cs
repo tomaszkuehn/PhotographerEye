@@ -136,6 +136,8 @@ public interface IPluginHost
     bool GpuAvailable { get; }
     IHostEvents Events { get; }
     IImagingServices Imaging { get; }
+    /// <summary>Edit history (undo steps) of the photo shown in the viewer.</summary>
+    IEditHistory History { get; }
 
     void Log(string message);
     void AddFilter(FilterDescriptor filter);
@@ -145,6 +147,8 @@ public interface IPluginHost
     void AddMetadataProvider(MetadataProviderDescriptor provider);
     void AddCommand(CommandDescriptor command);
     void AddPreset(PresetDescriptor preset);
+    /// <summary>Panel in the adjustments column showing a selectable list (mouse or arrow keys). Call inside Initialize.</summary>
+    IListPanel AddListPanel(ListPanelDescriptor panel);
 }
 
 // ---------------------------------------------------------------------
@@ -735,4 +739,60 @@ public interface IImagingServices
     byte[] EncodePng(PluginImage image);
     float SrgbToLinear(float v);
     float LinearToSrgb(float v);
+}
+
+// ---------------------------------------------------------------------
+//  Edit history
+// ---------------------------------------------------------------------
+
+public sealed class HistoryStep
+{
+    public int Index { get; set; }
+    /// <summary>What the step changed ("Opened" for step 0, e.g. "Exposure", "Crop", "Heal · Spot 1: Size").</summary>
+    public string Label { get; set; } = "";
+}
+
+/// <summary>Undo steps of the current photo. Members must be used on the UI thread.</summary>
+public interface IEditHistory
+{
+    /// <summary>All saved states, oldest first; step 0 is the state the photo was opened with. Empty when nothing is open.</summary>
+    IReadOnlyList<HistoryStep> Steps { get; }
+    /// <summary>Index of the state shown now.</summary>
+    int Position { get; }
+    /// <summary>Show the state <paramref name="index"/> (like undo/redo to it). The next edit drops all later steps.</summary>
+    bool GoTo(int index);
+    /// <summary>Raised on the UI thread when steps or the position change or another photo is opened.</summary>
+    event EventHandler Changed;
+}
+
+// ---------------------------------------------------------------------
+//  List panels
+// ---------------------------------------------------------------------
+
+public sealed class ListPanelItem
+{
+    public string Text { get; set; } = "";
+    /// <summary>Optional dimmed text on the right.</summary>
+    public string Detail { get; set; }
+}
+
+public sealed class ListPanelDescriptor
+{
+    public string Id { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string Description { get; set; }
+    /// <summary>Current items (called on the UI thread whenever the panel is refreshed).</summary>
+    public Func<IReadOnlyList<ListPanelItem>> Items { get; set; }
+    /// <summary>Index of the selected item, -1 for none.</summary>
+    public Func<int> Selected { get; set; }
+    /// <summary>The user selected an item (click or arrow keys).</summary>
+    public Action<int> Select { get; set; }
+    /// <summary>Rows visible before the list scrolls.</summary>
+    public int VisibleRows { get; set; } = 10;
+}
+
+public interface IListPanel
+{
+    /// <summary>Re-read items and selection (any thread).</summary>
+    void Refresh();
 }

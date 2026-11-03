@@ -71,7 +71,26 @@ public static class EyeFile
         WriteIndented = true
     };
 
-    public static string SidecarPath(string imagePath) => Path.ChangeExtension(imagePath, ".eye");
+    /// <summary>Subfolder next to the photos that holds the .eye files of all photos of that folder.</summary>
+    public const string FolderName = "_eye_";
+
+    /// <summary>Where the edit file is written: &lt;photo folder&gt;\_eye_\&lt;file name with extension&gt;.eye (RAW + JPEG pairs stay apart).</summary>
+    public static string SidecarPath(string imagePath) =>
+        Path.Combine(Path.GetDirectoryName(Path.GetFullPath(imagePath)) ?? "", FolderName, Path.GetFileName(imagePath) + ".eye");
+
+    /// <summary>Old location (before the _eye_ folder): &lt;photo name&gt;.eye next to the photo. Read only.</summary>
+    public static string LegacySidecarPath(string imagePath) => Path.ChangeExtension(imagePath, ".eye");
+
+    /// <summary>The file to read: the _eye_ one, else the old one next to the photo, else null.</summary>
+    public static string? ExistingPath(string imagePath)
+    {
+        var p = SidecarPath(imagePath);
+        if (File.Exists(p)) return p;
+        var legacy = LegacySidecarPath(imagePath);
+        return File.Exists(legacy) ? legacy : null;
+    }
+
+    public static bool Exists(string imagePath) => ExistingPath(imagePath) is not null;
 
     public static void Save(string imagePath, EyeState state) => WriteJson(imagePath, Serialize(state));
 
@@ -84,6 +103,7 @@ public static class EyeFile
         var tmp = dest + ".tmp";
         try
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             File.WriteAllText(tmp, json);
             File.Move(tmp, dest, overwrite: true);
         }
@@ -99,7 +119,8 @@ public static class EyeFile
         state = new EyeState();
         try
         {
-            var loaded = JsonSerializer.Deserialize<EyeState>(File.ReadAllText(SidecarPath(imagePath)), JsonOptions);
+            if (ExistingPath(imagePath) is not { } src) return false;
+            var loaded = JsonSerializer.Deserialize<EyeState>(File.ReadAllText(src), JsonOptions);
             if (loaded is not { Version: 1 or 2 or 3 or 4 or 5 }) return false;
             state = loaded;
             return true;

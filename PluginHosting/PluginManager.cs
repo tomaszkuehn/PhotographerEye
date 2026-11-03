@@ -63,6 +63,7 @@ public sealed class LoadedPlugin
     public List<Registered<MetadataProviderDescriptor>> MetaProviders { get; } = new();
     public List<Registered<CommandDescriptor>> Commands { get; } = new();
     public List<Registered<PresetDescriptor>> Presets { get; } = new();
+    public List<Registered<ListPanelHandle>> ListPanels { get; } = new();
 }
 
 public sealed class Registered<T>
@@ -93,6 +94,7 @@ public sealed class PluginRegistry
     public IReadOnlyList<Registered<MetadataProviderDescriptor>> MetaProviders { get; }
     public IReadOnlyList<Registered<CommandDescriptor>> Commands { get; }
     public IReadOnlyList<Registered<PresetDescriptor>> Presets { get; }
+    public IReadOnlyList<Registered<ListPanelHandle>> ListPanels { get; }
     public IReadOnlyList<LoadedPlugin> Plugins { get; }
     private readonly Dictionary<string, Registered<FilterDescriptor>> _filterById;
 
@@ -110,6 +112,7 @@ public sealed class PluginRegistry
         MetaProviders = active.SelectMany(p => p.MetaProviders).ToList();
         Commands = active.SelectMany(p => p.Commands).ToList();
         Presets = active.SelectMany(p => p.Presets).ToList();
+        ListPanels = active.SelectMany(p => p.ListPanels).ToList();
         _filterById = new Dictionary<string, Registered<FilterDescriptor>>(StringComparer.Ordinal);
         foreach (var f in filters) _filterById.TryAdd(f.FullId, f);
     }
@@ -413,6 +416,7 @@ public sealed class PluginManager
                 lp.MetaProviders.Clear();
                 lp.Commands.Clear();
                 lp.Presets.Clear();
+                lp.ListPanels.Clear();
             }
         }
         entry.Plugins.Add(lp);

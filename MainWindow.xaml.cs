@@ -272,6 +272,7 @@ public partial class MainWindow : Window
         _histPos = -1;
         _histLastKey = null;
         _histPending = true;
+        NotifyHistoryChanged();
         _histPendingSt = null;
         _eyeBaseEv = double.NaN;
         _eyeCurveSet = false;
@@ -744,7 +745,7 @@ public partial class MainWindow : Window
         _eyeAutoSave.Enabled = MnuAutoSaveEdits.IsChecked;
         SettingsStore.Save(SettingsStore.Load() with { AutoSaveEdits = _eyeAutoSave.Enabled });
         if (_eyeAutoSave.Enabled) SyncSessionHist();
-        SetStatus(_eyeAutoSave.Enabled ? "Edits are saved to the .eye file next to the photo as you work" : "Edits are saved only with Save Photo", error: false);
+        SetStatus(_eyeAutoSave.Enabled ? "Edits are saved as you work (_eye_ folder next to the photos)" : "Edits are saved only with Save Photo", error: false);
     }
 
     private void OnRememberPreviewsClick(object sender, RoutedEventArgs e)
@@ -845,6 +846,7 @@ public partial class MainWindow : Window
 
     private void UpdateUndoButtons()
     {
+        NotifyHistoryChanged();
         if (BtnUndo is null || BtnRedo is null) return;
         BtnUndo.IsEnabled = _histPos > 0;
         BtnRedo.IsEnabled = _histPos < _hist.Count - 1;
@@ -2387,6 +2389,9 @@ public partial class MainWindow : Window
         if (Keyboard.FocusedElement is Slider) return;
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase) return;
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase) return;
+        // Plugin list panels (history): arrow keys, Home/End and PageUp/PageDown move the selection.
+        if (Keyboard.FocusedElement is ListBox or ListBoxItem &&
+            e.Key is Key.Up or Key.Down or Key.Home or Key.End or Key.PageUp or Key.PageDown) return;
 
         if (e.Key == Key.O && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {

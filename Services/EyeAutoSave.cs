@@ -5,7 +5,7 @@ using System.IO;
 namespace ImgViewer.Services;
 
 /// <summary>
-/// Writes the edit fingerprint (<c>.eye</c>) next to the photo as soon as an edit is committed, so edits survive a restart
+/// Writes the edit fingerprint (<c>_eye_\&lt;photo file name&gt;.eye</c> in the photo folder) as soon as an edit is committed, so edits survive a restart
 /// without saving the photo. A photo that was never edited gets no file; an unchanged state is not written again.
 /// </summary>
 public sealed class EyeAutoSave
@@ -27,7 +27,7 @@ public sealed class EyeAutoSave
         if (!Enabled) return false;
         var json = EyeFile.Serialize(state);
         if (_written.TryGetValue(imagePath, out var prev) && prev == json) return false;
-        if (!edited && !File.Exists(EyeFile.SidecarPath(imagePath))) return false;
+        if (!edited && !EyeFile.Exists(imagePath)) return false;
         try
         {
             EyeFile.WriteJson(imagePath, json);

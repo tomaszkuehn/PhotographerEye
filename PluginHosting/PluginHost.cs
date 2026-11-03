@@ -19,10 +19,12 @@ internal sealed class PluginHostImpl : IPluginHost
     private string? _dataDir;
     internal bool Sealed;
     internal HostEventsImpl EventsImpl { get; } = new();
+    internal EditHistoryImpl HistoryImpl { get; }
 
     public PluginHostImpl(LoadedPlugin p)
     {
         _p = p;
+        HistoryImpl = new EditHistoryImpl(p);
     }
 
     public int ApiVersion => PluginApi.Version;
@@ -45,6 +47,7 @@ internal sealed class PluginHostImpl : IPluginHost
     public bool GpuAvailable => PluginImaging.GpuAvailable;
     public IHostEvents Events => EventsImpl;
     public IImagingServices Imaging => PluginImaging.Instance;
+    public IEditHistory History => HistoryImpl;
 
     public void Log(string message) => Debug.Log($"PLUGIN [{_p.Id}]: {message}");
 
@@ -142,6 +145,98 @@ internal sealed class PluginHostImpl : IPluginHost
         preset.Text ??= new Dictionary<string, string>();
         preset.Active ??= new List<string>();
         _p.Presets.Add(Wrap(id, preset, _p.Presets.Count));
+    }
+
+    public IListPanel AddListPanel(ListPanelDescriptor panel)
+    {
+        var id = CheckId(panel?.Id, "list panel", _p.ListPanels.Select(f => f.LocalId));
+        if (panel!.Items is null) throw new ArgumentException($"list panel '{id}' has no Items");
+        panel.Id = id;
+        if (string.IsNullOrWhiteSpace(panel.Label)) panel.Label = id;
+        panel.VisibleRows = Math.Clamp(panel.VisibleRows, 3, 40);
+        var handle = new ListPanelHandle(panel);
+        _p.ListPanels.Add(Wrap(id, handle, _p.ListPanels.Count));
+        return handle;
+    }
+}
+
+/// <summary>Registered list panel; the adjustments panel sets <see cref="OnRefresh"/> while it shows the list.</summary>
+public sealed class ListPanelHandle : IListPanel
+{
+    public ListPanelDescriptor D { get; }
+    /// <summary>Called on the UI thread when the plugin asks for a refresh.</summary>
+    public Action? OnRefresh { get; set; }
+
+    public ListPanelHandle(ListPanelDescriptor d)
+    {
+        D = d;
+    }
+
+    public void Refresh()
+    {
+        var h = OnRefresh;
+        if (h is null) return;
+        var disp = Application.Current?.Dispatcher;
+        if (disp is null || disp.CheckAccess()) h();
+        else disp.BeginInvoke(h);
+    }
+}
+
+/// <summary>
+/// Edit history of the current photo, fed by the main window. Each plugin gets its own <see cref="EditHistoryImpl"/>
+/// so a faulting handler only switches off its own plugin.
+/// </summary>
+public static class EditHistoryService
+{
+    public static Func<IReadOnlyList<HistoryStep>>? StepsSource { get; set; }
+    public static Func<int>? PositionSource { get; set; }
+    public static Func<int, bool>? GoToTarget { get; set; }
+
+    /// <summary>Tell enabled plugins (or <paramref name="plugins"/>, tests) that the history changed (UI thread).</summary>
+    public static void RaiseChanged(IEnumerable<LoadedPlugin>? plugins = null)
+    {
+        foreach (var p in plugins ?? PluginManager.Instance.Registry.Plugins)
+            p.Host?.HistoryImpl.Raise();
+    }
+}
+
+internal sealed class EditHistoryImpl : IEditHistory
+{
+    private readonly LoadedPlugin _p;
+    public event EventHandler? Changed;
+
+    public EditHistoryImpl(LoadedPlugin p)
+    {
+        _p = p;
+    }
+
+    public IReadOnlyList<HistoryStep> Steps
+    {
+        get
+        {
+            var src = EditHistoryService.StepsSource?.Invoke();
+            if (src is null) return Array.Empty<HistoryStep>();
+            // Copies: a plugin must not edit the host's list.
+            return src.Select(s => new HistoryStep { Index = s.Index, Label = s.Label }).ToList();
+        }
+    }
+
+    public int Position => EditHistoryService.PositionSource?.Invoke() ?? -1;
+
+    public bool GoTo(int index) => EditHistoryService.GoToTarget?.Invoke(index) ?? false;
+
+    internal void Raise()
+    {
+        var h = Changed;
+        if (h is null || _p.Faulted) return;
+        try
+        {
+            h(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            PluginManager.Instance.ReportFailure(_p, "event History.Changed", ex);
+        }
     }
 }
 

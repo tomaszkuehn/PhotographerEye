@@ -82,6 +82,12 @@ internal static partial class Program
             Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
             return;
         }
+        if (args.Length > 0 && args[0] == "--histplugin")
+        {
+            TestHistoryPlugin();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--eyeauto")
         {
             TestEyeAutoSave();
@@ -284,6 +290,7 @@ internal static partial class Program
         TestColorBalance();
         TestHeal();
         TestEyeAutoSave();
+        TestHistoryPlugin();
         TestPointMarkers();
         TestChannelCurves();
         TestShadowColor();
@@ -1508,7 +1515,9 @@ internal static partial class Program
             };
             EyeFile.Save(img, st);
             Check(File.Exists(side), "eye sidecar created");
-            Check(Path.GetFileName(side) == "sidecar_source.eye", "eye sidecar name next to source");
+            Check(Path.GetFileName(side) == "sidecar_source.raw.eye" && Path.GetFileName(Path.GetDirectoryName(side)) == EyeFile.FolderName &&
+                  string.Equals(Path.GetDirectoryName(Path.GetDirectoryName(side)), dir, StringComparison.OrdinalIgnoreCase),
+                  $"eye file in the _eye_ subfolder of the photo folder ({side})");
 
             bool ok = EyeFile.TryLoad(img, out var st2) && st2.Version == 5 &&
                       st2.ShadowLift == 25 && st2.Gamma == 1.4 && st2.Mono == 2 &&

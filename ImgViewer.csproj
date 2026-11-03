@@ -42,6 +42,7 @@
     <ProjectReference Include="eyePlugins\auto\ImgViewer.Plugins.AutoEnhance.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="eyePlugins\colorbalance\ImgViewer.Plugins.ColorBalance.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="eyePlugins\heal\ImgViewer.Plugins.Heal.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="eyePlugins\history\ImgViewer.Plugins.History.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="eyePlugins\negative\ImgViewer.Plugins.Negative.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="eyePlugins\bwred\ImgViewer.Plugins.BwRed.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="eyePlugins\splittone\ImgViewer.Plugins.SplitTone.csproj" ReferenceOutputAssembly="false" Private="false" />
@@ -58,6 +59,7 @@
     <BundledPlugin Include="autoenhance" Src="eyePlugins\auto" Asm="ImgViewer.Plugins.AutoEnhance" />
     <BundledPlugin Include="colorbalance" Src="eyePlugins\colorbalance" Asm="ImgViewer.Plugins.ColorBalance" />
     <BundledPlugin Include="heal" Src="eyePlugins\heal" Asm="ImgViewer.Plugins.Heal" />
+    <BundledPlugin Include="history" Src="eyePlugins\history" Asm="ImgViewer.Plugins.History" />
     <BundledPlugin Include="negative" Src="eyePlugins\negative" Asm="ImgViewer.Plugins.Negative" />
     <BundledPlugin Include="bwred" Src="eyePlugins\bwred" Asm="ImgViewer.Plugins.BwRed" />
     <BundledPlugin Include="splittone" Src="eyePlugins\splittone" Asm="ImgViewer.Plugins.SplitTone" />

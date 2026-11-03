@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.history",
+  "name": "History",
+  "version": "1.0",
+  "author": "PhotographerEye",
+  "description": "Lists every saved edit step of the photo; click a step or move with the arrow keys to show that version. Editing an earlier version drops the steps after it.",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.History.dll",
+  "permissions": []
+}
