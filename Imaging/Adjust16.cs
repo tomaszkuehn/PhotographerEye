@@ -65,6 +65,7 @@ public static partial class Adjust16
         bool hasGamma = Math.Abs(gamma - 1.0) >= 0.0005;
 
         if (hasGamma) ApplyGamma16(img, gamma, opts);
+        if (extra?.Curves is { HasEffect: true } curves) curves.Apply16(img, opts);
         switch (mono)
         {
             case MonoMode.Documentary:

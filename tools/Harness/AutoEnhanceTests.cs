@@ -38,14 +38,14 @@ internal static partial class Program
         Check(reg.Commands.Any(c => c.FullId == "photographereye.autoenhance:toggle" && c.D.Shortcut == "Ctrl+Shift+A"), "auto command Ctrl+Shift+A");
         if (f is null) return;
 
-        Raw16Image? Run(Raw16Image src, int w, int h, double balance, double contrast, double denoise, bool straighten, bool preview = false, int fullW = 0, int fullH = 0, double wb = 0, double color = 0)
+        Raw16Image? Run(Raw16Image src, int w, int h, double balance, double contrast, double denoise, bool straighten, bool preview = false, int fullW = 0, int fullH = 0, double wb = 0, double color = 0, string? sourcePath = null)
         {
             var st = new PluginEditState();
             st.Active.Add(f.FullId);
             void Set(string id, double v) => st.SetValue(f, f.D.Params.First(p => p.Id == id), v);
             Set("balance", balance); Set("contrast", contrast); Set("denoise", denoise); Set("straighten", straighten ? 1 : 0); Set("wb", wb); Set("color", color);
             int fw = fullW > 0 ? fullW : w, fh = fullH > 0 ? fullH : h;
-            var job = new PluginRenderJob { Registry = reg, State = st, Meta = new ImageMeta { Width = fw, Height = fh }, IsPreview = preview, Cancel = CancellationToken.None };
+            var job = new PluginRenderJob { Registry = reg, State = st, Meta = new ImageMeta { Width = fw, Height = fh, SourcePath = sourcePath ?? "" }, IsPreview = preview, Cancel = CancellationToken.None };
             return PluginPipeline.ApplyRaw16(src, FilterStage.Display, job, fw, fh);
         }
 
@@ -104,6 +104,15 @@ internal static partial class Program
             var o = Run(src, 900, 600, 0, 0, 0, true, preview: true, fullW: 1800, fullH: 1200);
             double after = o is null ? double.NaN : Tilt(o, 900, 600);
             Check(Math.Abs(after) < 0.3, $"auto straighten in preview scale: residual {after:0.00}°");
+        }
+        // The angle is detected once per photo: tone changes of the same photo must not change the rotation.
+        {
+            var src = Horizon(900, 600, 3.0, 0.01);
+            var first = Run(src, 900, 600, 0, 0, 0, true, sourcePath: path);
+            var level = Horizon(900, 600, 0, 0.01);
+            var again = Run(level, 900, 600, 0, 0, 0, true, sourcePath: path);
+            double t1 = first is null ? double.NaN : Tilt(first, 900, 600), t2 = again is null ? double.NaN : Tilt(again, 900, 600);
+            Check(Math.Abs(t1) < 0.3 && Math.Abs(t2 + 3.0) < 0.3, $"auto straighten: angle cached per photo (first {t1:0.00}°, re-render with different pixels {t2:0.00}°)");
         }
         // Level horizon, random texture and a large (intentional) tilt stay unrotated.
         {

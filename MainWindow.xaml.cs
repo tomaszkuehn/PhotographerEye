@@ -96,6 +96,7 @@ public partial class MainWindow : Window
         ShadowSlider.ValueChanged += OnAdjustmentChanged;
         GammaSlider.ValueChanged += OnAdjustmentChanged;
         HistogramPanel.StretchEdited += OnManualStretchChanged;
+        HistogramPanel.CurvesEdited += OnHistCurvesChanged;
         ShadowSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         GammaSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
         ExpSlider.ValueChanged += OnPanelSliderChanged;
@@ -647,9 +648,38 @@ public partial class MainWindow : Window
     private void OnHistResetClick(object sender, RoutedEventArgs e)
     {
         HistogramPanel.ClearManualStretch();
+        HistogramPanel.ClearCurves();
         UpdateSaveState();
         ReapplyAdjustments();
-        SetStatus("Histogram stretch points removed", error: false);
+        ScheduleHistCommit();
+        SetStatus("Histogram stretch points and R/G/B curves removed", error: false);
+    }
+
+    private void OnHistChannelClick(object sender, RoutedEventArgs e)
+    {
+        var ch = sender == BtnHistR ? HistChannel.R
+            : sender == BtnHistG ? HistChannel.G
+            : sender == BtnHistB ? HistChannel.B
+            : HistChannel.Rgb;
+        SetHistChannel(ch);
+    }
+
+    private void SetHistChannel(HistChannel ch)
+    {
+        HistogramPanel.Channel = ch;
+        BtnHistRgb.IsChecked = ch == HistChannel.Rgb;
+        BtnHistR.IsChecked = ch == HistChannel.R;
+        BtnHistG.IsChecked = ch == HistChannel.G;
+        BtnHistB.IsChecked = ch == HistChannel.B;
+        BtnHistBake.IsEnabled = ch == HistChannel.Rgb;
+    }
+
+    private void OnHistCurvesChanged(object? sender, EventArgs e)
+    {
+        if (_currentPath is null) return;
+        UpdateSaveState();
+        ScheduleApplyWithThrottle();
+        ScheduleHistCommit();
     }
 
     private void OnUndoClick(object sender, RoutedEventArgs e) => Undo();
@@ -717,6 +747,7 @@ public partial class MainWindow : Window
         if (Math.Abs(a.CropX - b.CropX) > 1e-9 || Math.Abs(a.CropY - b.CropY) > 1e-9 ||
             Math.Abs(a.CropW - b.CropW) > 1e-9 || Math.Abs(a.CropH - b.CropH) > 1e-9) return false;
         if (!PluginEyeEqual(a, b)) return false;
+        if (!KnotsEqual(a.CurveR, b.CurveR) || !KnotsEqual(a.CurveG, b.CurveG) || !KnotsEqual(a.CurveB, b.CurveB)) return false;
         return KnotsEqual(a.StretchEv, b.StretchEv);
     }
 
@@ -1642,6 +1673,7 @@ public partial class MainWindow : Window
             DenoiseSlider.Value,
             ColorNoiseSlider.Value);
         a.Tint = TintSlider.Value / 100.0;
+        a.Curves = HistogramPanel.CurvesSnapshot();
         return a.IsDefault ? null : a;
     }
 
@@ -1662,7 +1694,8 @@ public partial class MainWindow : Window
             Blacks = a.Blacks,
             Dehaze = a.Dehaze,
             Denoise = a.Denoise,
-            ColorNoise = a.ColorNoise
+            ColorNoise = a.ColorNoise,
+            Curves = a.Curves
         };
     }
 
@@ -1864,6 +1897,7 @@ public partial class MainWindow : Window
             CropOverlay.SetGeometry(0, 0, 1, 1, 0);
         }
         HistogramPanel.ClearManualStretch();
+        HistogramPanel.ClearCurves();
         ShadowSlider.Value = 0;
         GammaSlider.Value = 1.0;
         if (ExpSlider is not null)
@@ -1896,6 +1930,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private static double[][]? NullIfEmpty(double[][] p) => p.Length == 0 ? null : p;
+
     private EyeState CaptureEyeState()
     {
         double gamma = GammaSlider.Value;
@@ -1916,6 +1952,9 @@ public partial class MainWindow : Window
             Gamma = gamma,
             Stretch = stretch,
             StretchEv = stretchEv,
+            CurveR = NullIfEmpty(HistogramPanel.CurvePairs(HistChannel.R)),
+            CurveG = NullIfEmpty(HistogramPanel.CurvePairs(HistChannel.G)),
+            CurveB = NullIfEmpty(HistogramPanel.CurvePairs(HistChannel.B)),
             Mono = (int)_monoMode,
             Exposure = ExpSlider.Value,
             Contrast = ContrastSlider.Value,
@@ -1995,6 +2034,7 @@ public partial class MainWindow : Window
         {
             HistogramPanel.RestoreManualStretch(new List<StretchKnot>());
         }
+        HistogramPanel.RestoreCurves(st.CurveR, st.CurveG, st.CurveB);
         ExpSlider.Value = Math.Clamp(st.Exposure, ExpSlider.Minimum, ExpSlider.Maximum);
         ContrastSlider.Value = Math.Clamp(st.Contrast, ContrastSlider.Minimum, ContrastSlider.Maximum);
         TempSlider.Value = Math.Clamp(st.Temperature, TempSlider.Minimum, TempSlider.Maximum);

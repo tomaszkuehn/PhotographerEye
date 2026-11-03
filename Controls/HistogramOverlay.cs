@@ -23,6 +23,21 @@ public sealed class HistogramOverlay : FrameworkElement
     private static readonly Pen BorderPen = Freeze(new Pen(BorderBrushH, 1.0));
     private static readonly Pen LumPen = Freeze(new Pen(LumStroke, 1.2));
     private static readonly Pen KnotPen = Freeze(new Pen(KnotBorder, 1.5));
+    private static readonly Brush RedSolid = Freeze(new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0x5A, 0x5A)));
+    private static readonly Brush GreenSolid = Freeze(new SolidColorBrush(Color.FromArgb(0xFF, 0x5A, 0xF0, 0x5A)));
+    private static readonly Brush BlueSolid = Freeze(new SolidColorBrush(Color.FromArgb(0xFF, 0x6E, 0x80, 0xFF)));
+    private static readonly Brush RedActive = Freeze(new SolidColorBrush(Color.FromArgb(0x9A, 0xFF, 0x3D, 0x3D)));
+    private static readonly Brush GreenActive = Freeze(new SolidColorBrush(Color.FromArgb(0x9A, 0x45, 0xFF, 0x45)));
+    private static readonly Brush BlueActive = Freeze(new SolidColorBrush(Color.FromArgb(0x9A, 0x4D, 0x5C, 0xFF)));
+    private static readonly Brush DimFill = Freeze(new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)));
+    private static readonly Pen LumDimPen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(0x50, 0xEC, 0xEC, 0xEC))), 1.0));
+    private static readonly Pen DiagPen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF))), 1.0) { DashStyle = DashStyles.Dash });
+    private static readonly Pen RedCurvePen = Freeze(new Pen(RedSolid, 1.6));
+    private static readonly Pen GreenCurvePen = Freeze(new Pen(GreenSolid, 1.6));
+    private static readonly Pen BlueCurvePen = Freeze(new Pen(BlueSolid, 1.6));
+    private static readonly Pen RedThinPen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(0x90, 0xFF, 0x5A, 0x5A))), 1.0));
+    private static readonly Pen GreenThinPen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(0x90, 0x5A, 0xF0, 0x5A))), 1.0));
+    private static readonly Pen BlueThinPen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(0x90, 0x6E, 0x80, 0xFF))), 1.0));
 
     private int[]? _lum;
     private int[]? _r;
@@ -36,7 +51,54 @@ public sealed class HistogramOverlay : FrameworkElement
     private bool _moved;
     private long _lastRaiseTicks;
 
+    private readonly RgbCurves _curves = new();
+    private HistChannel _channel = HistChannel.Rgb;
+
+    /// <summary>Luma stretch edited (RGB mode).</summary>
     public event EventHandler? StretchEdited;
+
+    /// <summary>One of the R/G/B curves edited.</summary>
+    public event EventHandler? CurvesEdited;
+
+    /// <summary>Channel the mouse edits: RGB = luma stretch, R/G/B = that channel's curve.</summary>
+    public HistChannel Channel
+    {
+        get => _channel;
+        set
+        {
+            if (_channel == value) return;
+            _channel = value;
+            _grabIdx = -1;
+            if (IsMouseCaptured) ReleaseMouseCapture();
+            ToolTip = value == HistChannel.Rgb ? LumaTip : CurveTip;
+            InvalidateVisual();
+        }
+    }
+
+    private const string LumaTip = "Drag a point on the histogram — the stretch is converted to Exposure/Highlights/Shadows/Whites/Blacks sliders (double-click — remove points)";
+    private const string CurveTip = "Channel curve: click to add a point, drag it up/down (right-click — remove point, double-click — reset channel)";
+
+    /// <summary>Copy of the R/G/B curves, null when none has an effect.</summary>
+    public RgbCurves? CurvesSnapshot() => _curves.HasEffect ? _curves.Clone() : null;
+
+    public bool HasCurvesEffect => _curves.HasEffect;
+
+    public double[][] CurvePairs(HistChannel ch) => _curves[ch].ToPairs();
+
+    public void RestoreCurves(double[][]? r, double[][]? g, double[][]? b)
+    {
+        _curves.R.FromPairs(r);
+        _curves.G.FromPairs(g);
+        _curves.B.FromPairs(b);
+        InvalidateVisual();
+    }
+
+    public void ClearCurves()
+    {
+        if (_curves.R.Count + _curves.G.Count + _curves.B.Count == 0) return;
+        _curves.Clear();
+        InvalidateVisual();
+    }
 
     public ManualStretchMap Snapshot() => _manual.Clone();
 
@@ -84,7 +146,7 @@ public sealed class HistogramOverlay : FrameworkElement
     public HistogramOverlay()
     {
         SnapsToDevicePixels = true;
-        ToolTip = "Drag a point on the histogram — the stretch is converted to Exposure/Highlights/Shadows/Whites/Blacks sliders (double-click — remove points)";
+        ToolTip = LumaTip;
     }
 
     protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer() =>
@@ -107,6 +169,11 @@ public sealed class HistogramOverlay : FrameworkElement
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         if (_lum is null) return;
+        if (_channel != HistChannel.Rgb)
+        {
+            CurveDown(e);
+            return;
+        }
         double u = OutAt(e.GetPosition(this));
 
         if (e.ClickCount == 2)
@@ -156,6 +223,11 @@ public sealed class HistogramOverlay : FrameworkElement
             _grabIdx = -1;
             return;
         }
+        if (_channel != HistChannel.Rgb)
+        {
+            CurveMove(e);
+            return;
+        }
         if (_grabIdx >= _manual.Count)
         {
             _grabIdx = -1;
@@ -183,8 +255,23 @@ public sealed class HistogramOverlay : FrameworkElement
         if (_moved)
         {
             _moved = false;
-            StretchEdited?.Invoke(this, EventArgs.Empty);
+            if (_channel == HistChannel.Rgb) StretchEdited?.Invoke(this, EventArgs.Empty);
+            else CurvesEdited?.Invoke(this, EventArgs.Empty);
         }
+        InvalidateVisual();
+        e.Handled = true;
+    }
+
+    protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
+    {
+        if (_channel == HistChannel.Rgb || _lum is null) return;
+        var c = _curves[_channel];
+        int hit = HitCurveKnot(c, e.GetPosition(this));
+        if (hit < 0) return;
+        c.RemoveAt(hit);
+        _grabIdx = -1;
+        InvalidateVisual();
+        CurvesEdited?.Invoke(this, EventArgs.Empty);
         e.Handled = true;
     }
 
@@ -193,8 +280,125 @@ public sealed class HistogramOverlay : FrameworkElement
         long now = Environment.TickCount64;
         if (now - _lastRaiseTicks < 30) return;
         _lastRaiseTicks = now;
-        StretchEdited?.Invoke(this, EventArgs.Empty);
+        if (_channel == HistChannel.Rgb) StretchEdited?.Invoke(this, EventArgs.Empty);
+        else CurvesEdited?.Invoke(this, EventArgs.Empty);
     }
+
+    // ---- R/G/B curve editing: x = input level, y = output level (both display space 0..1) ----
+
+    private (double L, double T, double W, double H) PlotRect()
+    {
+        double w = Math.Max(1.0, ActualWidth - Pad - Pad);
+        double h = Math.Max(1.0, ActualHeight - Pad - Pad);
+        return (Pad, Pad, w, h);
+    }
+
+    private Point CurvePoint(double x, double y)
+    {
+        var (l, t, w, h) = PlotRect();
+        return new Point(l + x * w, t + (1.0 - y) * h);
+    }
+
+    private (double X, double Y) CurveCoords(Point p)
+    {
+        var (l, t, w, h) = PlotRect();
+        return (Math.Clamp((p.X - l) / w, 0.0, 1.0), Math.Clamp(1.0 - (p.Y - t) / h, 0.0, 1.0));
+    }
+
+    private int HitCurveKnot(ChannelCurve c, Point p)
+    {
+        int hit = -1;
+        double best = 7.0;
+        for (int i = 0; i < c.Count; i++)
+        {
+            var kp = CurvePoint(c.Knots[i].In, c.Knots[i].Out);
+            double d = Math.Sqrt((kp.X - p.X) * (kp.X - p.X) + (kp.Y - p.Y) * (kp.Y - p.Y));
+            if (d < best)
+            {
+                best = d;
+                hit = i;
+            }
+        }
+        return hit;
+    }
+
+    private void CurveDown(MouseButtonEventArgs e)
+    {
+        var c = _curves[_channel];
+        var p = e.GetPosition(this);
+        if (e.ClickCount == 2)
+        {
+            if (c.Count > 0)
+            {
+                c.Clear();
+                _grabIdx = -1;
+                InvalidateVisual();
+                CurvesEdited?.Invoke(this, EventArgs.Empty);
+            }
+            e.Handled = true;
+            return;
+        }
+        int hit = HitCurveKnot(c, p);
+        if (hit >= 0)
+        {
+            _grabIdx = hit;
+        }
+        else
+        {
+            var (x, _) = CurveCoords(p);
+            _grabIdx = c.Upsert(x, c.Map(x));
+        }
+        _moved = false;
+        CaptureMouse();
+        InvalidateVisual();
+        e.Handled = true;
+    }
+
+    private void CurveMove(MouseEventArgs e)
+    {
+        var c = _curves[_channel];
+        if (_grabIdx >= c.Count)
+        {
+            _grabIdx = -1;
+            return;
+        }
+        var (_, y) = CurveCoords(e.GetPosition(this));
+        double before = c.Knots[_grabIdx].Out;
+        c.SetOut(_grabIdx, y);
+        if (Math.Abs(c.Knots[_grabIdx].Out - before) < 1e-4) return;
+        _moved = true;
+        InvalidateVisual();
+        RaiseThrottled();
+        e.Handled = true;
+    }
+
+    private StreamGeometry CurveGeometry(ChannelCurve c)
+    {
+        var t = c.Table(97);
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            ctx.BeginFigure(CurvePoint(0, t[0]), false, false);
+            for (int i = 1; i < t.Length; i++)
+                ctx.LineTo(CurvePoint(i / (double)(t.Length - 1), t[i]), true, false);
+        }
+        geo.Freeze();
+        return geo;
+    }
+
+    private static Pen CurvePen(HistChannel ch, bool active) => ch switch
+    {
+        HistChannel.R => active ? RedCurvePen : RedThinPen,
+        HistChannel.G => active ? GreenCurvePen : GreenThinPen,
+        _ => active ? BlueCurvePen : BlueThinPen
+    };
+
+    private static Brush SolidOf(HistChannel ch) => ch switch
+    {
+        HistChannel.R => RedSolid,
+        HistChannel.G => GreenSolid,
+        _ => BlueSolid
+    };
 
     private double OutAt(Point p)
     {
@@ -221,15 +425,47 @@ public sealed class HistogramOverlay : FrameworkElement
 
         double max = MaxScale(_lum, _r, _g, _b);
 
-        DrawFill(dc, _b, max, pl, plotW, plotH, yb, BlueFill);
-        DrawFill(dc, _g, max, pl, plotW, plotH, yb, GreenFill);
-        DrawFill(dc, _r, max, pl, plotW, plotH, yb, RedFill);
-        dc.DrawGeometry(null, LumPen, Poly(_lum, max, pl, plotW, plotH, yb, closed: false));
-
-        foreach (var k in _manual.Knots)
+        if (_channel == HistChannel.Rgb)
         {
-            double mx = pl + EvToDisplay(k.Out) * plotW;
-            dc.DrawEllipse(KnotFill, KnotPen, new Point(mx, yb - 2), 4, 4);
+            DrawFill(dc, _b, max, pl, plotW, plotH, yb, BlueFill);
+            DrawFill(dc, _g, max, pl, plotW, plotH, yb, GreenFill);
+            DrawFill(dc, _r, max, pl, plotW, plotH, yb, RedFill);
+            dc.DrawGeometry(null, LumPen, Poly(_lum, max, pl, plotW, plotH, yb, closed: false));
+
+            // Channel curves in use stay visible (thin) while editing the luma stretch.
+            foreach (var ch in new[] { HistChannel.R, HistChannel.G, HistChannel.B })
+                if (_curves[ch].HasEffect) dc.DrawGeometry(null, CurvePen(ch, false), CurveGeometry(_curves[ch]));
+
+            foreach (var k in _manual.Knots)
+            {
+                double mx = pl + EvToDisplay(k.Out) * plotW;
+                dc.DrawEllipse(KnotFill, KnotPen, new Point(mx, yb - 2), 4, 4);
+            }
+            return;
+        }
+
+        // Channel mode: the selected channel's histogram stands out, the others are dimmed.
+        var (data, fill) = _channel switch
+        {
+            HistChannel.R => (_r, RedActive),
+            HistChannel.G => (_g, GreenActive),
+            _ => (_b, BlueActive)
+        };
+        foreach (var other in new[] { _r, _g, _b })
+            if (!ReferenceEquals(other, data)) DrawFill(dc, other, max, pl, plotW, plotH, yb, DimFill);
+        DrawFill(dc, data, max, pl, plotW, plotH, yb, fill);
+        dc.DrawGeometry(null, LumDimPen, Poly(_lum, max, pl, plotW, plotH, yb, closed: false));
+
+        dc.DrawLine(DiagPen, CurvePoint(0, 0), CurvePoint(1, 1));
+        foreach (var ch in new[] { HistChannel.R, HistChannel.G, HistChannel.B })
+            if (ch != _channel && _curves[ch].HasEffect) dc.DrawGeometry(null, CurvePen(ch, false), CurveGeometry(_curves[ch]));
+        var cur = _curves[_channel];
+        dc.DrawGeometry(null, CurvePen(_channel, true), CurveGeometry(cur));
+        var kb = SolidOf(_channel);
+        for (int i = 0; i < cur.Count; i++)
+        {
+            var k = cur.Knots[i];
+            dc.DrawEllipse(i == _grabIdx ? KnotFill : kb, KnotPen, CurvePoint(k.In, k.Out), 4, 4);
         }
     }
 

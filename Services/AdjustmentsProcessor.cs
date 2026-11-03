@@ -64,6 +64,7 @@ public static class AdjustmentsProcessor
         }
 
         if (hasGamma) ApplyGamma(buffer, gamma);
+        if (extra?.Curves is { HasEffect: true } curves) curves.Apply8(buffer);
         switch (mono)
         {
             case MonoMode.Documentary:

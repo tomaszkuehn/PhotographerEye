@@ -182,6 +182,13 @@ public static partial class Adjust16
             using var gb = d.AllocateReadOnlyBuffer(ToIntLut(gl));
             ApplyLut(d, b, w, h, gb, ct);
         }
+        if (extra?.Curves is { HasEffect: true } curves)
+        {
+            using var cr = d.AllocateReadOnlyBuffer(curves.IntLut16(HistChannel.R));
+            using var cg = d.AllocateReadOnlyBuffer(curves.IntLut16(HistChannel.G));
+            using var cb = d.AllocateReadOnlyBuffer(curves.IntLut16(HistChannel.B));
+            d.For(w, h, new ColorLutKernel(b.R, b.G, b.B, cr, cg, cb, w, h));
+        }
         switch (mono)
         {
             case MonoMode.Documentary:

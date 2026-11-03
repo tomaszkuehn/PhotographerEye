@@ -14,6 +14,10 @@ public sealed record EyeState
     public double Gamma { get; init; } = 1.0;
     public double[][]? Stretch { get; init; }
     public double[][]? StretchEv { get; init; }
+    /// <summary>Histogram R/G/B curves, [input, output] pairs in display space 0..1.</summary>
+    public double[][]? CurveR { get; init; }
+    public double[][]? CurveG { get; init; }
+    public double[][]? CurveB { get; init; }
     public int Mono { get; init; }
     public double Exposure { get; init; }
     public double Contrast { get; init; }

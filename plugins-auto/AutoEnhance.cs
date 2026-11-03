@@ -126,6 +126,20 @@ public static class AutoEnhance
 
     private const int AnalysisSize = 1024;
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (double Angle, double Conf)> TiltCache = new();
+
+    /// <summary>Forgets cached horizon angles (all images).</summary>
+    public static void ClearTiltCache() => TiltCache.Clear();
+
+    private static string TiltKey(RenderContext ctx, double maxAngle)
+    {
+        string path = ctx?.Meta?.SourcePath;
+        if (string.IsNullOrEmpty(path)) return null;
+        long stamp = 0;
+        try { stamp = System.IO.File.GetLastWriteTimeUtc(path).Ticks; } catch { }
+        return FormattableString.Invariant($"{path}|{stamp}|{ctx.FullWidth}x{ctx.FullHeight}|{ctx.Stage}|{maxAngle:0.###}");
+    }
+
     public static AutoResult Render(PluginImage img, FilterParams p, RenderContext ctx)
     {
         var res = new AutoResult();
@@ -172,7 +186,20 @@ public static class AutoEnhance
         double angle = 0;
         if (straighten)
         {
-            angle = DetectTilt(aL, aw, ah, maxAngle, out var conf);
+            // The tilt is a property of the photo, not of the current tone/color settings: detect it once per
+            // image and reuse it, otherwise every exposure / WB / curve change re-detects and the frame jumps.
+            string key = TiltKey(ctx, maxAngle);
+            double conf;
+            if (key is null || !TiltCache.TryGetValue(key, out var cached))
+            {
+                angle = DetectTilt(aL, aw, ah, maxAngle, out conf);
+                if (key is not null)
+                {
+                    if (TiltCache.Count > 256) TiltCache.Clear();
+                    TiltCache[key] = (angle, conf);
+                }
+            }
+            else (angle, conf) = cached;
             res.AngleConfidence = conf;
             res.Angle = angle;
         }

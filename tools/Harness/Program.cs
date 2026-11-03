@@ -30,6 +30,12 @@ internal static partial class Program
             AutoEnhanceProbe(args[1], args.Length > 2 ? args[2] : null);
             return;
         }
+        if (args.Length > 0 && args[0] == "--curves")
+        {
+            TestChannelCurves();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--colorbalance")
         {
             TestColorBalance();
@@ -217,6 +223,7 @@ internal static partial class Program
         TestPluginSamples();
         TestAutoEnhance();
         TestColorBalance();
+        TestChannelCurves();
         TestPhotoMeta();
         TestRawPreview();
         TestHeif();

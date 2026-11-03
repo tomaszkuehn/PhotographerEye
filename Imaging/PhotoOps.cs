@@ -18,6 +18,8 @@ public sealed class PhotoAdjustments
     public double Dehaze;
     public double Denoise;
     public double ColorNoise;
+    /// <summary>Separate R/G/B curves from the histogram (display space), null when unused.</summary>
+    public RgbCurves? Curves;
 
     public bool IsDefault =>
         Math.Abs(Exposure) < 0.0005 &&
@@ -32,7 +34,8 @@ public sealed class PhotoAdjustments
         Math.Abs(Blacks) < 0.0005 &&
         Math.Abs(Dehaze) < 0.0005 &&
         Math.Abs(Denoise) < 0.0005 &&
-        Math.Abs(ColorNoise) < 0.0005;
+        Math.Abs(ColorNoise) < 0.0005 &&
+        (Curves is null || !Curves.HasEffect);
 
     /// <summary>
     /// Dehaze slider position (-100..100) to effect strength in the same units: 4 gives 1 and 8 gives 2 (linear in between),
