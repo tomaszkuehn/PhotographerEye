@@ -377,7 +377,7 @@ public partial class MainWindow
             var root = key == AdjustMask.Key ? (DependencyObject)AdjMaskHost : PluginPanelHost;
             if (FindByAutomationId(root, "PluginMask_" + key) is FrameworkElement el) el.BringIntoView();
         });
-        SetStatus($"Editing mask: {MaskPinLabel(key, spec) ?? t.Label}", error: false);
+        SetStatus($"Editing mask: {MaskPinLabel(key, spec) ?? t.Label}" + (AdjEditMask ? " — the sliders change only the inside of the mask until Done" : ""), error: false);
     }
 
     private static DependencyObject? FindByAutomationId(DependencyObject root, string id)

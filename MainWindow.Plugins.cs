@@ -1811,9 +1811,17 @@ public partial class MainWindow
             // a linked mask is edited through the mask it uses
             if (spec.Ref is { } r && r != key && _pluginState.Masks.TryGetValue(r, out var src) && src.Kind != MaskRender.Link)
             {
+                bool wasSet = AdjEditMask;
                 BeginMaskEdit(r);
                 _maskEditVia = key;
                 UpdateMaskBar();
+                if (key == AdjustMask.Key) EnterAdjMaskSet();
+                else if (!wasSet && AdjEditMask)
+                {
+                    // a plugin filter that uses the Adjustments mask: its shape is edited, the panel sliders stay whole-photo
+                    ShowAdjSet(false);
+                    DeferRebuild();
+                }
             }
             return;
         }
@@ -1825,10 +1833,27 @@ public partial class MainWindow
             SetStatus(spec.Kind == MaskRender.Brush
                 ? "Mask brush: paint on the photo, Alt erases, wheel zooms"
                 : "Mask: drag the handles on the photo", error: false);
+        if (key == AdjustMask.Key) EnterAdjMaskSet();
+    }
+
+    /// <summary>
+    /// While the Adjustments mask is edited the panel sliders change only the inside of the mask (its own values),
+    /// until Done / Esc or another mask is edited; then they show the whole-photo values again.
+    /// </summary>
+    private void EnterAdjMaskSet()
+    {
+        if (AdjEditMask) return;
+        ShowAdjSet(true);
+        if (AdjEditMask) DeferRebuild();
     }
 
     private void EndMaskEdit()
     {
+        if ((_maskEditFilter == AdjustMask.Key || _maskEditVia == AdjustMask.Key) && AdjEditMask)
+        {
+            ShowAdjSet(false);
+            DeferRebuild();
+        }
         _maskEditFilter = null;
         _maskEditVia = null;
         Interlocked.Increment(ref _maskPreviewSeq);
@@ -1869,7 +1894,7 @@ public partial class MainWindow
         bool panel = t.Key == AdjustMask.Key;
         bool active = panel || _pluginReg.FindFilter(t.Key) is { } f && _pluginState.IsFilterActive(f);
         MaskBarHint.Text = panel
-            ? "Inside the red area the mask's own STANDARD / DETAIL values add to the whole-photo values"
+            ? "Until Done the STANDARD / DETAIL sliders change only the inside of the mask (its own values, added to the whole-photo values)"
             : active
                 ? $"Only the {t.Label} settings act inside the red area"
                 : $"No effect yet: set the {t.Label} sliders (the main Adjustments have their own mask)";
