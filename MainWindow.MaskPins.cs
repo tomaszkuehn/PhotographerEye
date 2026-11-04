@@ -369,6 +369,7 @@ public partial class MainWindow
             if (f.D.RepeatGroup.Length > 0) _repeatSelected[RepeatKey(f)] = f.FullId;
             if (!IsSectionOpenNow(f.PluginId)) SetSectionExpanded(f.PluginId, true);
         }
+        else if (key == AdjustMask.Key && !IsSectionOpenNow(AdjMaskSectionKey)) SetSectionExpanded(AdjMaskSectionKey, true);
         BeginMaskEdit(key);
         RebuildPluginUi();
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>

@@ -103,7 +103,7 @@ public partial class MainWindow
             Data = Geometry.Parse("M1,14 V10 H3 V14 Z M4,14 V6 H6 V14 Z M7,14 V2.5 H9 V14 Z M10,14 V5 H12 V14 Z M13,14 V9 H15 V14 Z")
         }, true));
 
-    /// <summary>First icon at the top of the Adjustments panel: show or hide the histogram (it hides on every photo change).</summary>
+    /// <summary>Histogram icon on the Adjustments panel header bar: show or hide the histogram (it hides on every photo change).</summary>
     private ToggleButton BuildHistogramToggle()
     {
         var b = IconToggle(HistogramIcon(), "Histogram — show or hide", "BtnAdjHistogram", HistHost.Visibility == Visibility.Visible);

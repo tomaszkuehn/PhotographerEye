@@ -105,6 +105,15 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         BuildCoreSections();
+        var histToggle = BuildHistogramToggle();
+        histToggle.Width = 24;
+        histToggle.Height = 18;
+        histToggle.Margin = new Thickness(0);
+        HistToggleHost.Content = histToggle;
+        // the mask colour button sits left of the histogram and moves to the edge when the histogram hides
+        System.ComponentModel.DependencyPropertyDescriptor.FromProperty(VisibilityProperty, typeof(Grid))
+            .AddValueChanged(HistHost, (_, _) => UpdateMaskTintSide());
+        HistHost.SizeChanged += (_, _) => UpdateMaskTintSide();
 
         var settings = SettingsStore.Load();
         ShadowSlider.Value = Math.Clamp(settings.ShadowLift, ShadowSlider.Minimum, ShadowSlider.Maximum);
@@ -2370,6 +2379,15 @@ public partial class MainWindow : Window
             Keyboard.FocusedElement is not System.Windows.Controls.Primitives.TextBoxBase)
         {
             Navigate(e.Key == Key.Left ? -1 : 1);
+            e.Handled = true;
+            return;
+        }
+
+        // O toggles the mask colour while a mask is edited, also right after moving a slider
+        if (e.Key == Key.O && Keyboard.Modifiers == ModifierKeys.None && _maskEditFilter is not null && MaskBar.Visibility == Visibility.Visible
+            && Keyboard.FocusedElement is not System.Windows.Controls.Primitives.TextBoxBase)
+        {
+            SetMaskTint(BtnMaskTint.IsChecked != true);
             e.Handled = true;
             return;
         }

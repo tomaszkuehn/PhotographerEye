@@ -318,6 +318,18 @@
                             ToolTip="Close histogram" />
                 </StackPanel>
             </Grid>
+            <!-- While a mask is edited: mask colour on/off, left of the histogram (or at the right edge when it is hidden). -->
+            <ToggleButton x:Name="BtnMaskTintSide" AutomationProperties.AutomationId="BtnMaskTintSide"
+                          HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,10,266,0"
+                          Width="46" Height="52" IsChecked="True" Focusable="False" Visibility="Collapsed"
+                          Style="{StaticResource ToolToggle}" BorderThickness="1" BorderBrush="{StaticResource BorderBrushCol}"
+                          Click="OnMaskTintSideClick"
+                          ToolTip="Mask colour on / off (O): the red colour shows where the mask acts; off shows the clean photo with the result">
+                <StackPanel HorizontalAlignment="Center">
+                    <Ellipse x:Name="MaskTintSwatch" Width="16" Height="16" StrokeThickness="1.5" Stroke="#E05050" Fill="#E05050" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="MaskTintSideText" Text="Mask" FontSize="10" Margin="0,4,0,0" HorizontalAlignment="Center" />
+                </StackPanel>
+            </ToggleButton>
             <!-- Welcome screen (no photo open): open buttons, drop zone, recent folders; the background picture shows behind it. -->
             <Grid x:Name="HintPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
                 <Rectangle x:Name="DropZone" RadiusX="14" RadiusY="14" StrokeThickness="1.5" StrokeDashArray="5 4"
@@ -405,10 +417,10 @@
                     <Button x:Name="BtnMaskOnlyHere" AutomationProperties.AutomationId="BtnMaskOnlyHere" Style="{StaticResource ToolButton}"
                             Padding="8,1,8,1" Margin="0,0,6,0" VerticalAlignment="Center" Visibility="Collapsed"
                             Click="OnMaskOnlyHereClick" />
-                    <ToggleButton x:Name="BtnMaskTint" AutomationProperties.AutomationId="BtnMaskTint" Content="Overlay" IsChecked="True" Style="{StaticResource ToolToggle}"
+                    <ToggleButton x:Name="BtnMaskTint" AutomationProperties.AutomationId="BtnMaskTint" Content="Overlay" IsChecked="True" Style="{StaticResource ToolToggle}" Focusable="False"
                                   Padding="8,1,8,1" Margin="0,0,6,0" VerticalAlignment="Center"
                                   Click="OnMaskTintClick"
-                                  ToolTip="Show the red overlay of the selected area (off: see the result while editing)" />
+                                  ToolTip="Show the red overlay of the selected area (off: see the result while editing) — also O or the button left of the histogram" />
                     <Button x:Name="BtnMaskDone" AutomationProperties.AutomationId="BtnMaskDone" Content="Done" Style="{StaticResource ToolButton}"
                             Click="OnMaskDoneClick"
                             ToolTip="Finish editing the mask (Esc or Enter); the mask stays applied" />
@@ -455,6 +467,7 @@
                                      Style="{StaticResource ToolButton}"
                                      Click="OnPresetsClick"
                                      ToolTip="Apply, save or delete presets" />
+                             <ContentControl x:Name="HistToggleHost" DockPanel.Dock="Right" Margin="0,0,4,0" Focusable="False" VerticalAlignment="Center" />
                              <TextBlock Text="Adjustments" FontWeight="SemiBold" VerticalAlignment="Center" />
                          </DockPanel>
                      </Border>

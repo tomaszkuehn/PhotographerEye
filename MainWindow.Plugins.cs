@@ -1508,9 +1508,26 @@ public partial class MainWindow
         AdjMaskHost.Children.Clear();
         var muted = (Brush)FindResource("MutedBrush");
         var ui = BuildMaskControls(AdjustMask.Key, AdjustMask.Label, muted);
-        ui.Margin = new Thickness(0, 0, 0, 4);
-        AdjMaskHost.Children.Add(ui);
+        var mask = _pluginState.Masks.TryGetValue(AdjustMask.Key, out var m) && !string.IsNullOrEmpty(m.Kind) ? m : null;
+        string sub = mask is null ? "whole photo" : MaskKindName(mask.Kind) + (MaskValuesSummary() is null ? "" : " · own values");
+        var frame = MakeCollapsibleSection(AdjMaskSectionKey, "AdjMaskSection", "MASK", sub,
+            "Where the STANDARD / DETAIL sliders act: whole photo or a mask with values of its own\nClick to expand or collapse",
+            Array.Empty<UIElement>(), ui, mask is not null, defaultOpen: false, out _, headerAutomationId: "AdjMaskSectionHeader");
+        frame.Margin = new Thickness(0);
+        AdjMaskHost.Children.Add(frame);
     }
+
+    private const string AdjMaskSectionKey = "panel:mask";
+
+    private static string MaskKindName(string kind) => kind switch
+    {
+        MaskRender.Linear => "linear gradient",
+        MaskRender.Radial => "radial",
+        MaskRender.Brush => "brush",
+        MaskRender.Luma => "luminance range",
+        MaskRender.Link => "linked",
+        _ => kind.StartsWith(MaskRender.PluginPrefix, StringComparison.Ordinal) ? "plugin mask" : kind
+    };
 
     /// <summary>Sets one parameter of the radial mask of <paramref name="key"/> (cx, cy, rx, ry, feather, angle), filling the rest with defaults.</summary>
     private void SetRadialParam(string key, int index, double value)
@@ -1552,7 +1569,6 @@ public partial class MainWindow
         AutomationProperties.SetAutomationId(icons, "PluginMask_" + key);
         if (adjust)
         {
-            icons.Children.Add(BuildHistogramToggle());
             icons.Children.Add(BuildMaskMarkersToggle());
             icons.Children.Add(new Border { Width = 1, Height = 16, Margin = new Thickness(2, 0, 5, 3), Background = muted, Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center });
         }
@@ -1806,6 +1822,7 @@ public partial class MainWindow
         MaskOverlay.Clear();
         MaskOverlay.Visibility = Visibility.Collapsed;
         MaskBar.Visibility = Visibility.Collapsed;
+        UpdateMaskTintSide();
         RefreshMaskPins();
     }
 
@@ -1839,16 +1856,45 @@ public partial class MainWindow
         bool panel = t.Key == AdjustMask.Key;
         bool active = panel || _pluginReg.FindFilter(t.Key) is { } f && _pluginState.IsFilterActive(f);
         MaskBarHint.Text = panel
-            ? "The STANDARD / DETAIL sliders and R/G/B curves act only inside the red area"
+            ? "Inside the red area the mask's own STANDARD / DETAIL values add to the whole-photo values"
             : active
                 ? $"Only the {t.Label} settings act inside the red area"
                 : $"No effect yet: set the {t.Label} sliders (the main Adjustments have their own mask)";
         MaskBarHint.SetResourceReference(TextBlock.ForegroundProperty, active ? "MutedBrush" : "ErrorBrush");
         UpdateMaskBarShared(t.Key);
         MaskBar.Visibility = Visibility.Visible;
+        UpdateMaskTintSide();
     }
 
-    private void OnMaskTintClick(object sender, RoutedEventArgs e) => UpdateMaskPreview();
+    private void OnMaskTintClick(object sender, RoutedEventArgs e) => SetMaskTint(BtnMaskTint.IsChecked == true);
+
+    private void OnMaskTintSideClick(object sender, RoutedEventArgs e) => SetMaskTint(BtnMaskTintSide.IsChecked == true);
+
+    /// <summary>Mask colour on the photo while a mask is edited (bar toggle, the button left of the histogram and O).</summary>
+    private void SetMaskTint(bool on)
+    {
+        BtnMaskTint.IsChecked = on;
+        BtnMaskTintSide.IsChecked = on;
+        UpdateMaskTintSide();
+        UpdateMaskPreview();
+        if (_maskEditFilter is not null)
+            SetStatus(on ? "Mask colour on — the red area shows where the mask acts" : "Mask colour off — clean photo with the result (O shows the colour again)", error: false);
+    }
+
+    /// <summary>Shows the mask colour button while a mask is edited, left of the histogram or at the right edge without it.</summary>
+    private void UpdateMaskTintSide()
+    {
+        if (BtnMaskTintSide is null) return;
+        bool show = _maskEditFilter is not null && MaskBar.Visibility == Visibility.Visible;
+        BtnMaskTintSide.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show) return;
+        bool on = BtnMaskTintSide.IsChecked == true;
+        MaskTintSwatch.Fill = on ? new SolidColorBrush(Color.FromRgb(0xE0, 0x50, 0x50)) : Brushes.Transparent;
+        MaskTintSideText.Text = on ? "Mask" : "Clean";
+        double histW = HistHost.ActualWidth > 0 ? HistHost.ActualWidth : HistHost.Width;
+        double right = HistHost.Visibility == Visibility.Visible ? HistHost.Margin.Right + histW + 6 : 10;
+        BtnMaskTintSide.Margin = new Thickness(0, HistHost.Margin.Top, right, 0);
+    }
 
     /// <summary>After undo/redo/.eye load: keep editing when the filter still has a mask.</summary>
     private void SyncMaskOverlaySpec()
