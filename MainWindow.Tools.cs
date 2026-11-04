@@ -112,7 +112,7 @@ public partial class MainWindow
             it.Click += (_, _) => SetActiveTool(tt);
             MnuPluginTools.Items.Add(it);
         }
-        MnuPluginTools.Visibility = MnuPluginTools.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        TileTools.Visibility = MnuPluginTools.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdateToolMenuChecks()

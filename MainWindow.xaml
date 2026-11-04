@@ -12,6 +12,7 @@
         UseLayoutRounding="True"
         AllowDrop="True"
         PreviewDragOver="OnPreviewDragOver"
+        PreviewDragLeave="OnPreviewDragLeave"
         Drop="OnDrop"
         PreviewKeyDown="OnPreviewKeyDown"
         PreviewKeyUp="OnPreviewKeyUp">
@@ -24,7 +25,8 @@
     </shell:WindowChrome.WindowChrome>
 
     <DockPanel>
-        <Border DockPanel.Dock="Top"
+        <Border x:Name="TitleBar"
+                DockPanel.Dock="Top"
                 Height="26"
                 Background="#FF000000">
             <DockPanel LastChildFill="True">
@@ -50,106 +52,159 @@
         </Border>
 
     <DockPanel>
-        <Border DockPanel.Dock="Top"
+        <Border x:Name="ToolbarBar"
+                DockPanel.Dock="Top"
                 Background="{StaticResource PanelBrush}"
                 BorderBrush="{StaticResource BorderBrushCol}"
                 BorderThickness="0,0,0,1"
                 Padding="8,5">
             <DockPanel x:Name="ToolbarDock">
-                <Button x:Name="BtnSettings"
-                        DockPanel.Dock="Right"
-                        VerticalAlignment="Center"
-                        Content="&#xE713;"
-                        FontFamily="Segoe MDL2 Assets"
-                        FontSize="14"
-                        Width="30" Height="26"
-                        Margin="8,0,0,0"
-                        Style="{StaticResource ToolButton}"
-                        Click="OnSettingsClick"
-                        ToolTip="Settings">
-                    <Button.ContextMenu>
-                        <ContextMenu Placement="Bottom" StaysOpen="False">
-                            <MenuItem Header="Plugins…" Click="OnPluginsClick" />
-                            <MenuItem x:Name="MnuExport" Header="Export" />
-                            <MenuItem x:Name="MnuCommands" Header="Plugin commands" />
-                            <MenuItem x:Name="MnuPluginTools" Header="Plugin tools" ToolTip="Mouse tools on the photo from plugins (Esc switches the tool off)" />
-                            <MenuItem x:Name="MnuPluginSettings" Header="Plugin settings" />
-                            <MenuItem x:Name="MnuPluginOverlays" Header="Plugin overlays" ToolTip="Information drawn over the photo by plugins" />
-                            <MenuItem Header="Preview quality" ToolTip="Resolution of the live preview while editing RAW photos. Export always uses the full image.">
-                                <MenuItem x:Name="MnuPreviewWindow" Header="Fast (window size)" IsCheckable="True" Tag="window" Click="OnPreviewQualityClick" />
-                                <MenuItem x:Name="MnuPreviewSharp" Header="Sharp (2× window size)" IsCheckable="True" Tag="sharp" Click="OnPreviewQualityClick" />
-                                <MenuItem x:Name="MnuPreviewFull" Header="Full resolution (slow)" IsCheckable="True" Tag="full" Click="OnPreviewQualityClick" />
-                            </MenuItem>
-                            <MenuItem x:Name="MnuAutoSaveEdits" Header="Auto-save edits (.eye)" IsCheckable="True" Click="OnAutoSaveEditsClick" ToolTip="Keep every edit in the photo's .eye file (_eye_ subfolder of the photo folder) as you work, so it is back after a restart. Off: edits are written only with Save Photo." />
-                            <MenuItem x:Name="MnuRememberPreviews" Header="Remember rendered previews" IsCheckable="True" Click="OnRememberPreviewsClick" ToolTip="Show the last rendered look of a photo at once when it is opened again, while the real render runs in the background." />
-                            <MenuItem Header="Clear preview cache" Click="OnClearPreviewCacheClick" />
-                            <Separator />
-                            <MenuItem x:Name="MnuAbout" Header="About…" Click="OnAboutClick" />
-                        </ContextMenu>
-                    </Button.ContextMenu>
-                </Button>
+                <Grid DockPanel.Dock="Right" Margin="8,0,0,0">
+                    <Button x:Name="BtnSettings" AutomationProperties.AutomationId="BtnSettings"
+                            Content="&#xE713;"
+                            Style="{StaticResource FlatButton}"
+                            Click="OnSettingsClick"
+                            ToolTip="Settings, plugins, export and view options" />
+                    <Popup x:Name="SettingsFlyout"
+                           PlacementTarget="{Binding ElementName=BtnSettings}"
+                           Placement="Custom"
+                           StaysOpen="False"
+                           AllowsTransparency="True"
+                           PopupAnimation="Fade"
+                           Focusable="False">
+                        <Border x:Name="SettingsFlyoutBody" AutomationProperties.AutomationId="SettingsFlyout"
+                                Margin="10,4,10,14"
+                                Padding="8,4,8,8"
+                                Width="380"
+                                CornerRadius="9"
+                                Background="{StaticResource PanelBrush}"
+                                BorderBrush="{StaticResource BorderBrushCol}"
+                                BorderThickness="1">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.55" />
+                            </Border.Effect>
+                            <StackPanel>
+                                <TextBlock Text="PLUGINS" Style="{StaticResource FlyoutHeader}" />
+                                <WrapPanel>
+                                    <Button x:Name="TilePlugins" Content="&#xEA86;" Tag="Plugins…" Style="{StaticResource TileButton}" Click="OnPluginsClick"
+                                            ToolTip="Install, switch on/off and remove plugins" />
+                                    <Button x:Name="TileExport" Content="&#xEDE1;" Tag="Export" Style="{StaticResource TileButton}" Click="OnTileMenuClick"
+                                            ToolTip="Export the photo with a plugin exporter">
+                                        <Button.ContextMenu><ContextMenu x:Name="MnuExport" /></Button.ContextMenu>
+                                    </Button>
+                                    <Button x:Name="TileCommands" Content="&#xE945;" Tag="Commands" Style="{StaticResource TileButton}" Click="OnTileMenuClick"
+                                            ToolTip="Commands added by plugins">
+                                        <Button.ContextMenu><ContextMenu x:Name="MnuCommands" /></Button.ContextMenu>
+                                    </Button>
+                                    <Button x:Name="TileTools" Content="&#xE70F;" Tag="Tools" Style="{StaticResource TileButton}" Click="OnTileMenuClick"
+                                            ToolTip="Mouse tools on the photo from plugins (Esc switches the tool off)">
+                                        <Button.ContextMenu><ContextMenu x:Name="MnuPluginTools" /></Button.ContextMenu>
+                                    </Button>
+                                    <Button x:Name="TilePluginSettings" Content="&#xE90F;" Tag="Plugin settings" Style="{StaticResource TileButton}" Click="OnTileMenuClick"
+                                            ToolTip="Settings of installed plugins">
+                                        <Button.ContextMenu><ContextMenu x:Name="MnuPluginSettings" /></Button.ContextMenu>
+                                    </Button>
+                                    <Button x:Name="TileOverlays" Content="&#xE81E;" Tag="Overlays" Style="{StaticResource TileButton}" Click="OnTileMenuClick"
+                                            ToolTip="Information drawn over the photo by plugins">
+                                        <Button.ContextMenu><ContextMenu x:Name="MnuPluginOverlays" /></Button.ContextMenu>
+                                    </Button>
+                                </WrapPanel>
+                                <TextBlock Text="VIEW" Style="{StaticResource FlyoutHeader}" />
+                                <WrapPanel>
+                                    <Button x:Name="TileBackground" AutomationProperties.AutomationId="TileBackground" Content="&#xE790;" Tag="Background" Style="{StaticResource TileButton}" Click="OnTileMenuClick"
+                                            ToolTip="Surround of the photo (dark, black, neutral 18 % grey, light, white) and your own picture behind the adjustments panel">
+                                        <Button.ContextMenu><ContextMenu x:Name="MnuBackground" Opened="OnBackgroundMenuOpened" /></Button.ContextMenu>
+                                    </Button>
+                                    <Button x:Name="TilePreviewQuality" Content="&#xE7B3;" Tag="Preview quality" Style="{StaticResource TileButton}" Click="OnTileMenuClick"
+                                            ToolTip="Resolution of the live preview while editing RAW photos. Export always uses the full image.">
+                                        <Button.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem x:Name="MnuPreviewWindow" Header="Fast (window size)" IsCheckable="True" Tag="window" Click="OnPreviewQualityClick" />
+                                                <MenuItem x:Name="MnuPreviewSharp" Header="Sharp (2× window size)" IsCheckable="True" Tag="sharp" Click="OnPreviewQualityClick" />
+                                                <MenuItem x:Name="MnuPreviewFull" Header="Full resolution (slow)" IsCheckable="True" Tag="full" Click="OnPreviewQualityClick" />
+                                            </ContextMenu>
+                                        </Button.ContextMenu>
+                                    </Button>
+                                    <ToggleButton x:Name="MnuRememberPreviews" Content="&#xE81C;" Tag="Remember previews" Style="{StaticResource TileToggle}" Click="OnRememberPreviewsClick"
+                                                  ToolTip="Show the last rendered look of a photo at once when it is opened again, while the real render runs in the background." />
+                                    <Button x:Name="TilePresentation" Content="&#xE740;" Tag="Presentation" Style="{StaticResource TileButton}" Click="OnPresentationClick"
+                                            ToolTip="Full screen on black, no bars (F or F11; P starts a slideshow; Esc exits)" />
+                                    <Button x:Name="TileClearCache" Content="&#xE74D;" Tag="Clear preview cache" Style="{StaticResource TileButton}" Click="OnClearPreviewCacheClick"
+                                            ToolTip="Delete the remembered previews" />
+                                </WrapPanel>
+                                <TextBlock Text="EDITS &amp; APP" Style="{StaticResource FlyoutHeader}" />
+                                <WrapPanel>
+                                    <ToggleButton x:Name="MnuAutoSaveEdits" Content="&#xE78C;" Tag="Auto-save edits" Style="{StaticResource TileToggle}" Click="OnAutoSaveEditsClick"
+                                                  ToolTip="Keep every edit in the photo's .eye file (_eye_ subfolder of the photo folder) as you work, so it is back after a restart. Off: edits are written only with Save Photo." />
+                                    <Button x:Name="MnuAbout" Content="&#xE946;" Tag="About" Style="{StaticResource TileButton}" Click="OnAboutClick"
+                                            ToolTip="Version and licences" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </Popup>
+                </Grid>
                 <WrapPanel>
-                <Button x:Name="BtnOpen" Content="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26"
-                        Style="{StaticResource ToolButton}" Click="OnOpenClick" ToolTip="Open (Ctrl+O)" />
-
-                <TextBlock x:Name="CounterText" VerticalAlignment="Center" Margin="5,0" MinWidth="52" TextAlignment="Center" Text="&#x2013; / &#x2013;" />
-                <Button x:Name="BtnSave" AutomationProperties.AutomationId="BtnSave" Content="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" IsEnabled="False"
-                        Style="{StaticResource ToolButton}" Click="OnSaveClick" ToolTip="Save modified photo (Ctrl+S)" />
+                <Button x:Name="BtnOpen" Content="&#xED25;" Style="{StaticResource FlatButton}" Click="OnOpenClick" ToolTip="Open (Ctrl+O)" />
+                <TextBlock x:Name="CounterText" VerticalAlignment="Center" Margin="4,0" MinWidth="52" TextAlignment="Center" Foreground="{StaticResource MutedBrush}" Text="&#x2013; / &#x2013;" />
+                <Button x:Name="BtnSave" AutomationProperties.AutomationId="BtnSave" Content="&#xE74E;" IsEnabled="False"
+                        Style="{StaticResource FlatButton}" Click="OnSaveClick" ToolTip="Save modified photo (Ctrl+S)" />
 
                 <Border Style="{StaticResource ToolSeparator}" />
 
-                <Button x:Name="BtnZoomOut" Content="&#x2212;" Style="{StaticResource ToolButton}" Click="OnZoomOutClick" />
-                <Slider x:Name="ZoomSlider" Width="80" Margin="6,0" VerticalAlignment="Center" Minimum="0.1" Maximum="4" SmallChange="0.05" LargeChange="0.25" v:PhotoshopSlider.Enable="True" />
-                <TextBlock x:Name="ZoomLabel" VerticalAlignment="Center" MinWidth="46" TextAlignment="Right" Margin="0,0,4,0" Text="100 %" />
-                <Button x:Name="BtnZoomIn" Content="+" Style="{StaticResource ToolButton}" Click="OnZoomInClick" />
-                <Button x:Name="BtnFit" Content="&#xE9A9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
-                        Style="{StaticResource ToolButton}" Click="OnFitClick" ToolTip="Fit to window (0)" />
-                <Button x:Name="Btn100" Content="100 %" Margin="5,0,0,0" Style="{StaticResource ToolButton}" Click="On100Click" />
+                <Button x:Name="BtnZoomOut" Content="&#xE71F;" Style="{StaticResource FlatButton}" Click="OnZoomOutClick" ToolTip="Zoom out (−)" />
+                <Slider x:Name="ZoomSlider" Width="80" Margin="4,0" VerticalAlignment="Center" Minimum="0.1" Maximum="4" SmallChange="0.05" LargeChange="0.25" v:PhotoshopSlider.Enable="True" />
+                <Button x:Name="BtnZoomIn" Content="&#xE8A3;" Style="{StaticResource FlatButton}" Click="OnZoomInClick" ToolTip="Zoom in (+)" />
+                <TextBlock x:Name="ZoomLabel" VerticalAlignment="Center" MinWidth="44" TextAlignment="Center" Margin="2,0" Foreground="{StaticResource MutedBrush}" Text="100 %" />
+                <Button x:Name="BtnFit" Content="&#xE9A6;" Style="{StaticResource FlatButton}" Click="OnFitClick" ToolTip="Fit to window (0)" />
+                <Button x:Name="Btn100" Content="1:1" Style="{StaticResource FlatTextButton}" Click="On100Click" ToolTip="Actual pixels, 100 % (1)" />
 
                 <Border Style="{StaticResource ToolSeparator}" />
 
                 <TextBlock Text="Shadows" Style="{StaticResource ToolLabel}" />
                 <Slider x:Name="ShadowSlider" Width="90" VerticalAlignment="Center" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" v:PhotoshopSlider.Enable="True" />
-                <TextBlock x:Name="ShadowValue" Width="48" Margin="5,0,0,0" VerticalAlignment="Center" Text="0" TextAlignment="Right" />
+                <TextBlock x:Name="ShadowValue" Width="40" Margin="5,0,0,0" VerticalAlignment="Center" Text="0" TextAlignment="Right" />
 
-                <TextBlock Text="Gamma" Style="{StaticResource ToolLabel}" />
+                <TextBlock Text="Gamma" Style="{StaticResource ToolLabel}" Margin="14,0,5,0" />
                 <Slider x:Name="GammaSlider" Width="90" VerticalAlignment="Center" Minimum="0.5" Maximum="2" SmallChange="0.02" LargeChange="0.1" v:PhotoshopSlider.Enable="True" />
-                <TextBlock x:Name="GammaValue" Width="48" Margin="5,0,0,0" VerticalAlignment="Center" Text="1.00" TextAlignment="Right" />
+                <TextBlock x:Name="GammaValue" Width="40" Margin="5,0,0,0" VerticalAlignment="Center" Text="1.00" TextAlignment="Right" />
 
-                <Button x:Name="BtnUndo" Content="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="13" Width="30" Height="26" Margin="6,0,0,0"
-                        Style="{StaticResource ToolButton}" Click="OnUndoClick"
+                <Border Style="{StaticResource ToolSeparator}" />
+
+                <Button x:Name="BtnUndo" Content="&#xE7A7;" Style="{StaticResource FlatButton}" Click="OnUndoClick"
                         ToolTip="Undo last adjustment (Ctrl+Z)" />
-                <Button x:Name="BtnRedo" Content="&#xE7A6;" FontFamily="Segoe MDL2 Assets" FontSize="13" Width="30" Height="26" Margin="6,0,0,0"
-                        Style="{StaticResource ToolButton}" Click="OnRedoClick"
+                <Button x:Name="BtnRedo" Content="&#xE7A6;" Style="{StaticResource FlatButton}" Click="OnRedoClick"
                         ToolTip="Redo undone adjustment (Ctrl+Y)" />
-                <Button x:Name="BtnReset" Content="Reset" Margin="8,0,0,0" Style="{StaticResource ToolButton}" Click="OnResetClick" />
-                <Button x:Name="BtnCompare" Content="&#xE89A;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
-                        Style="{StaticResource ToolButton}"
+                <Button x:Name="BtnReset" Content="&#xE777;" Style="{StaticResource FlatButton}" Click="OnResetClick"
+                        ToolTip="Reset all adjustments" />
+                <Button x:Name="BtnCompare" Content="&#xE89A;" Style="{StaticResource FlatButton}"
                         PreviewMouseLeftButtonDown="OnComparePress"
                         MouseLeftButtonUp="OnCompareRelease"
                         LostMouseCapture="OnCompareLostCapture"
                         ToolTip="Hold — view original without edits (Space)" />
-                <Button x:Name="BtnMono" Content="&#xE792;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
-                        Style="{StaticResource ToolButton}" Click="OnMonoToggleClick"
+                <Button x:Name="BtnMono" Content="&#xEA61;" Style="{StaticResource FlatButton}" Click="OnMonoToggleClick"
                         ToolTip="Black &amp; white: documentary / Tri-X 400 (B — three states)" />
                 <StackPanel x:Name="PluginToolbarHost" Orientation="Horizontal" AutomationProperties.AutomationId="PluginToolbarHost" />
+
                 <Border Style="{StaticResource ToolSeparator}" />
-                <Button x:Name="BtnRotateL" AutomationProperties.AutomationId="BtnRotateL" Content="&#x27F2;" FontFamily="Segoe UI Symbol" FontSize="15" Width="30" Height="26"
-                        Style="{StaticResource ToolButton}" Click="OnRotateLeftClick"
-                        ToolTip="Rotate left 90 degrees" />
-                <Button x:Name="BtnRotateR" AutomationProperties.AutomationId="BtnRotateR" Content="&#x27F3;" FontFamily="Segoe UI Symbol" FontSize="15" Width="30" Height="26" Margin="5,0,0,0"
-                        Style="{StaticResource ToolButton}" Click="OnRotateRightClick"
+
+                <Button x:Name="BtnRotateL" AutomationProperties.AutomationId="BtnRotateL" Content="&#xE7AD;" Style="{StaticResource FlatButton}" Click="OnRotateLeftClick"
+                        RenderTransformOrigin="0.5,0.5" ToolTip="Rotate left 90 degrees">
+                    <Button.RenderTransform><ScaleTransform ScaleX="-1" /></Button.RenderTransform>
+                </Button>
+                <Button x:Name="BtnRotateR" AutomationProperties.AutomationId="BtnRotateR" Content="&#xE7AD;" Style="{StaticResource FlatButton}" Click="OnRotateRightClick"
                         ToolTip="Rotate right 90 degrees (swaps landscape/portrait)" />
-                <Button x:Name="BtnCrop" AutomationProperties.AutomationId="BtnCrop" Content="Crop" Margin="5,0,0,0" Style="{StaticResource ToolButton}" Click="OnCropClick"
+                <Button x:Name="BtnCrop" AutomationProperties.AutomationId="BtnCrop" Content="&#xE7A8;" Style="{StaticResource FlatButton}" Click="OnCropClick"
                         ToolTip="Crop &amp; straighten (C) — drag inside: move, handles: resize, drag outside or Ctrl+drag: rotate, Esc: close" />
-                <Button x:Name="BtnPanel" Content="&#xE9E9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="30" Height="26" Margin="6,0,0,0"
-                        Style="{StaticResource ToolButton}" Click="OnPanelToggleClick"
+                <Button x:Name="BtnPanel" Content="&#xE9E9;" Style="{StaticResource FlatButton}" Click="OnPanelToggleClick"
                         ToolTip="Adjustments panel — exposure, contrast, white balance, saturation, clarity, dehaze, denoise (E)" />
+                <Button x:Name="BtnPresent" Content="&#xE740;" Style="{StaticResource FlatButton}" Click="OnPresentationClick"
+                        ToolTip="Presentation — full screen on black, no bars (F / F11; P slideshow; Esc exits)" />
                 </WrapPanel>
             </DockPanel>
         </Border>
 
-        <Border DockPanel.Dock="Bottom"
+        <Border x:Name="StatusBar"
+                DockPanel.Dock="Bottom"
                 Background="{StaticResource PanelBrush}"
                 BorderBrush="{StaticResource BorderBrushCol}"
                 BorderThickness="0,1,0,0"
@@ -165,7 +220,9 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <Grid Grid.Column="0" Background="{StaticResource PanelBrushDark}">
+            <Grid x:Name="ViewerHost" Grid.Column="0" Background="{StaticResource PanelBrushDark}" ClipToBounds="True">
+            <Image x:Name="BgImage" Stretch="UniformToFill" IsHitTestVisible="False" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" />
+            <Rectangle x:Name="BgDim" Fill="Black" Opacity="0" IsHitTestVisible="False" Visibility="Collapsed" />
             <v:ImageViewer x:Name="Viewer" />
             <Button x:Name="BtnEdgeLeft"
                     Content="&#x2039;"
@@ -261,16 +318,44 @@
                             ToolTip="Close histogram" />
                 </StackPanel>
             </Grid>
-            <Border x:Name="HintPanel"
-                    IsHitTestVisible="False"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center">
-                <StackPanel>
-                    <TextBlock Text="Open an image" FontSize="22" Foreground="{StaticResource ForegroundBrush}" HorizontalAlignment="Center" />
-                    <TextBlock Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"
-                                Text="Ctrl+O — open dialog, or drag a file from Explorer;&#x0a;←/→ arrows — next/previous, mouse wheel — zoom, drag — pan;&#x0a;1 — 100 %, 0 — fit, R — reset edits, E — adjustments panel, C — crop, Ctrl+S — save modified photo" TextAlignment="Center" />
-                 </StackPanel>
-             </Border>
+            <!-- Welcome screen (no photo open): open buttons, drop zone, recent folders; the background picture shows behind it. -->
+            <Grid x:Name="HintPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
+                <Rectangle x:Name="DropZone" RadiusX="14" RadiusY="14" StrokeThickness="1.5" StrokeDashArray="5 4"
+                           Stroke="#55FFFFFF" Fill="#99141519" IsHitTestVisible="False" />
+                <StackPanel Margin="44,34,44,30" MaxWidth="520">
+                    <TextBlock Text="&#xE722;" FontFamily="Segoe MDL2 Assets" FontSize="40" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" />
+                    <TextBlock Text="PhotographerEye" FontSize="26" FontWeight="Light" Margin="0,10,0,0" Foreground="{StaticResource ForegroundBrush}" HorizontalAlignment="Center" />
+                    <TextBlock Text="Open a photo or a folder — or drop them here" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,18,0,0">
+                        <Button x:Name="BtnWelcomeOpen" AutomationProperties.AutomationId="BtnWelcomeOpen" Style="{StaticResource WelcomeButton}" Click="OnOpenClick" ToolTip="Ctrl+O">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE8B9;" FontFamily="Segoe MDL2 Assets" FontSize="15" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBlock Text="Open photo…" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="BtnWelcomeFolder" Style="{StaticResource WelcomeButton}" Margin="10,0,0,0" Click="OnOpenFolderClick">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xED25;" FontFamily="Segoe MDL2 Assets" FontSize="15" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBlock Text="Open folder…" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <StackPanel x:Name="RecentSection" Margin="0,22,0,0" Visibility="Collapsed">
+                        <TextBlock Text="RECENT FOLDERS" Style="{StaticResource FlyoutHeader}" />
+                        <StackPanel x:Name="RecentList" />
+                    </StackPanel>
+                    <TextBlock Margin="0,20,0,0" FontSize="11" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center" TextAlignment="Center"
+                               Text="←/→ next/previous · wheel zoom · 0 fit · 1 100 % · E adjustments · C crop&#x0a;F full-screen presentation · P slideshow · Ctrl+S save" />
+                    <Button x:Name="BtnWelcomePicture" Style="{StaticResource FlatTextButton}" HorizontalAlignment="Center" Margin="0,10,0,0"
+                            Foreground="{StaticResource MutedBrush}" FontSize="11" Click="OnWelcomePictureClick"
+                            Content="Choose a background picture…" ToolTip="Your own picture behind this screen and behind the adjustments panel" />
+                </StackPanel>
+            </Grid>
+            <!-- Presentation mode: short fading hint (keys, file name, slideshow state). -->
+            <Border x:Name="PresentHint" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,28"
+                    Background="#B0000000" CornerRadius="16" Padding="16,7" IsHitTestVisible="False" Opacity="0" Visibility="Collapsed">
+                <TextBlock x:Name="PresentHintText" Foreground="#E6E6E6" FontSize="13" TextAlignment="Center" />
+            </Border>
             <Border x:Name="CropBar"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Bottom"
@@ -333,6 +418,10 @@
                      Background="{StaticResource PanelBrush}"
                      BorderBrush="{StaticResource BorderBrushCol}"
                      BorderThickness="1,0,0,0">
+                 <Grid ClipToBounds="True">
+                 <!-- Optional picture behind the adjustments (⚙ → Background), blurred and darkened for legibility. -->
+                 <Image x:Name="PanelBgImage" Stretch="UniformToFill" IsHitTestVisible="False" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" />
+                 <Rectangle x:Name="PanelBgDim" Fill="Black" Opacity="0" IsHitTestVisible="False" Visibility="Collapsed" />
                  <DockPanel>
                      <Border DockPanel.Dock="Top"
                              BorderBrush="{StaticResource BorderBrushCol}"
@@ -366,7 +455,8 @@
                          </DockPanel>
                      </Border>
                      <ScrollViewer VerticalScrollBarVisibility="Auto">
-                         <StackPanel Margin="12,8,12,12">
+                         <!-- Handled on the content, not the ScrollViewer: its class handler would scroll before an instance handler runs. -->
+                         <StackPanel Margin="12,8,12,12" RequestBringIntoView="OnPanelRequestBringIntoView">
                           <StackPanel x:Name="AdjMaskHost" AutomationProperties.AutomationId="AdjMaskHost" />
                           <StackPanel x:Name="StdSectionBody" AutomationProperties.AutomationId="StdSectionBody">
                           <StackPanel Margin="0,8,0,0">
@@ -487,6 +577,7 @@
                          </StackPanel>
                      </ScrollViewer>
                  </DockPanel>
+                 </Grid>
              </Border>
          </Grid>
      </DockPanel>

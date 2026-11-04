@@ -115,6 +115,7 @@ public partial class MainWindow : Window
         _eyeAutoSave.Enabled = settings.AutoSaveEdits ?? true;
         MnuAutoSaveEdits.IsChecked = _eyeAutoSave.Enabled;
         UpdatePreviewQualityMenu();
+        InitAppearance(settings);
 
         Viewer.ZoomChanged += OnViewerZoomChanged;
         CropOverlay.Attach(Viewer);
@@ -203,6 +204,10 @@ public partial class MainWindow : Window
         {
             OpenPath(target);
         }
+        else
+        {
+            SetWelcomeVisible(true);
+        }
     }
 
     private void OpenPath(string path)
@@ -221,10 +226,12 @@ public partial class MainWindow : Window
             _index = -1;
             BtnEdgeLeft.Visibility = Visibility.Collapsed;
             BtnEdgeRight.Visibility = Visibility.Collapsed;
+            if (_currentPath is null) SetWelcomeVisible(true);
             return;
         }
-        BtnEdgeLeft.Visibility = Visibility.Visible;
-        BtnEdgeRight.Visibility = Visibility.Visible;
+        BtnEdgeLeft.Visibility = _presenting ? Visibility.Collapsed : Visibility.Visible;
+        BtnEdgeRight.Visibility = BtnEdgeLeft.Visibility;
+        AddRecentFolder(_dir);
 
         int idx = _files.FindIndex(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
         SwitchTo(idx >= 0 ? idx : 0);
@@ -303,7 +310,8 @@ public partial class MainWindow : Window
         ShowCachedRender(path);
         _showHistogram = false;
         HistHost.Visibility = Visibility.Hidden;
-        HintPanel.Visibility = Visibility.Collapsed;
+        SetWelcomeVisible(false);
+        if (_presenting) ShowPresentHint($"{Path.GetFileName(path)}   {idx + 1} / {_files.Count}");
         StatusRight.Text = "";
         SetStatus("Loading…", error: false);
 
@@ -741,7 +749,7 @@ public partial class MainWindow : Window
 
     private void OnAutoSaveEditsClick(object sender, RoutedEventArgs e)
     {
-        _eyeAutoSave.Enabled = MnuAutoSaveEdits.IsChecked;
+        _eyeAutoSave.Enabled = MnuAutoSaveEdits.IsChecked == true;
         SettingsStore.Save(SettingsStore.Load() with { AutoSaveEdits = _eyeAutoSave.Enabled });
         if (_eyeAutoSave.Enabled) SyncSessionHist();
         SetStatus(_eyeAutoSave.Enabled ? "Edits are saved as you work (_eye_ folder next to the photos)" : "Edits are saved only with Save Photo", error: false);
@@ -749,7 +757,7 @@ public partial class MainWindow : Window
 
     private void OnRememberPreviewsClick(object sender, RoutedEventArgs e)
     {
-        _renderedCache.Enabled = MnuRememberPreviews.IsChecked;
+        _renderedCache.Enabled = MnuRememberPreviews.IsChecked == true;
         if (!_renderedCache.Enabled) { _lastRendered = null; _renderedCache.Clear(disk: false); }
         SettingsStore.Save(SettingsStore.Load() with { RememberPreviews = _renderedCache.Enabled });
         SetStatus(_renderedCache.Enabled ? "Rendered previews are remembered" : "Rendered previews are not remembered", error: false);
@@ -757,6 +765,7 @@ public partial class MainWindow : Window
 
     private void OnClearPreviewCacheClick(object sender, RoutedEventArgs e)
     {
+        CloseSettingsFlyout();
         _lastRendered = null;
         _renderedCache.Clear(disk: true);
         SetStatus("Preview cache cleared", error: false);
@@ -1765,13 +1774,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnSettingsClick(object sender, RoutedEventArgs e)
-    {
-        if ((sender as Button)?.ContextMenu is not ContextMenu menu) return;
-        menu.PlacementTarget = sender as Button;
-        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-        menu.IsOpen = true;
-    }
+    private void OnSettingsClick(object sender, RoutedEventArgs e) => OpenSettingsFlyout();
 
     private void OnPreviewQualityClick(object sender, RoutedEventArgs e)
     {
@@ -1797,6 +1800,7 @@ public partial class MainWindow : Window
 
     private void OnAboutClick(object sender, RoutedEventArgs e)
     {
+        CloseSettingsFlyout();
         var about = new AboutWindow { Owner = this };
         about.ShowDialog();
     }
@@ -2291,10 +2295,25 @@ public partial class MainWindow : Window
     {
         e.Handled = true;
         e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+        SetDropHighlight(e.Effects == DragDropEffects.Copy);
+    }
+
+    private void OnPreviewDragLeave(object sender, DragEventArgs e) => SetDropHighlight(false);
+
+    /// <summary>
+    /// A list inside the adjustments panel that scrolls its own rows (History following the newest step after a
+    /// slider change) passes the request on to the panel scroller, which would jump the whole panel to that list.
+    /// Follow such a cascade only while the user works in that list (keyboard focus inside it).
+    /// </summary>
+    private void OnPanelRequestBringIntoView(object sender, RequestBringIntoViewEventArgs e)
+    {
+        if (e.TargetObject is ScrollViewer inner && !inner.IsKeyboardFocusWithin)
+            e.Handled = true;
     }
 
     private void OnDrop(object sender, DragEventArgs e)
     {
+        SetDropHighlight(false);
         if (e.Data.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } paths)
         {
             e.Handled = true;
@@ -2331,6 +2350,7 @@ public partial class MainWindow : Window
             return;
         }
         if (HandlePluginKey(e)) return;
+        if (HandlePresentationKey(e)) return;
         if (e.Key is Key.LeftCtrl or Key.RightCtrl) return;
 
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && e.Key is Key.Z or Key.Y)

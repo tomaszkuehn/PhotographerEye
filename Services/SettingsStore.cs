@@ -20,6 +20,20 @@ public sealed record ViewerSettings
     public bool? RememberPreviews { get; init; }
     /// <summary>Write the .eye file as soon as an edit is committed (null = on).</summary>
     public bool? AutoSaveEdits { get; init; }
+    /// <summary>Surround of the photo in the viewer: dark, black, grey18, light or white (null = dark).</summary>
+    public string? ViewerBackground { get; init; }
+    /// <summary>Background picture: behind the adjustments panel (when <see cref="PanelPicture"/>) and the welcome screen.</summary>
+    public string? ViewerBackgroundImage { get; init; }
+    /// <summary>Show the background picture behind the adjustments panel (null = on when a picture is chosen).</summary>
+    public bool? PanelPicture { get; init; }
+    /// <summary>Blur the background picture (null = on).</summary>
+    public bool? ViewerBackgroundBlur { get; init; }
+    /// <summary>How much the background picture is darkened, 0..0.9 (null = 0.6).</summary>
+    public double? ViewerBackgroundDim { get; init; }
+    /// <summary>Folders opened recently, newest first (welcome screen).</summary>
+    public List<string>? RecentFolders { get; init; }
+    /// <summary>Slideshow interval in seconds (null = 5).</summary>
+    public double? SlideInterval { get; init; }
 }
 
 public static class SettingsStore

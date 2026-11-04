@@ -79,6 +79,7 @@ public partial class MainWindow
 
     private void OnPluginsClick(object sender, RoutedEventArgs e)
     {
+        CloseSettingsFlyout();
         var w = new PluginsWindow { Owner = this };
         w.ShowDialog();
     }
@@ -383,14 +384,11 @@ public partial class MainWindow
             var btn = new ToggleButton
             {
                 Content = f.D.Label,
-                MinWidth = 30,
-                Height = 26,
-                Margin = new Thickness(6, 0, 0, 0),
                 IsChecked = _pluginState.Active.Contains(f.FullId),
                 IsEnabled = !IsFaulted(f),
                 ToolTip = FilterTooltip(f)
             };
-            btn.SetResourceReference(StyleProperty, "ToolToggle");
+            btn.SetResourceReference(StyleProperty, "FlatToggle");
             AutomationProperties.SetAutomationId(btn, "PluginBtn_" + f.FullId);
             var ff = f;
             btn.Click += (_, _) => SetFilterActive(ff, btn.IsChecked == true);
@@ -404,18 +402,11 @@ public partial class MainWindow
             var b = new Button
             {
                 Content = text,
-                MinWidth = 30,
-                Height = 26,
-                Margin = new Thickness(6, 0, 0, 0),
                 ToolTip = $"{c.D.Label} — plugin {c.PluginName}" + (string.IsNullOrEmpty(c.D.Shortcut) ? "" : $" ({c.D.Shortcut})"),
                 IsEnabled = c.Owner is not { Faulted: true }
             };
-            if (glyph)
-            {
-                b.FontFamily = new FontFamily("Segoe MDL2 Assets");
-                b.FontSize = 14;
-            }
-            b.SetResourceReference(StyleProperty, "ToolButton");
+            // Single icon glyph: same flat icon button as the built-in tools; text: flat text button.
+            b.SetResourceReference(StyleProperty, glyph ? "FlatButton" : "FlatTextButton");
             AutomationProperties.SetAutomationId(b, "PluginCmd_" + c.FullId);
             var cc = c;
             b.Click += (_, _) => RunCommand(cc);
@@ -1476,53 +1467,64 @@ public partial class MainWindow
     {
         var sp = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
         var mask = _pluginState.Masks.TryGetValue(key, out var mm) ? mm : null;
-        var row = new DockPanel();
-        var combo = new ComboBox { MinWidth = 130 };
-        AutomationProperties.SetAutomationId(combo, "PluginMask_" + key);
-        combo.ToolTip = key == AdjustMask.Key
-            ? "Limits the STANDARD and DETAIL sliders and the R/G/B curves to part of the photo (the red area). Toolbar shadows/gamma, histogram levels and B&W stay global."
-            : $"Limits the {label} sliders to part of the photo (the red area). The main Adjustments sliders have their own mask at the top of the panel.";
-        DockPanel.SetDock(combo, Dock.Right);
-        var items = new List<(string Kind, string Label)>
+        bool adjust = key == AdjustMask.Key;
+        string scope = adjust
+            ? "the STANDARD and DETAIL sliders and the R/G/B curves (toolbar shadows/gamma, histogram levels and B&W stay global)"
+            : $"the {label} sliders (the main Adjustments sliders have their own mask at the top of the panel)";
+        var items = new List<(string Kind, string Label, bool Plugin)>
         {
-            ("", "Whole photo"),
-            (MaskRender.Linear, "Linear gradient"),
-            (MaskRender.Radial, "Radial"),
-            (MaskRender.Brush, "Brush"),
-            (MaskRender.Luma, "Luminance range")
+            ("", "Whole photo", false),
+            (MaskRender.Linear, "Linear gradient", false),
+            (MaskRender.Radial, "Radial", false),
+            (MaskRender.Brush, "Brush", false),
+            (MaskRender.Luma, "Luminance range", false)
         };
-        items.AddRange(_pluginReg.Masks.Select(m => (MaskRender.PluginPrefix + m.FullId, $"{m.D.Label} ({m.PluginName})")));
-        foreach (var (kind, itemLabel) in items)
+        items.AddRange(_pluginReg.Masks.Select(m => (MaskRender.PluginPrefix + m.FullId, $"{m.D.Label} ({m.PluginName})", true)));
+        string current = mask?.Kind ?? "";
+        if (!items.Any(i => i.Kind == current)) items.Add((current, $"{current} (missing)", true));
+
+        // Mask scope as a row of icons (the histogram toggle leads the row at the top of the Adjustments panel).
+        var icons = new WrapPanel { Margin = new Thickness(0, 0, 0, -3) };
+        AutomationProperties.SetAutomationId(icons, "PluginMask_" + key);
+        if (adjust)
         {
-            var it = new ComboBoxItem { Content = itemLabel, Tag = kind };
-            combo.Items.Add(it);
-            if ((mask?.Kind ?? "") == kind) combo.SelectedItem = it;
+            icons.Children.Add(BuildHistogramToggle());
+            icons.Children.Add(new Border { Width = 1, Height = 16, Margin = new Thickness(2, 0, 5, 3), Background = muted, Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center });
         }
-        if (combo.SelectedItem is null)
+        foreach (var (kind, itemLabel, plugin) in items)
         {
-            var it = new ComboBoxItem { Content = $"{mask?.Kind} (missing)", Tag = mask?.Kind ?? "" };
-            combo.Items.Add(it);
-            combo.SelectedItem = it;
+            string tip = kind.Length == 0
+                ? $"Whole photo — {scope} apply everywhere"
+                : $"Mask: {itemLabel} — limits {scope} to part of the photo (the red area)";
+            var b = IconToggle(MaskIcon(plugin ? null : kind), tip, "PluginMask_" + key + "_" + (kind.Length == 0 ? "whole" : kind), kind == current);
+            b.Click += (_, _) =>
+            {
+                b.IsChecked = true; // a scope stays selected; choose another icon to change it
+                if (kind == current) return;
+                if (kind.Length == 0)
+                {
+                    _pluginState.Masks.Remove(key);
+                    if (_maskEditFilter == key) EndMaskEdit();
+                }
+                else
+                {
+                    _pluginState.Masks[key] = MaskRender.DefaultFor(kind);
+                    BeginMaskEdit(key);
+                }
+                DeferRebuild();
+                OnPluginUiChanged();
+            };
+            icons.Children.Add(b);
         }
-        combo.SelectionChanged += (_, _) =>
+        if (adjust) sp.Children.Add(icons);
+        else
         {
-            if (_pluginUiBuilding || combo.SelectedItem is not ComboBoxItem { Tag: string kind }) return;
-            if (kind.Length == 0)
-            {
-                _pluginState.Masks.Remove(key);
-                if (_maskEditFilter == key) EndMaskEdit();
-            }
-            else
-            {
-                _pluginState.Masks[key] = MaskRender.DefaultFor(kind);
-                BeginMaskEdit(key);
-            }
-            DeferRebuild();
-            OnPluginUiChanged();
-        };
-        row.Children.Add(combo);
-        row.Children.Add(new TextBlock { Text = key == AdjustMask.Key ? "Mask (all sliders below)" : "Mask", Foreground = muted, VerticalAlignment = VerticalAlignment.Center });
-        sp.Children.Add(row);
+            var row = new DockPanel();
+            DockPanel.SetDock(icons, Dock.Right);
+            row.Children.Add(icons);
+            row.Children.Add(new TextBlock { Text = "Mask", Foreground = muted, VerticalAlignment = VerticalAlignment.Center });
+            sp.Children.Add(row);
+        }
         if (mask is null) return sp;
 
         var opts = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
@@ -2022,7 +2024,7 @@ public partial class MainWindow
             it.Click += (_, _) => RunExport(e);
             MnuExport.Items.Add(it);
         }
-        MnuExport.Visibility = MnuExport.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        TileExport.Visibility = MnuExport.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         MnuCommands.Items.Clear();
         foreach (var c in _pluginReg.Commands.Where(c => c.D.Placement.HasFlag(CommandPlacement.Menu)))
@@ -2039,7 +2041,7 @@ public partial class MainWindow
             it.Click += (_, _) => RunCommand(cc);
             MnuCommands.Items.Add(it);
         }
-        MnuCommands.Visibility = MnuCommands.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        TileCommands.Visibility = MnuCommands.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         BuildOverlayMenu();
         BuildToolMenu();
@@ -2059,7 +2061,7 @@ public partial class MainWindow
             }
             MnuPluginSettings.Items.Add(group);
         }
-        MnuPluginSettings.Visibility = MnuPluginSettings.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        TilePluginSettings.Visibility = MnuPluginSettings.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Stores a plugin setting, tells the plugin, then rebuilds the panels and re-renders (stages may have moved).</summary>

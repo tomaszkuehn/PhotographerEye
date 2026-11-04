@@ -250,7 +250,7 @@ public partial class MainWindow
                 it.Click += (_, _) => oo.D.Visible = it.IsChecked;
                 MnuPluginOverlays.Items.Add(it);
             }
-            MnuPluginOverlays.Visibility = MnuPluginOverlays.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            TileOverlays.Visibility = MnuPluginOverlays.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         RefreshPluginOverlays();
     }
