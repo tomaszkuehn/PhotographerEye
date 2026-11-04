@@ -880,7 +880,7 @@ public interface IViewerControl
 /// Mask of a filter. Coordinates are fractions of the un-rotated, un-cropped photo (also for Output-stage filters;
 /// the host maps them through the crop).
 /// Kind "linear": P = x1, y1, x2, y2 (full effect at the first point, none past the second).
-/// "radial": P = cx, cy, rx, ry, feather (0..1). "luma": P = low, high, feather (0..1).
+/// "radial": P = cx, cy, rx, ry, feather (0..1) and optionally the rotation in degrees (clockwise, default 0). "luma": P = low, high, feather (0..1).
 /// "brush": Strokes = [mode (1 paint, 0 erase), radius (fraction of width), x1, y1, x2, y2, ...].
 /// "plugin:pluginId:maskId": a mask provider with <see cref="Values"/> / <see cref="Text"/>.
 /// </summary>

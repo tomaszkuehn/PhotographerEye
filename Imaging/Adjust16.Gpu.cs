@@ -248,7 +248,7 @@ public static partial class Adjust16
             return host[(y / gstep) * nx + x / gstep];
         });
         ct.ThrowIfCancellationRequested();
-        DenoisePlane(d, b, b.P0, w, h, NoiseReduction.LumaScales, plan.Ky, plan.KeepY, grid, samp, host, ct);
+        DenoisePlane(d, b, b.P0, w, h, plan.YK, plan.KeepY, grid, samp, host, ct);
         if (plan.Median > 0f)
         {
             foreach (var pl in new[] { b.P1, b.P2 })
@@ -258,15 +258,16 @@ public static partial class Adjust16
                     d.For(w, h, new NrCopyKernel(b.Lo1, pl, w, h));
                 }
         }
-        DenoisePlane(d, b, b.P1, w, h, NoiseReduction.ChromaScales, plan.Kc, 0f, grid, samp, host, ct);
-        DenoisePlane(d, b, b.P2, w, h, NoiseReduction.ChromaScales, plan.Kc, 0f, grid, samp, host, ct);
+        DenoisePlane(d, b, b.P1, w, h, plan.CK, 0f, grid, samp, host, ct);
+        DenoisePlane(d, b, b.P2, w, h, plan.CK, 0f, grid, samp, host, ct);
         d.For(w, h, new NrFromPlanesKernel(b.R, b.G, b.B, b.P0, b.P1, b.P2, w, h));
     }
 
-    private static void DenoisePlane(GraphicsDevice d, GpuBufs b, ReadWriteBuffer<float> plane, int w, int h, int scales, float k, float keep,
+    private static void DenoisePlane(GraphicsDevice d, GpuBufs b, ReadWriteBuffer<float> plane, int w, int h, float[] ks, float keep,
                                      NoiseGrid grid, ReadWriteBuffer<float> samp, float[] host, CancellationToken ct)
     {
-        if (k <= 0f) return;
+        int scales = ks.Length;
+        if (scales == 0 || ks[0] <= 0f) return;
         var cur = b.Luma;
         var next = b.Lo2;
         d.For(w, h, new NrCopyKernel(plane, cur, w, h));
@@ -282,7 +283,7 @@ public static partial class Adjust16
             samp.CopyTo(host);
             prev = NoiseReduction.BandSigma(host, grid, j, prev);
             using var sigma = d.AllocateReadOnlyBuffer(prev);
-            d.For(w, h, new NrShrinkKernel(plane, cur, next, b.P3, sigma, k, keep, j == 0 ? 1 : 0, w, h));
+            d.For(w, h, new NrShrinkKernel(plane, cur, next, b.P3, sigma, ks[j], keep, j == 0 ? 1 : 0, w, h));
             (cur, next) = (next, cur);
         }
         d.For(w, h, new NrAddKernel(plane, cur, w, h));

@@ -145,6 +145,20 @@ public sealed class MaskOverlay : Canvas
         return p;
     }
 
+    private const double RotateGap = 22;
+    private const int RotateHandle = 3;
+
+    private double[] RadialParams() => Params(6, 0.5, 0.5, 0.3, 0.3, 0.5, 0);
+
+    /// <summary>Point of the radial ellipse at (a, b) along its own axes (1, 0 = end of the first radius), in view coordinates.</summary>
+    private Point RadialPoint(double[] p, double a, double b)
+    {
+        double th = p[5] * Math.PI / 180, cos = Math.Cos(th), sin = Math.Sin(th);
+        double ux = a * p[2] * _srcW, vy = b * p[3] * _srcH;
+        double px = ux * cos - vy * sin, py = ux * sin + vy * cos;
+        return ToView(p[0] + px / _srcW, p[1] + py / _srcH);
+    }
+
     private List<Point> Handles()
     {
         var list = new List<Point>();
@@ -160,10 +174,17 @@ public sealed class MaskOverlay : Canvas
             }
             case "radial":
             {
-                var p = Params(5, 0.5, 0.5, 0.3, 0.3, 0.5);
-                list.Add(ToView(p[0], p[1]));
-                list.Add(ToView(p[0] + p[2], p[1]));
-                list.Add(ToView(p[0], p[1] + p[3]));
+                // Center, the two radius handles on the (rotated) axes and the rotation handle past the top of the ellipse.
+                var p = RadialParams();
+                var c = ToView(p[0], p[1]);
+                list.Add(c);
+                list.Add(RadialPoint(p, 1, 0));
+                list.Add(RadialPoint(p, 0, 1));
+                var top = RadialPoint(p, 0, -1);
+                var dir = top - c;
+                if (dir.Length < 1e-3) dir = new Vector(0, -1);
+                dir.Normalize();
+                list.Add(top + dir * RotateGap);
                 break;
             }
         }
@@ -213,7 +234,8 @@ public sealed class MaskOverlay : Canvas
                 DrawBrush();
                 break;
         }
-        foreach (var h in Handles()) AddHandle(h);
+        var hs = Handles();
+        for (int i = 0; i < hs.Count; i++) AddHandle(hs[i], _spec.Kind == "radial" && i == RotateHandle);
     }
 
     private void AddLine(Point a, Point b, Brush stroke, double thickness, bool dashed = false)
@@ -223,9 +245,9 @@ public sealed class MaskOverlay : Canvas
         Children.Add(l);
     }
 
-    private void AddHandle(Point p)
+    private void AddHandle(Point p, bool rotate = false)
     {
-        var e = new Ellipse { Width = HandleR * 2, Height = HandleR * 2, Fill = Light, Stroke = Dark, StrokeThickness = 1.5, IsHitTestVisible = false };
+        var e = new Ellipse { Width = HandleR * 2, Height = HandleR * 2, Fill = rotate ? Accent : Light, Stroke = Dark, StrokeThickness = 1.5, IsHitTestVisible = false };
         SetLeft(e, p.X - HandleR);
         SetTop(e, p.Y - HandleR);
         Children.Add(e);
@@ -252,7 +274,7 @@ public sealed class MaskOverlay : Canvas
 
     private void DrawRadial()
     {
-        var p = Params(5, 0.5, 0.5, 0.3, 0.3, 0.5);
+        var p = RadialParams();
         foreach (var (scale, dash) in new[] { (1.0, false), (Math.Max(0.0, 1 - p[4]), true) })
         {
             if (scale <= 0.001) continue;
@@ -260,13 +282,16 @@ public sealed class MaskOverlay : Canvas
             for (int i = 0; i <= 72; i++)
             {
                 double a = i * Math.PI * 2 / 72;
-                pts.Add(ToView(p[0] + Math.Cos(a) * p[2] * scale, p[1] + Math.Sin(a) * p[3] * scale));
+                pts.Add(RadialPoint(p, Math.Cos(a) * scale, Math.Sin(a) * scale));
             }
             Children.Add(new Polyline { Points = pts, Stroke = Dark, StrokeThickness = 3, IsHitTestVisible = false });
             var pl = new Polyline { Points = pts, Stroke = Light, StrokeThickness = 1.2, IsHitTestVisible = false };
             if (dash) pl.StrokeDashArray = new DoubleCollection { 4, 3 };
             Children.Add(pl);
         }
+        var h = Handles();
+        AddLine(RadialPoint(p, 0, -1), h[RotateHandle], Dark, 3);
+        AddLine(RadialPoint(p, 0, -1), h[RotateHandle], Accent, 1.2);
     }
 
     private void DrawBrush()
@@ -329,7 +354,7 @@ public sealed class MaskOverlay : Canvas
             if ((hs[i] - pos).Length <= HandleR + 4) { _drag = i; break; }
         if (_drag < 0) _drag = 100; // move whole shape
         _dragStartSrc = ToSrc(pos);
-        _dragStartP = _spec.Kind == "linear" ? Params(4, 0.5, 0.25, 0.5, 0.6) : Params(5, 0.5, 0.5, 0.3, 0.3, 0.5);
+        _dragStartP = _spec.Kind == "linear" ? Params(4, 0.5, 0.25, 0.5, 0.6) : RadialParams();
         CaptureMouse();
     }
 
@@ -369,14 +394,23 @@ public sealed class MaskOverlay : Canvas
         }
         else
         {
+            // Offsets from the center in source pixels (the ellipse and its rotation live in pixel space).
+            double ox = (cur.X - p[0]) * _srcW, oy = (cur.Y - p[1]) * _srcH;
             if (_drag == 0 || _drag == 100) { p[0] += dx; p[1] += dy; }
+            else if (_drag == RotateHandle)
+            {
+                // The handle sits above the center at angle 0; Shift snaps to 15 degrees.
+                double a = Math.Atan2(ox, -oy) * 180 / Math.PI;
+                if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) a = Math.Round(a / 15) * 15;
+                if (a <= -180) a += 360;
+                p[5] = Math.Round(a, 2);
+            }
             else
             {
-                // Radius handles: distance from the center in source fractions, independent of rotation.
-                double rx = (cur.X - p[0]), ry = (cur.Y - p[1]);
-                double dist = Math.Sqrt(rx * rx + ry * ry * (_srcH * _srcH) / (_srcW * _srcW));
-                if (_drag == 1) p[2] = Math.Clamp(dist, 0.01, 2.0);
-                else p[3] = Math.Clamp(dist * _srcW / _srcH, 0.01, 2.0);
+                // Radius handles: distance from the center, independent of the display and mask rotation.
+                double dist = Math.Sqrt(ox * ox + oy * oy);
+                if (_drag == 1) p[2] = Math.Clamp(dist / _srcW, 0.01, 2.0);
+                else p[3] = Math.Clamp(dist / _srcH, 0.01, 2.0);
             }
         }
         _spec = _spec with { P = p };

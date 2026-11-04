@@ -5,7 +5,9 @@ namespace ImgViewer.Imaging;
 
 // Ky/Kc: threshold in units of the measured noise std (luma/chroma); KeepY: fraction of luma grain kept;
 // Median: blend of the 3x3 chroma median (color speckle removal) applied before the wavelet shrink.
-public sealed record NoisePlan(float Ky, float Kc, float KeepY, float Median);
+// YK/CK: the threshold per wavelet scale (their length is the number of scales): Ky/Kc on the base scales and,
+// past 100 on the slider, one extra coarser scale whose threshold ramps in from 0 (coarse blotches).
+public sealed record NoisePlan(float Ky, float Kc, float KeepY, float Median, float[] YK, float[] CK);
 
 // Sparse grid on which noise is measured; Bins holds the brightness band of each grid point.
 public sealed record NoiseGrid(int Step, int Nx, int Ny, byte[] Bins);
@@ -39,14 +41,31 @@ public static class NoiseReduction
     // coefficients, so the lower part of the distribution stays dominated by noise.
     private const float Q25 = 0.3186f;
 
+    /// <summary>Upper end of the sliders (as a fraction: 2 = 200 on the slider). Up to 1 the result is unchanged from the 0..100 sliders.</summary>
+    public const double MaxStrength = 2.0;
+
     public static NoisePlan Plan(double luma, double color)
     {
-        double s = Math.Clamp(luma, 0.0, 1.0);
-        double c = Math.Clamp(color, 0.0, 1.0);
+        double s = Math.Clamp(luma, 0.0, MaxStrength);
+        double c = Math.Clamp(color, 0.0, MaxStrength);
         // Chroma ramps up fast (blotches are ugly and their removal costs no detail), luma gently;
         // a little fine grain is kept so strong settings do not look plastic. The speckle median is
-        // fully in from the middle of the color slider.
-        return new NoisePlan((float)(3.0 * s), (float)(6.0 * Math.Sqrt(c)), (float)(0.12 * s), (float)Math.Min(1.0, 2.0 * c));
+        // fully in from the middle of the color slider. Past 1 (very noisy photos: high ISO, pushed
+        // shadows) the luma threshold grows at half the rate (up to 1.5x its value at 1: a larger one
+        // mostly softens edges), the chroma one keeps its curve, the kept grain fades out to none at 2
+        // and one coarser scale ramps in from 0 (coarse blotches).
+        float ky = (float)(s <= 1.0 ? 3.0 * s : 3.0 + 1.5 * (s - 1.0)), kc = (float)(6.0 * Math.Sqrt(c));
+        float keep = (float)(0.12 * Math.Min(s, MaxStrength - s));
+        return new NoisePlan(ky, kc, keep, (float)Math.Min(1.0, 2.0 * c), Scales(ky, LumaScales, s), Scales(kc, ChromaScales, c));
+    }
+
+    private static float[] Scales(float k, int baseScales, double strength)
+    {
+        bool extra = strength > 1.0;
+        var ks = new float[baseScales + (extra ? 1 : 0)];
+        Array.Fill(ks, k);
+        if (extra) ks[baseScales] = (float)(k * (strength - 1.0) / (MaxStrength - 1.0));
+        return ks;
     }
 
     public static bool Active(double luma, double color) => luma > 0.0005 || color > 0.0005;
@@ -254,10 +273,11 @@ public static class NoiseReduction
     }
 
     // Denoises one plane in place; returns the per-scale band sigmas it measured (diagnostics).
-    public static float[][] DenoisePlane(float[] plane, int w, int h, int scales, float k, float keep, float[] guide, NoiseGrid grid, ParallelOptions opts)
+    public static float[][] DenoisePlane(float[] plane, int w, int h, float[] ks, float keep, float[] guide, NoiseGrid grid, ParallelOptions opts)
     {
+        int scales = ks.Length;
         var measured = new float[scales][];
-        if (k <= 0f) return measured;
+        if (scales == 0 || ks[0] <= 0f) return measured;
         int n = plane.Length;
         var cur = (float[])plane.Clone();
         var next = new float[n];
@@ -281,6 +301,7 @@ public static class NoiseReduction
             var sig = BandSigma(samples, grid, j, j > 0 ? measured[j - 1] : null);
             measured[j] = sig;
             bool first = j == 0;
+            float k = ks[j];
             Parallel.For(0, h, opts, y =>
             {
                 int o = y * w;
@@ -329,14 +350,14 @@ public static class NoiseReduction
         var plan = Plan(luma, color);
         var guide = Guide(py, w, h, opts);
         var grid = MakeGrid(w, h, i => guide[i]);
-        var my = DenoisePlane(py, w, h, LumaScales, plan.Ky, plan.KeepY, guide, grid, opts);
+        var my = DenoisePlane(py, w, h, plan.YK, plan.KeepY, guide, grid, opts);
         foreach (var pl in new[] { po, pc })
         {
             Despeckle(pl, w, h, plan.Median, 1, opts);
             Despeckle(pl, w, h, plan.Median, 2, opts);
         }
-        DenoisePlane(po, w, h, ChromaScales, plan.Kc, 0f, guide, grid, opts);
-        DenoisePlane(pc, w, h, ChromaScales, plan.Kc, 0f, guide, grid, opts);
+        DenoisePlane(po, w, h, plan.CK, 0f, guide, grid, opts);
+        DenoisePlane(pc, w, h, plan.CK, 0f, guide, grid, opts);
         return my;
     }
 

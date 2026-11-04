@@ -1574,6 +1574,29 @@ public partial class MainWindow
             brow.Children.Add(clear);
             sp.Children.Add(brow);
         }
+        else if (mask.Kind == MaskRender.Radial)
+        {
+            sp.Children.Add(LabelRow("Rotation", out var rv, muted));
+            var rot = new Slider { Minimum = -90, Maximum = 90, Value = MaskRender.RadialAngle(mask), SmallChange = 1, LargeChange = 15 };
+            rot.ToolTip = "Turns the ellipse (or drag the orange handle on the photo; Shift snaps to 15°). Double-click resets.";
+            AutomationProperties.SetAutomationId(rot, "PluginMaskRotation_" + key);
+            PhotoshopSlider.SetEnable(rot, true);
+            rv.Text = $"{rot.Value:0.#}°";
+            rot.MouseDoubleClick += (_, _) => rot.Value = 0;
+            rot.ValueChanged += (_, e) =>
+            {
+                rv.Text = $"{e.NewValue:0.#}°";
+                if (!_pluginState.Masks.TryGetValue(key, out var m)) return;
+                var p = new double[6];
+                double[] defs = { 0.5, 0.5, 0.3, 0.3, 0.5, 0 };
+                for (int k = 0; k < 6; k++) p[k] = m.P is not null && m.P.Length > k ? m.P[k] : defs[k];
+                p[5] = Math.Round(e.NewValue, 2);
+                _pluginState.Masks[key] = m with { P = p };
+                SyncMaskOverlaySpec();
+                OnPluginUiChanged();
+            };
+            sp.Children.Add(rot);
+        }
         else if (mask.Kind == MaskRender.Luma)
         {
             string[] names = { "Lower bound", "Upper bound", "Feather" };
@@ -1720,6 +1743,7 @@ public partial class MainWindow
         if (_maskEditFilter is null) return;
         _pluginState.Masks[_maskEditFilter] = spec;
         OnPluginUiChanged();
+        if (final && spec.Kind == MaskRender.Radial) DeferRebuild(); // rotation slider follows the handle
     }
 
     private void RefreshMaskOverlay()

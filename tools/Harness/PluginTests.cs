@@ -194,6 +194,28 @@ internal static partial class Program
         Check(rad is not null && rad[ci] > 0.95f && rad[0] < 0.05f, "radial mask: center in, corner out");
         var radInv = MaskRender.Render(MaskRender.DefaultFor(MaskRender.Radial) with { Invert = true }, pimg, ctx, reg);
         Check(radInv is not null && rad is not null && Math.Abs(radInv[ci] + rad[ci] - 1f) < 1e-4f, "inverted mask = 1 - mask");
+        {
+            // Rotated radial (P[5], degrees clockwise, pixel space): a thin horizontal ellipse turned by 90 / 45 degrees.
+            double mn = Math.Min(W, H);
+            double[] Ell(double angle) => new[] { 0.5, 0.5, 0.4 * mn / W, 0.08 * mn / H, 0.0, angle };
+            float At(float[]? m, double ox, double oy) => m is null ? -1 : m[(int)(H / 2 + oy) * W + (int)(W / 2 + ox)];
+            var r0 = MaskRender.Render(new MaskSpec { Kind = MaskRender.Radial, P = Ell(0) }, pimg, ctx, reg);
+            var r90 = MaskRender.Render(new MaskSpec { Kind = MaskRender.Radial, P = Ell(90) }, pimg, ctx, reg);
+            var rm270 = MaskRender.Render(new MaskSpec { Kind = MaskRender.Radial, P = Ell(-270) }, pimg, ctx, reg);
+            var r45 = MaskRender.Render(new MaskSpec { Kind = MaskRender.Radial, P = Ell(45) }, pimg, ctx, reg);
+            double d = 0.3 * mn, q = d / Math.Sqrt(2);
+            Check(At(r0, d, 0) > 0.95f && At(r0, 0, d) < 0.05f && At(r90, d, 0) < 0.05f && At(r90, 0, d) > 0.95f,
+                  "radial rotation: 90 degrees turns the long axis from horizontal to vertical");
+            Check(At(r45, q, q) > 0.95f && At(r45, -q, q) < 0.05f && At(r45, d, 0) < 0.05f, "radial rotation: 45 degrees clockwise");
+            Check(r90 is not null && rm270 is not null && r90.Zip(rm270).All(t => Math.Abs(t.First - t.Second) < 1e-4f), "radial rotation: 90 = -270");
+            var r5 = MaskRender.Render(new MaskSpec { Kind = MaskRender.Radial, P = Ell(0).Take(5).ToArray() }, pimg, ctx, reg);
+            Check(r5 is not null && r0 is not null && r5.SequenceEqual(r0), "radial rotation: 5 values = angle 0 (old masks unchanged)");
+            Check(MaskRender.RadialAngle(new MaskSpec { Kind = "radial", P = Ell(120) }) == -60 && MaskRender.RadialAngle(new MaskSpec { Kind = "radial", P = Ell(-90) }) == 90 &&
+                  MaskRender.RadialAngle(new MaskSpec { Kind = "radial", P = Ell(0).Take(5).ToArray() }) == 0 && MaskRender.RadialAngle(null) == 0,
+                  "radial rotation: RadialAngle folds to -90..90");
+            var api = PluginEditOps.ToMaskSpec(new MaskInfo { Kind = "radial", P = Ell(30) });
+            Check(api?.P is { Length: 6 } ap && ap[5] == 30 && PluginEditOps.ToMaskInfo(api)!.P[5] == 30, "radial rotation: plugin API keeps P[5]");
+        }
         var sky = MaskRender.Render(new MaskSpec { Kind = "plugin:sample.sky:sky" }, pimg, ctx, reg);
         Check(sky is not null && sky.Length == W * H, "plugin mask provider renders");
 

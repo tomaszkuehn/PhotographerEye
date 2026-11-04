@@ -2059,6 +2059,23 @@ internal static partial class Program
         diff /= w * h;
         Check(diff < 1.5, $"NR 100 leaves a clean image almost untouched (mean diff {diff:0.##})");
 
+        // Extended range (sliders up to 200): up to 100 nothing changes, past it the plan grows and one coarser scale joins.
+        var p100 = NoiseReduction.Plan(1.0, 1.0);
+        var p200 = NoiseReduction.Plan(2.0, 2.0);
+        var p150 = NoiseReduction.Plan(1.5, 1.5);
+        Check(p100.YK.Length == NoiseReduction.LumaScales && p100.CK.Length == NoiseReduction.ChromaScales &&
+              p100.YK.All(k => k == 3f) && p100.CK.All(k => k == 6f) && Math.Abs(p100.KeepY - 0.12f) < 1e-6f,
+              "NR plan at 100 is the same as before the extended range");
+        Check(p200.YK.Length == NoiseReduction.LumaScales + 1 && p200.CK.Length == NoiseReduction.ChromaScales + 1 &&
+              p200.Ky == 4.5f && p200.YK.All(k => k == 4.5f) && p200.CK.All(k => k == p200.Kc) && p200.KeepY == 0f && p150.YK[^1] > 0f && p150.YK[^1] < p200.YK[^1] &&
+              NoiseReduction.Plan(3.0, 3.0).Ky == 4.5f, "NR plan past 100: stronger threshold, no kept grain, extra scale ramps in, clamped at 200");
+        var p101 = NoiseReduction.Plan(1.01, 1.01);
+        Check(p101.YK[^1] < 0.1f && p101.CK[^1] < 0.2f, "NR plan just past 100: the extra scale starts near 0 (no jump)");
+        var out200 = Px(AdjustmentsProcessor.Apply(noisy, 0.0, 1.0, null, out _, extra: new PhotoAdjustments { Denoise = 2.0, ColorNoise = 2.0 })!);
+        double f2 = Flat(out200), e2 = Edge(out200);
+        Check(f2 < f1 * 0.8, $"NR 200 removes more flat-area noise than 100 ({f1:0.##} -> {f2:0.##})");
+        Check(e2 > e0 * 0.75, $"NR 200 keeps most edge contrast ({e0:0.#} -> {e2:0.#}; the strongest setting trades some for smoothness)");
+
         // RAW16: photon-like noise (sigma ~ sqrt(signal)) in a dark and a bright patch, CPU vs GPU.
         int rw = 2400, rh = 1800;
         var raw = new Raw16Image(rw, rh);
@@ -2105,6 +2122,24 @@ internal static partial class Program
             }
             double mean = sum / (double)((d16.G.Length + 6) / 7);
             Check(mean < 4.0 && max < 256, $"NR RAW16 gpu matches cpu (mean {mean:0.##}, max {max})");
+        }
+        var strong = new PhotoAdjustments { Denoise = 1.8, ColorNoise = 1.7 };
+        var d16s = Adjust16.Apply(raw, 0.0, 1.0, null, out _, extra: strong);
+        double dark2 = Sd16(d16s, 200, 300);
+        Check(dark2 < dark1, $"NR RAW16 180 removes more dark-area noise than 100 ({dark1:0.####} -> {dark2:0.####})");
+        var g16s = Adjust16.TryApplyGpu(raw, 0.0, 1.0, null, out _, extra: strong);
+        if (g16s is not null)
+        {
+            long sum = 0;
+            int max = 0;
+            for (int i = 0; i < d16s.G.Length; i += 7)
+            {
+                int dd = Math.Abs(d16s.G[i] - g16s.G[i]);
+                sum += dd;
+                if (dd > max) max = dd;
+            }
+            double mean = sum / (double)((d16s.G.Length + 6) / 7);
+            Check(mean < 4.0 && max < 256, $"NR RAW16 180 gpu matches cpu (mean {mean:0.##}, max {max})");
         }
     }
 

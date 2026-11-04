@@ -74,8 +74,8 @@ public static class CoreParams
         P("Clarity", nameof(EyeState.Clarity), "Clarity", -100, 100, 0, "ClaritySlider", "ClarityValue", (s, v) => s with { Clarity = v }, s => s.Clarity),
         P("Dehaze", nameof(EyeState.Dehaze), "Dehaze", -100, 100, 0, "DehazeSlider", "DehazeValue", (s, v) => s with { Dehaze = v }, s => s.Dehaze),
         P("Sharpen", nameof(EyeState.Sharpen), "Sharpen", 0, 150, 0, "SharpenSlider", "SharpenValue", (s, v) => s with { Sharpen = v }, s => s.Sharpen),
-        P("Denoise", nameof(EyeState.Denoise), "Denoise", 0, 100, 0, "DenoiseSlider", "DenoiseValue", (s, v) => s with { Denoise = v }, s => s.Denoise),
-        P("ColorNoise", nameof(EyeState.ColorNoise), "Color noise", 0, 100, 0, "ColorNoiseSlider", "ColorNoiseValue", (s, v) => s with { ColorNoise = v }, s => s.ColorNoise),
+        P("Denoise", nameof(EyeState.Denoise), "Denoise", 0, 200, 0, "DenoiseSlider", "DenoiseValue", (s, v) => s with { Denoise = v }, s => s.Denoise),
+        P("ColorNoise", nameof(EyeState.ColorNoise), "Color noise", 0, 200, 0, "ColorNoiseSlider", "ColorNoiseValue", (s, v) => s with { ColorNoise = v }, s => s.ColorNoise),
         new CoreParam
         {
             Key = "Gamma", Field = nameof(EyeState.Gamma), Label = "Gamma", Min = 0.5, Max = 2, Default = 1, Slider = "GammaSlider", Decimals = 2,

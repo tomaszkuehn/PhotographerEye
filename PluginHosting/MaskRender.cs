@@ -76,6 +76,14 @@ public static class MaskRender
         return Invertible(m, spec);
     }
 
+    /// <summary>Rotation angle of a radial mask (P[5]) folded to -90..90 degrees (an ellipse turned by 180 degrees is the same).</summary>
+    public static double RadialAngle(MaskSpec? s)
+    {
+        double a = s?.P is { Length: > 5 } p && double.IsFinite(p[5]) ? p[5] : 0;
+        a = ((a + 90) % 180 + 180) % 180 - 90;
+        return a == -90 ? 90 : a;
+    }
+
     public static bool IsGeometric(string kind) => kind is Linear or Radial or Brush;
 
     /// <summary>
@@ -144,21 +152,26 @@ public static class MaskRender
         return m;
     }
 
-    /// <summary>Ellipse (cx, cy, rx, ry as fractions of width/height) with feather 0..1 of the radius. 1 inside.</summary>
+    /// <summary>
+    /// Ellipse (cx, cy, rx, ry as fractions of width/height) with feather 0..1 of the radius and an optional rotation
+    /// (P[5], degrees clockwise, in pixel space so the shape keeps its proportions). 1 inside.
+    /// </summary>
     private static float[] RenderRadial(MaskSpec s, int w, int h)
     {
         double cx = P(s, 0, 0.5) * w, cy = P(s, 1, 0.5) * h;
         double rx = Math.Max(1, P(s, 2, 0.3) * w), ry = Math.Max(1, P(s, 3, 0.3) * h);
         double feather = Math.Clamp(P(s, 4, 0.5), 0.0, 1.0);
         double inner = 1 - feather;
+        double th = P(s, 5, 0) * Math.PI / 180, cos = Math.Cos(th), sin = Math.Sin(th);
         var m = new float[w * h];
         Parallel.For(0, h, y =>
         {
             int row = y * w;
-            double ny = (y + 0.5 - cy) / ry;
+            double dy = y + 0.5 - cy;
             for (int x = 0; x < w; x++)
             {
-                double nx = (x + 0.5 - cx) / rx;
+                double dx = x + 0.5 - cx;
+                double nx = (dx * cos + dy * sin) / rx, ny = (dy * cos - dx * sin) / ry;
                 double d = Math.Sqrt(nx * nx + ny * ny);
                 double t = feather < 1e-6 ? (d <= 1 ? 0 : 1) : (d - inner) / feather;
                 m[row + x] = 1f - Smooth(t);

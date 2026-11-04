@@ -54,7 +54,7 @@ public sealed record EyeState
 /// <summary>Local mask attached to a plugin filter. Coordinates are fractions of the un-rotated, un-cropped photo.</summary>
 public sealed record MaskSpec
 {
-    /// <summary>"linear" (P = x1,y1,x2,y2), "radial" (P = cx,cy,rx,ry,feather), "brush" (Strokes), "luma" (P = lo,hi,feather) or "plugin:&lt;pluginId:maskId&gt;".</summary>
+    /// <summary>"linear" (P = x1,y1,x2,y2), "radial" (P = cx,cy,rx,ry,feather[,rotation degrees]), "brush" (Strokes), "luma" (P = lo,hi,feather) or "plugin:&lt;pluginId:maskId&gt;".</summary>
     public string Kind { get; init; } = "";
     public double[]? P { get; init; }
     public bool Invert { get; init; }

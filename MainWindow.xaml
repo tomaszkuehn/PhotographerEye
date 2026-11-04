@@ -473,14 +473,14 @@
                                   <TextBlock Text="Noise reduction" ToolTip="Removes luminance grain; strength adapts to the noise measured in the photo, edges and texture are kept" />
                                   <TextBlock x:Name="DenoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="DenoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="DenoiseSlider" Minimum="0" Maximum="200" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Color noise reduction" ToolTip="Removes colored speckles and color blotches; brightness detail is not affected" />
                                   <TextBlock x:Name="ColorNoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="ColorNoiseSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="ColorNoiseSlider" Minimum="0" Maximum="200" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           </StackPanel>
                           <StackPanel x:Name="PluginPanelHost" AutomationProperties.AutomationId="PluginPanelHost" />
