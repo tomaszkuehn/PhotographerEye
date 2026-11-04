@@ -26,11 +26,41 @@ public partial class MainWindow
     private string? _nextStepLabel;
     private readonly Dictionary<string, CancellationTokenSource> _bgTasks = new(StringComparer.Ordinal);
 
+    // A command, tool press or background result starts a step of its own. When it changes nothing, the edit before
+    // it keeps merging (a click on the photo between two moves of one slider does not split them into two steps).
+    private bool _histOpOpen;
+    private string? _histOpKey;
+    private int _histOpCount, _histOpPos;
+    private EyeState? _histOpTop;
+
+    /// <summary>Starts a command or tool press: its changes do not merge into the previous step.</summary>
+    private void BeginHistOp()
+    {
+        _histOpOpen = true;
+        _histOpKey = _histLastKey;
+        _histOpCount = _hist.Count;
+        _histOpPos = _histPos;
+        _histOpTop = _histPos >= 0 && _histPos < _hist.Count ? _hist[_histPos] : null;
+        _histLastKey = null;
+    }
+
+    /// <summary>Ends a command or tool press: a stored step stops merging, no change gives the previous key back.</summary>
+    private void EndHistOp()
+    {
+        if (!_histOpOpen) return;
+        _histOpOpen = false;
+        bool stored = _hist.Count != _histOpCount || _histPos != _histOpPos
+                      || _histPos < 0 || _histPos >= _hist.Count || !ReferenceEquals(_hist[_histPos], _histOpTop);
+        _histLastKey = stored ? null : _histOpKey;
+        _histOpTop = null;
+    }
+
     /// <summary>Records the current state as its own undo step (not merged with the previous one), labelled when a label is given.</summary>
     private void CommitStep(string? label)
     {
         _histCommitTimer?.Stop();
-        _histLastKey = null;
+        if (!_histOpOpen) BeginHistOp();
+        else _histLastKey = null;
         _nextStepLabel = string.IsNullOrWhiteSpace(label) ? null : label.Trim();
         try
         {
@@ -39,7 +69,7 @@ public partial class MainWindow
         finally
         {
             _nextStepLabel = null;
-            _histLastKey = null;
+            EndHistOp();
         }
     }
 
@@ -59,7 +89,7 @@ public partial class MainWindow
         }
         // Earlier edits become their own step, so the command's changes are one step of their own.
         CommitHistNow();
-        _histLastKey = null;
+        BeginHistOp();
         var ctx = new CommandContext(this, c.PluginId, c.Owner, c.D.Label);
         try
         {
@@ -84,6 +114,10 @@ public partial class MainWindow
         {
             PluginManager.Instance.ReportFailure(owner, what, ex);
             SetStatus($"{what}: {ex.Message}", error: true);
+        }
+        finally
+        {
+            EndHistOp();
         }
     }
 
@@ -133,7 +167,7 @@ public partial class MainWindow
             SetStatus($"{label} — done", error: false);
             if (done is null) return;
             CommitHistNow();
-            _histLastKey = null;
+            BeginHistOp();
             var ctx = new CommandContext(this, pid, owner, stepLabel);
             try
             {

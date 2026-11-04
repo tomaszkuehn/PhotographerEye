@@ -730,9 +730,15 @@ public partial class MainWindow
         var pd = free.D.Params.FirstOrDefault(d => d.Kind == ParamKind.Point);
         if (pd is null)
         {
-            CopyRepeatParams(from, free);
+            // a new area (a mask of its own) starts with the plugin's default settings, not those of the selected one
             _pluginState.Active.Add(free.FullId);
             _repeatSelected[RepeatKey(free)] = free.FullId;
+            if (free.D.SupportsMask && !_pluginState.Masks.ContainsKey(free.FullId))
+            {
+                // a new area starts limited to a circle in the middle of the view, not on the whole photo
+                _pluginState.Masks[free.FullId] = NewMaskSpec(MaskRender.Radial);
+                BeginMaskEdit(free.FullId);
+            }
             DeferRebuild();
             OnPluginUiChanged();
             return;
@@ -748,7 +754,7 @@ public partial class MainWindow
         }, label);
     }
 
-    /// <summary>New item starts with the non-point settings of the selected one (size, feather, mode...).</summary>
+    /// <summary>A new point item (e.g. a heal spot) starts with the non-point settings of the selected one (size, feather, mode...).</summary>
     private void CopyRepeatParams(Registered<FilterDescriptor>? from, Registered<FilterDescriptor> to)
     {
         if (from is null || from == to) return;
@@ -1542,6 +1548,21 @@ public partial class MainWindow
         OnPluginUiChanged();
     }
 
+    /// <summary>Default mask of <paramref name="kind"/>; a new circle goes in the middle of the part of the photo on screen.</summary>
+    private MaskSpec NewMaskSpec(string kind)
+    {
+        double aspect = _baseInfo is ImageInfo info && info.Height > 0 ? info.Width / (double)info.Height : 1.0;
+        var spec = MaskRender.DefaultFor(kind, aspect);
+        if (kind == MaskRender.Radial && _baseInfo is ImageInfo vi && spec.P is { Length: >= 2 } rp)
+        {
+            // not off-screen when zoomed in
+            MaskOverlay.SetMapping(CurrentDisplayGeo(), vi.Width, vi.Height);
+            var c = MaskOverlay.VisibleCenterSrc();
+            rp[0] = c.X; rp[1] = c.Y;
+        }
+        return spec;
+    }
+
     private static bool IsInteractiveMask(string kind) => kind is MaskRender.Linear or MaskRender.Radial or MaskRender.Brush;
 
     private FrameworkElement BuildMaskControls(string key, string label, Brush muted)
@@ -1594,15 +1615,7 @@ public partial class MainWindow
                 }
                 else
                 {
-                    double aspect = _baseInfo is ImageInfo info && info.Height > 0 ? info.Width / (double)info.Height : 1.0;
-                    var spec = MaskRender.DefaultFor(kind, aspect);
-                    if (kind == MaskRender.Radial && _baseInfo is ImageInfo vi && spec.P is { Length: >= 2 } rp)
-                    {
-                        // a new circle goes in the middle of the part of the photo on screen, not off-screen when zoomed in
-                        MaskOverlay.SetMapping(CurrentDisplayGeo(), vi.Width, vi.Height);
-                        var c = MaskOverlay.VisibleCenterSrc();
-                        rp[0] = c.X; rp[1] = c.Y;
-                    }
+                    var spec = NewMaskSpec(kind);
                     if (adjust && _pluginState.Masks.TryGetValue(key, out var was)) spec = spec with { Adjust = PluginEditState.CopyAdjust(was.Adjust) };
                     _pluginState.Masks[key] = spec;
                     if (adjust && current.Length == 0)

@@ -268,7 +268,7 @@ public partial class MainWindow
             _w.CommitHistNow();
             if (press)
             {
-                _w._histLastKey = null;
+                _w.BeginHistOp();
                 _w._histCommitTimer?.Stop();
             }
             return new CommandContext(_w, r?.PluginId ?? "", r?.Owner, tool.D.Label) { IsPress = press };

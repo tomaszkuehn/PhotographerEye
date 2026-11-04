@@ -283,6 +283,7 @@ public partial class MainWindow : Window
         _hist = new List<EyeState>();
         _histPos = -1;
         _histLastKey = null;
+        _histOpOpen = false;
         _histPending = true;
         NotifyHistoryChanged();
         _histPendingSt = null;
@@ -596,6 +597,7 @@ public partial class MainWindow : Window
         bool runOutput = !_cropMode;
         int renderSeq = ++_renderSeq;
         _renderBusy = true;
+        string shape = PluginShapeKey();
 
         _ = Task.Run(() =>
         {
@@ -641,7 +643,7 @@ public partial class MainWindow : Window
                     Dispatcher.BeginInvoke(() =>
                     {
                         if (!IsCurrent(path) || !ReferenceEquals(_baseRaw16, raw16)) return;
-                        if (_compareOn) return;
+                        if (_compareOn || IsStaleRender(ct, shape)) return;
                         StoreUnGeo(disp, box);
                         SetDisplayed(gdisp, gbox);
                         RememberRendered(path, stSnap, gdisp, gbox);
@@ -673,7 +675,7 @@ public partial class MainWindow : Window
                 Dispatcher.BeginInvoke(() =>
                 {
                     if (!IsCurrent(path) || !ReferenceEquals(_baseBitmap, raw)) return;
-                    if (_compareOn) return;
+                    if (_compareOn || IsStaleRender(ct, shape)) return;
                     StoreUnGeo(processedOut, box);
                     SetDisplayed(gprocessed, gbox8);
                     RememberRendered(path, stSnap, gprocessed, gbox8);
@@ -1073,6 +1075,29 @@ public partial class MainWindow : Window
         _renderDirty = false;
         ReapplyAdjustments();
     }
+
+    /// <summary>
+    /// Which filters are on and the kind of mask each one has ("-" = whole photo), with the Adjustments mask. A slow
+    /// render started before a filter got its mask would otherwise show the effect on the whole photo for a moment.
+    /// </summary>
+    private string PluginShapeKey()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var f in _pluginReg.Filters)
+        {
+            if (!_pluginState.IsFilterOn(f)) continue;
+            sb.Append(f.FullId).Append('=').Append(_pluginState.MaskFor(f)?.Kind ?? "-").Append(';');
+        }
+        var am = _pluginState.Masks.TryGetValue(AdjustMask.Key, out var a) ? _pluginState.Resolve(a)?.Kind : null;
+        return sb.Append("adjust=").Append(am ?? "-").ToString();
+    }
+
+    /// <summary>
+    /// A finished render is not shown when a newer one replaced it (cancelled) or when a newer render is waiting and
+    /// the filters or their masks changed since this one started (a lagging slider value is still shown at once).
+    /// </summary>
+    private bool IsStaleRender(CancellationToken ct, string shape) =>
+        ct.IsCancellationRequested || (_renderDirty && !string.Equals(shape, PluginShapeKey(), StringComparison.Ordinal));
 
     private void OnRenderFinished(int seq)
     {

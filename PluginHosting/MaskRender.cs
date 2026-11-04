@@ -183,18 +183,14 @@ public static class MaskRender
         return m;
     }
 
-    /// <summary>Linear gradient: 1 at (x1,y1) side, 0 past (x2,y2). Full effect before the start line.</summary>
+    /// <summary>Linear gradient: 1 at (x1,y1) side, 0 past (x2,y2). Full effect before the start line; both handles on one point give no effect.</summary>
     private static float[] RenderLinear(MaskSpec s, int w, int h)
     {
         double x1 = P(s, 0, 0.5) * w, y1 = P(s, 1, 0.25) * h, x2 = P(s, 2, 0.5) * w, y2 = P(s, 3, 0.6) * h;
         double dx = x2 - x1, dy = y2 - y1;
         double len2 = dx * dx + dy * dy;
         var m = new float[w * h];
-        if (len2 < 1e-6)
-        {
-            Array.Fill(m, 1f);
-            return m;
-        }
+        if (len2 < 1e-6) return m; // no direction: empty, not the whole photo
         Parallel.For(0, h, y =>
         {
             int row = y * w;
