@@ -140,13 +140,19 @@ public sealed class PluginEditState
         int j = i + delta;
         if (i < 0 || j < 0 || j >= stage.Count) return false;
         (stage[i], stage[j]) = (stage[j], stage[i]);
+        SetStageOrder(reg, f.D.Stage, stage.Select(x => x.FullId).ToList());
+        return true;
+    }
+
+    /// <summary>Stores the full order of one stage (ids of all its loaded filters, first to last).</summary>
+    public void SetStageOrder(PluginRegistry reg, FilterStage stage, List<string> ids)
+    {
         // Ids of other stages and of plugins that are not loaded stay; this stage is rewritten in full.
-        var stageIds = new HashSet<string>(stage.Select(x => x.FullId), StringComparer.Ordinal);
+        var stageIds = new HashSet<string>(reg.Filters.Where(x => x.D.Stage == stage).Select(x => x.FullId), StringComparer.Ordinal);
         var rest = Order.Where(id => !stageIds.Contains(id)).ToList();
         Order.Clear();
         Order.AddRange(rest);
-        Order.AddRange(stage.Select(x => x.FullId));
-        return true;
+        Order.AddRange(ids.Where(stageIds.Contains));
     }
 
     /// <summary>

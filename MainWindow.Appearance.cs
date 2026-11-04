@@ -52,7 +52,8 @@ public partial class MainWindow
 
         // Test hook (screenshots without mouse tests): PE_OPEN_SETTINGS=1 opens the flyout,
         // PE_OPEN_SETTINGS=<tile name> (e.g. TileBackground) opens that tile's menu,
-        // "none" leaves the window as it is, "panel" opens the adjustments panel, "present" / "slideshow" enters presentation mode.
+        // "none" leaves the window as it is, "panel" opens the adjustments panel, "present" / "slideshow" enters presentation mode,
+        // "order" opens the plugin filter order window.
         var hook = Environment.GetEnvironmentVariable("PE_OPEN_SETTINGS");
         if (!string.IsNullOrEmpty(hook))
         {
@@ -65,6 +66,13 @@ public partial class MainWindow
                 if (hook == "none") { }
                 else if (hook == "panel") TogglePanel();
                 else if (hook is "present" or "slideshow") SetPresentation(true, slideshow: hook == "slideshow");
+                else if (hook == "order")
+                {
+                    // Plugin filter order window; it snapshots itself (PE_SNAPSHOT) once rendered.
+                    TogglePanel();
+                    ShowFilterOrderWindow();
+                    return;
+                }
                 else if (hook != "1" && FindName(hook) is Button tile) { OpenTileMenu(tile); menu = tile.ContextMenu; }
                 else OpenSettingsFlyout();
                 // PE_SNAPSHOT=<file.png>: render the window (and the open flyout/menu) from inside the app and exit.

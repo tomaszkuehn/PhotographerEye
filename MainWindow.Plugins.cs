@@ -486,13 +486,32 @@ public partial class MainWindow
                 .Where(f => f.D.Params.Count > 0 || f.D.Placement == FilterPlacement.Panel));
         if (ordered.Count == 0 && _pluginReg.ListPanels.Count == 0) return;
 
+        var pluginsHead = new DockPanel();
+        if (ordered.Count > 0)
+        {
+            var orderBtn = new Button
+            {
+                Content = "Order…",
+                FontSize = 11,
+                Height = 18,
+                MinWidth = 0,
+                Padding = new Thickness(6, 0, 6, 0),
+                ToolTip = "Order in which the plugin filters run (each works on the result of the one before)"
+            };
+            orderBtn.SetResourceReference(StyleProperty, "ToolButton");
+            AutomationProperties.SetAutomationId(orderBtn, "BtnPluginOrder");
+            orderBtn.Click += (_, _) => ShowFilterOrderWindow();
+            DockPanel.SetDock(orderBtn, Dock.Right);
+            pluginsHead.Children.Add(orderBtn);
+        }
+        pluginsHead.Children.Add(new TextBlock { Text = "PLUGINS", Foreground = muted, FontSize = 11, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         PluginPanelHost.Children.Add(new Border
         {
             BorderBrush = border,
             BorderThickness = new Thickness(0, 1, 0, 0),
             Margin = new Thickness(0, 16, 0, 0),
             Padding = new Thickness(0, 6, 0, 0),
-            Child = new TextBlock { Text = "PLUGINS", Foreground = muted, FontSize = 11, FontWeight = FontWeights.SemiBold }
+            Child = pluginsHead
         });
 
         // One collapsible section per plugin (built-in filters first), filters inside in run order.
@@ -808,7 +827,7 @@ public partial class MainWindow
         if (mask is not null) _pluginState.Masks[f.FullId] = mask;
     }
 
-    /// <summary>Enable checkbox (parameterless panel filters), run earlier/later and reset.</summary>
+    /// <summary>Enable checkbox (parameterless panel filters) and reset; the run order is set in PLUGINS ▸ Order….</summary>
     private List<FrameworkElement> FilterHeaderTools(Registered<FilterDescriptor> f)
     {
         var list = new List<FrameworkElement>();
@@ -818,10 +837,6 @@ public partial class MainWindow
             cb.Click += (_, _) => SetFilterActive(f, cb.IsChecked == true);
             list.Add(cb);
         }
-        var up = SmallButton("", "Run earlier (order among all plugin filters of the same stage)");
-        up.Click += (_, _) => { if (_pluginState.Move(_pluginReg, f, -1)) { DeferRebuild(); OnPluginUiChanged(); } };
-        var down = SmallButton("", "Run later (order among all plugin filters of the same stage)");
-        down.Click += (_, _) => { if (_pluginState.Move(_pluginReg, f, +1)) { DeferRebuild(); OnPluginUiChanged(); } };
         var reset = SmallButton("", "Reset " + f.D.Label);
         reset.Click += (_, _) =>
         {
@@ -829,8 +844,6 @@ public partial class MainWindow
             DeferRebuild();
             OnPluginUiChanged();
         };
-        list.Add(up);
-        list.Add(down);
         list.Add(reset);
         return list;
     }

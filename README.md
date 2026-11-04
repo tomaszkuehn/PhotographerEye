@@ -96,7 +96,7 @@ PhotographerEye loads .NET plugins that target `netstandard2.0` and reference `I
   - `SceneLinear`: linear light, before the core adjustments.
   - `Display`: sRGB, after the core adjustments.
   - `Output`: after crop and rotate (for example a vignette).
-- **Placement**: a filter goes either on the toolbar (a toggle button) or in the Adjustments panel (a collapsible section per `Group`, with up/down/reset buttons). The user's filter order is stored in `.eye`.
+- **Placement**: a filter goes either on the toolbar (a toggle button) or in the Adjustments panel (a collapsible section per `Group`, with a reset button). The run order is set in **PLUGINS ▸ Order…**: a window that lists the filters used on the photo grouped by stage (before tone / after tone and colour / after crop; "Show all filters" adds the unused ones), with up/down only inside a stage that has two or more of them, and "Default order". Filters run top to bottom, each on the result of the one before; the built-in adjustments always run at a fixed place between the stages, whatever order you used them in. The order is stored in `.eye`.
 - **Parameter kinds**: `Slider`, `Toggle`, `Choice`, `Color` (hex, with an HSL picker), `Curve` (`x,y;...`, with a curve editor), `Point` (pick on the image), `File` (browse). Optional `IsIdentity` skips a filter while it would have no effect.
 - **IDs are namespaced**: `pluginId:filterId`, and parameter values are stored as `pluginId:filterId/paramId`. Values that belong to plugins which are not installed are kept untouched in `.eye`, so a photo survives a round-trip through a machine without the plugin.
 - **Masks**: any filter with `SupportsMask` (in every stage; masks of Output filters are mapped through crop and rotation) can be limited by one of:
