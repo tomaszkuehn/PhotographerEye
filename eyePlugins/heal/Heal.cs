@@ -10,8 +10,8 @@ namespace ImgViewer.Plugins.Heal;
 
 /// <summary>
 /// Spot healing: each spot copies a round patch from a source point of the photo over a defect. "Heal" keeps the
-/// texture of the source but matches its tone and colour to the defect's surroundings (the log ratio measured on the
-/// patch border is interpolated harmonically over the disk), "Clone" copies the source as is. Runs in scene-linear
+/// texture of the source but matches its tone and colour to the defect's surroundings (the log ratio measured on a ring
+/// around the patch is interpolated harmonically over the disk; feather fades the patch out beyond its circle), "Clone" copies the source as is. Runs in scene-linear
 /// light before the develop pipeline, so later adjustments act on the repaired photo.
 /// </summary>
 public sealed class HealPlugin : IEyePlugin
@@ -51,17 +51,22 @@ public sealed class HealPlugin : IEyePlugin
 
 public static class HealSpot
 {
-    /// <summary>Fourier terms of the border correction (higher = follows the border more closely, but also its noise).</summary>
-    public const int Terms = 10;
-    /// <summary>Border samples.</summary>
+    /// <summary>Fourier terms of the border correction (higher = follows the border more closely, but also its noise
+    /// and texture, which then shows as ripples inside the spot; 4 follows gradients and gentle tone changes).</summary>
+    public const int Terms = 4;
+    /// <summary>Border samples around the measuring ring.</summary>
     public const int Samples = 96;
+    /// <summary>Samples across the measuring ring at each angle (their median is used).</summary>
+    public const int RingSteps = 7;
+    /// <summary>Largest tone correction (natural log): e^2 ≈ 7.4x brighter or darker than the source.</summary>
+    public const double MaxLogRatio = 2.0;
 
     public static IReadOnlyList<ParamDef> Params() => new[]
     {
         Tip(Point("target", "Defect", ""), "Click Pick on photo, then click the centre of the defect"),
         Tip(Point("source", "Source", "target"), "Click Pick on photo, then click a clean area with similar texture"),
         Tip(ParamDef.Slider("size", "Size", 0.2, 15, 1.5, 0.1, "0.0"), "Spot radius in % of the photo's long side"),
-        Tip(ParamDef.Slider("feather", "Feather", 0, 100, 40), "Soft edge, % of the radius"),
+        Tip(ParamDef.Slider("feather", "Feather", 0, 100, 40), "Soft edge outside the circle, % of the radius (the circle itself is fully repaired)"),
         Tip(ParamDef.Choice("mode", "Mode", "heal", new ParamChoice("heal", "Heal (match surroundings)"), new ParamChoice("clone", "Clone (copy as is)")),
             "Heal keeps the source texture but takes tone and colour from around the defect"),
         Tip(ParamDef.Slider("opacity", "Opacity", 0, 100, 100), "Strength of the repair")
@@ -93,29 +98,34 @@ public static class HealSpot
 
     /// <summary>
     /// Repairs one spot in place. Points are fractions of the image (0..1), <paramref name="sizePct"/> the radius in % of
-    /// the long side, <paramref name="featherPct"/> the soft edge in % of the radius.
+    /// the long side, <paramref name="featherPct"/> the soft edge in % of the radius. The disk of the radius is replaced
+    /// fully (the defect is covered whole), the soft edge fades from the circle outwards to radius·(1 + feather).
+    /// Heal measures the tone on a ring just outside the soft edge (median across the ring, so neither the defect nor
+    /// a stray texture detail gets in), clamps it and interpolates it smoothly over the disk.
     /// </summary>
     public static void Apply(PluginImage img, double tx, double ty, double sx, double sy, double sizePct, double featherPct, bool heal, double opacity)
     {
         int w = img.Width, h = img.Height;
         double R = Math.Max(1.0, sizePct / 100.0 * Math.Max(w, h));
         double fe = Clamp(featherPct / 100.0, 0, 1);
-        double rIn = R * (1 - fe);
+        double rIn = R, rOut = R * (1 + fe);
         float op = (float)Clamp(opacity, 0, 1);
         double cx = tx * w, cy = ty * h;
         double dx = sx * w - cx, dy = sy * h - cy;
         if (op <= 0f || dx * dx + dy * dy < 1e-6) return;
 
-        // Border correction per channel: Fourier series of ln(target / source) on the circle of radius R.
+        // Border correction per channel: Fourier series of ln(target / source) on a ring outside the soft edge.
         var planes = new[] { img.R, img.G, img.B };
         var coef = new double[3][];
+        double ring0 = rOut + Math.Max(1.0, 0.1 * R), ring1 = ring0 + Math.Max(2.0, 0.35 * R);
+        double rN = 0.5 * (ring0 + ring1);
         if (heal)
         {
-            for (int c = 0; c < 3; c++) coef[c] = BorderSeries(planes[c], w, h, cx, cy, dx, dy, R);
+            for (int c = 0; c < 3; c++) coef[c] = BorderSeries(planes[c], w, h, cx, cy, dx, dy, ring0, ring1);
         }
 
-        int x0 = Math.Max(0, (int)Math.Floor(cx - R)), x1 = Math.Min(w - 1, (int)Math.Ceiling(cx + R));
-        int y0 = Math.Max(0, (int)Math.Floor(cy - R)), y1 = Math.Min(h - 1, (int)Math.Ceiling(cy + R));
+        int x0 = Math.Max(0, (int)Math.Floor(cx - rOut)), x1 = Math.Min(w - 1, (int)Math.Ceiling(cx + rOut));
+        int y0 = Math.Max(0, (int)Math.Floor(cy - rOut)), y1 = Math.Min(h - 1, (int)Math.Ceiling(cy + rOut));
         if (x0 > x1 || y0 > y1) return;
         int bw = x1 - x0 + 1, bh = y1 - y0 + 1;
 
@@ -135,8 +145,8 @@ public static class HealSpot
                 int x = x0 + xx;
                 double px = x + 0.5 - cx;
                 double d = Math.Sqrt(px * px + py * py);
-                if (d >= R) continue;
-                double a = d <= rIn ? 1.0 : SmoothFall((d - rIn) / Math.Max(1e-9, R - rIn));
+                if (d >= rOut) continue;
+                double a = d <= rIn ? 1.0 : SmoothFall((d - rIn) / Math.Max(1e-9, rOut - rIn));
                 if (a <= 0) continue;
                 int o = yy * bw + xx;
                 alpha[o] = (float)a * op;
@@ -145,7 +155,7 @@ public static class HealSpot
                 if (heal)
                 {
                     // z^n = (rho e^{i theta})^n: harmonic interpolation of the border series inside the disk.
-                    double ux = px / R, uy = py / R;
+                    double ux = px / rN, uy = py / rN;
                     zr[0] = 1; zi[0] = 0;
                     for (int n = 1; n <= Terms; n++)
                     {
@@ -156,7 +166,7 @@ public static class HealSpot
                     sg = (float)(sg * Math.Exp(Eval(coef[1], zr, zi)));
                     sb = (float)(sb * Math.Exp(Eval(coef[2], zr, zi)));
                 }
-                outR[o] = sr; outG[o] = sg; outB[o] = sb;
+                outR[o] = Math.Max(0f, sr); outG[o] = Math.Max(0f, sg); outB[o] = Math.Max(0f, sb);
             }
         });
 
@@ -176,24 +186,44 @@ public static class HealSpot
         }
     }
 
-    /// <summary>[a0, a1, b1, a2, b2, ...] of ln(target / source) sampled on the spot border (averaged over a 3 px band).</summary>
-    private static double[] BorderSeries(float[] plane, int w, int h, double cx, double cy, double dx, double dy, double R)
+    /// <summary>
+    /// [a0, a1, b1, a2, b2, ...] of ln(target / source) around the ring ring0..ring1. At each angle the median across the
+    /// ring is taken for target and source, the log ratio is clamped and then median-filtered around the circle, so an
+    /// edge or a speck crossing the ring does not pull a streak into the spot.
+    /// </summary>
+    private static double[] BorderSeries(float[] plane, int w, int h, double cx, double cy, double dx, double dy, double ring0, double ring1)
     {
-        const double Eps = 1e-4;
-        var v = new double[Samples];
+        var tv = new double[Samples];
+        var sv = new double[Samples];
+        var bt = new double[RingSteps];
+        var bs = new double[RingSteps];
         for (int k = 0; k < Samples; k++)
         {
             double th = 2 * Math.PI * k / Samples;
             double ux = Math.Cos(th), uy = Math.Sin(th);
-            double t = 0, s = 0;
-            for (int j = -1; j <= 1; j++)
+            for (int j = 0; j < RingSteps; j++)
             {
-                double r = Math.Max(0.5, R + j);
+                double r = ring0 + (ring1 - ring0) * j / (RingSteps - 1);
                 double px = cx + ux * r, py = cy + uy * r;
-                t += Sample(plane, w, h, px, py);
-                s += Sample(plane, w, h, px + dx, py + dy);
+                bt[j] = Sample(plane, w, h, px, py);
+                bs[j] = Sample(plane, w, h, px + dx, py + dy);
             }
-            v[k] = Math.Log(Math.Max(t / 3, Eps)) - Math.Log(Math.Max(s / 3, Eps));
+            tv[k] = Median(bt);
+            sv[k] = Median(bs);
+        }
+        // Floor relative to the ring level: in deep shadows (or black) the ratio of two near-zero values is noise.
+        double level = 0;
+        for (int k = 0; k < Samples; k++) level += Math.Max(0, tv[k]) + Math.Max(0, sv[k]);
+        double eps = Math.Max(1e-4, 0.02 * level / (2 * Samples));
+        var raw = new double[Samples];
+        for (int k = 0; k < Samples; k++)
+            raw[k] = Clamp(Math.Log(Math.Max(tv[k], 0) + eps) - Math.Log(Math.Max(sv[k], 0) + eps), -MaxLogRatio, MaxLogRatio);
+        var v = new double[Samples];
+        var win = new double[5];
+        for (int k = 0; k < Samples; k++)
+        {
+            for (int j = 0; j < 5; j++) win[j] = raw[(k + j - 2 + Samples) % Samples];
+            v[k] = Median(win);
         }
         var c = new double[1 + 2 * Terms];
         for (int k = 0; k < Samples; k++) c[0] += v[k];
@@ -208,11 +238,19 @@ public static class HealSpot
                 b += v[k] * Math.Sin(th);
             }
             // Lanczos sigma factor: damps the ringing of the truncated series.
-            double sig = n == Terms + 1 ? 0 : Math.Sin(Math.PI * n / (Terms + 1)) / (Math.PI * n / (Terms + 1));
+            double sig = Math.Sin(Math.PI * n / (Terms + 1)) / (Math.PI * n / (Terms + 1));
             c[2 * n - 1] = 2.0 / Samples * a * sig;
             c[2 * n] = 2.0 / Samples * b * sig;
         }
         return c;
+    }
+
+    private static double Median(double[] a)
+    {
+        var t = (double[])a.Clone();
+        Array.Sort(t);
+        int m = t.Length / 2;
+        return t.Length % 2 == 1 ? t[m] : 0.5 * (t[m - 1] + t[m]);
     }
 
     private static double Eval(double[] c, double[] zr, double[] zi)

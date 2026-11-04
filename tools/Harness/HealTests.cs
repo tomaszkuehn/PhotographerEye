@@ -114,6 +114,74 @@ internal static partial class Program
         Check(exact, "heal: clone with no feather copies the source pixels exactly");
         Check(outside, "heal: pixels outside the spot are untouched");
 
+        // Feather 50: the circle (12 px) is copied whole, the soft edge fades out from 12 to 18 px, beyond it nothing changes.
+        var fea = Make(true);
+        f.D.Render(fea, Params(tgt, Pt((120.5 + 150) / W, 120.5 / H), 3, 50, "clone"), ctx);
+        bool core = true, beyond = true;
+        var mix = new List<(double d, double t)>();
+        for (int y = 90; y < 150; y++)
+        for (int x = 90; x < 150; x++)
+        {
+            double d = Math.Sqrt((x + 0.5 - 120.5) * (x + 0.5 - 120.5) + (y + 0.5 - 120.5) * (y + 0.5 - 120.5));
+            int i = y * W + x;
+            float o = orig.G[i], s = orig.G[i + 150];
+            if (d < 11.5 && Math.Abs(fea.G[i] - s) > 1e-4f) core = false;
+            if (d > 18.5 && fea.G[i] != o) beyond = false;
+            if (d > 12.5 && d < 17.5 && Math.Abs(s - o) > 0.02) mix.Add((d, (fea.G[i] - o) / (s - o)));
+        }
+        double tNear = mix.Where(m => m.d < 14).DefaultIfEmpty((0, 0)).Average(m => m.t);
+        double tFar = mix.Where(m => m.d > 16).DefaultIfEmpty((0, 1)).Average(m => m.t);
+        Check(core && beyond && mix.Count > 20 && mix.All(m => m.t > 0.0 && m.t < 1.0) && tNear > tFar + 0.3,
+              $"heal: feather fades the patch out beyond the circle (core {core}, beyond {beyond}, near {tNear:0.00} > far {tFar:0.00})");
+
+        // Defect filling the whole circle (dark ring right at the edge) on a noisy texture: heal must not pull the defect
+        // or the noise into the spot (ripples, dark smears, overshoot).
+        var rnd = new Random(7);
+        PluginImage Noisy(double defR, double scale)
+        {
+            var im = new PluginImage(W, H);
+            var planes = new[] { im.R, im.G, im.B };
+            for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                double dd = Math.Sqrt((x + 0.5 - 120.5) * (x + 0.5 - 120.5) + (y + 0.5 - 120.5) * (y + 0.5 - 120.5));
+                double n = 1 + 0.25 * (rnd.NextDouble() - 0.5);
+                for (int c = 0; c < 3; c++)
+                    planes[c][y * W + x] = (float)(Clean(c, x, y) * scale * n * (dd < defR ? 0.05 : 1));
+            }
+            return im;
+        }
+        double SpotRange(PluginImage im, PluginImage clean, double r, out double meanErr)
+        {
+            double worst = 0, sum = 0; int cnt = 0;
+            for (int y = 100; y < 141; y++)
+            for (int x = 100; x < 141; x++)
+            {
+                double d = Math.Sqrt((x + 0.5 - 120.5) * (x + 0.5 - 120.5) + (y + 0.5 - 120.5) * (y + 0.5 - 120.5));
+                if (d > r) continue;
+                int i = y * W + x;
+                double e = Math.Abs(im.G[i] - Clean(1, x, y) * clean.G[0] / Clean(1, 0, 0)) / (Clean(1, x, y) * clean.G[0] / Clean(1, 0, 0));
+                worst = Math.Max(worst, e); sum += e; cnt++;
+            }
+            meanErr = sum / Math.Max(1, cnt);
+            return worst;
+        }
+        var scaleRef = new PluginImage(1, 1);
+        scaleRef.G[0] = Clean(1, 0, 0);
+        var big = Noisy(12.0, 1.0);
+        f.D.Render(big, Params(tgt, src, 3, 30, "heal"), ctx);
+        double bigMax = SpotRange(big, scaleRef, 12, out double bigMean);
+        Check(bigMax < 0.3 && bigMean < 0.08,
+              $"heal: defect up to the circle edge on noisy texture leaves no smears or ripples (max {bigMax:0.000}, mean {bigMean:0.000})");
+        // Dark noisy photo (deep shadows): stays finite, non-negative and close to the surroundings.
+        var darkRef = new PluginImage(1, 1);
+        darkRef.G[0] = (float)(Clean(1, 0, 0) * 0.004);
+        var dark = Noisy(6.0, 0.004);
+        f.D.Render(dark, Params(tgt, src, 3, 30, "heal"), ctx);
+        double darkMax = SpotRange(dark, darkRef, 12, out double darkMean);
+        Check(dark.G.All(v => float.IsFinite(v) && v >= 0) && darkMax < 0.3 && darkMean < 0.08,
+              $"heal: dark noisy photo heals without artifacts (max {darkMax:0.000}, mean {darkMean:0.000})");
+
         // Opacity 50 -> halfway between the original and the repair at the centre.
         var half = Make(true);
         f.D.Render(half, Params(tgt, Pt((120.5 + 150) / W, 120.5 / H), 3, 0, "clone", 50), ctx);
