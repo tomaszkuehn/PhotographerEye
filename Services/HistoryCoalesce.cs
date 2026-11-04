@@ -10,6 +10,7 @@ namespace ImgViewer.Services;
 /// <summary>
 /// Undo history: consecutive edits of the same control (same changed fields, or the same plugin parameter) collapse
 /// into one step that holds only the last value. Returning to the value before that step removes the step.
+/// The crop rectangle and its aspect count as one control, whichever edge or corner is dragged.
 /// </summary>
 public static class HistoryCoalesce
 {
@@ -52,6 +53,27 @@ public static class HistoryCoalesce
         return string.Join(",", keys);
     }
 
+    private static readonly HashSet<string> CropFields = new(StringComparer.Ordinal)
+    {
+        nameof(EyeState.CropX), nameof(EyeState.CropY), nameof(EyeState.CropW), nameof(EyeState.CropH), nameof(EyeState.CropAspect)
+    };
+
+    /// <summary>
+    /// Key used to decide whether two consecutive edits are the same control: <see cref="ChangeKey"/> with the crop
+    /// fields folded into one "Crop" entry.
+    /// </summary>
+    public static string GroupKey(string changeKey)
+    {
+        if (changeKey.Length == 0) return changeKey;
+        var parts = new List<string>();
+        foreach (var k in changeKey.Split(','))
+        {
+            var g = CropFields.Contains(k) ? "Crop" : k;
+            if (!parts.Contains(g)) parts.Add(g);
+        }
+        return string.Join(",", parts);
+    }
+
     private static string Json(object? v) => v is null ? "null" : JsonSerializer.Serialize(v, v.GetType());
 
     /// <summary>
@@ -69,7 +91,7 @@ public static class HistoryCoalesce
             return null;
         }
         if (equal(hist[pos], cur)) return lastKey;
-        string key = ChangeKey(hist[pos], cur);
+        string key = GroupKey(ChangeKey(hist[pos], cur));
         if (lastKey is not null && key.Length > 0 && key == lastKey && pos == hist.Count - 1 && pos > 0)
         {
             if (equal(hist[pos - 1], cur))

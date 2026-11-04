@@ -54,5 +54,36 @@ internal static partial class Program
         key = HistoryCoalesce.Commit(hist, ref pos, b0 with { PluginMasks = new() { ["a"] = M(1) } }, key, 100, Eq);
         key = HistoryCoalesce.Commit(hist, ref pos, b0 with { PluginMasks = new() { ["a"] = M(2) } }, key, 100, Eq);
         Check(hist.Count == nb + 2, "history: each brush stroke is its own step");
+
+        // Crop: dragging different edges / moving the frame / changing the aspect is one step.
+        var c0 = new EyeState();
+        hist = new List<EyeState> { c0 };
+        pos = 0;
+        key = null;
+        var c1 = c0 with { CropW = 0.8 };
+        key = HistoryCoalesce.Commit(hist, ref pos, c1, key, 100, Eq);
+        var c2 = c1 with { CropY = 0.1, CropH = 0.9 };
+        key = HistoryCoalesce.Commit(hist, ref pos, c2, key, 100, Eq);
+        var c3 = c2 with { CropX = 0.1, CropY = 0.05 };
+        key = HistoryCoalesce.Commit(hist, ref pos, c3, key, 100, Eq);
+        var c4 = c3 with { CropAspect = "3:2", CropH = 0.6 };
+        key = HistoryCoalesce.Commit(hist, ref pos, c4, key, 100, Eq);
+        Check(hist.Count == 2 && hist[1].CropX == 0.1 && hist[1].CropAspect == "3:2" && hist[1].CropH == 0.6,
+              $"history: consecutive crop edits (edges, move, aspect) are one step ({hist.Count})");
+        key = HistoryCoalesce.Commit(hist, ref pos, c4 with { Exposure = 0.5 }, key, 100, Eq);
+        key = HistoryCoalesce.Commit(hist, ref pos, hist[pos] with { CropW = 0.7 }, key, 100, Eq);
+        Check(hist.Count == 4, "history: crop after another edit is a new step");
+        key = HistoryCoalesce.Commit(hist, ref pos, hist[pos] with { Angle = 2 }, key, 100, Eq);
+        Check(hist.Count == 5, "history: straightening stays its own step");
+        var r0 = new EyeState();
+        var rh = new List<EyeState> { r0 };
+        int rp = 0;
+        string? rk = null;
+        rk = HistoryCoalesce.Commit(rh, ref rp, r0 with { CropW = 0.8 }, rk, 100, Eq);
+        rk = HistoryCoalesce.Commit(rh, ref rp, r0 with { CropW = 0.8, CropX = 0.1 }, rk, 100, Eq);
+        rk = HistoryCoalesce.Commit(rh, ref rp, r0, rk, 100, Eq);
+        Check(rh.Count == 1 && rp == 0, "history: crop moved back to the value before the step drops the step");
+        Check(HistoryCoalesce.GroupKey("CropX,CropH,Exposure") == "Crop,Exposure" && HistoryCoalesce.GroupKey("") == "",
+              "history: crop fields fold into one key");
     }
 }
