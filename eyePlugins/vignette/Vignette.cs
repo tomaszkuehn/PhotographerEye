@@ -56,7 +56,7 @@ public sealed class VignettePlugin : IEyePlugin
             Label = "Vignette",
             Group = "Effects",
             Stage = FilterStage.Output,
-            SupportsMask = false,
+            SupportsMask = true,
             Params = new[]
             {
                 ParamDef.Slider("amount", "Amount", -100, 100, 0),

@@ -186,6 +186,23 @@ public partial class MainWindow
         return null;
     }
 
+    /// <summary>The photo at default settings: RAW through the default gain and camera tone curve; other formats as decoded.</summary>
+    private PhotoPixels? DevelopedPixels(int maxLongSide)
+    {
+        if (_baseRaw16 is Raw16Image raw)
+        {
+            var small = PluginEditOps.Downscale16(raw, maxLongSide);
+            var lin = LinearRender.ApplyGain(small, CurrentBaseEv(), 0.0, 0.0);
+            var dev = Adjust16.Apply(lin, 0.0, 1.0, null, out _, cameraTone: CurrentCurve());
+            return new PhotoPixels
+            {
+                Image = PluginPipeline.FromRaw16(dev), Space = PluginColorSpace.Srgb,
+                FullWidth = _baseInfo?.Width ?? raw.W, FullHeight = _baseInfo?.Height ?? raw.H
+            };
+        }
+        return SourcePixels(maxLongSide);
+    }
+
     private PhotoPixels? RenderedPixels(int maxLongSide)
     {
         if (_lastDisplayed is not BitmapSource bmp) return null;
@@ -665,7 +682,19 @@ public partial class MainWindow
         {
             if (!double.IsFinite(x) || !double.IsFinite(y) || x < 0 || y < 0 || x > 1 || y > 1) return false;
             if (!_w.SampleSourceLinear(x, y, out double r, out double g, out double b, out bool clipped) || clipped) return false;
-            PhotoOps.WbFromLinearSample(r, g, b, out double temp, out double tint);
+            ApplyNeutral(r, g, b);
+            return true;
+        }
+
+        public bool SetWhiteBalanceFromNeutral(double r, double g, double b)
+        {
+            if (!double.IsFinite(r) || !double.IsFinite(g) || !double.IsFinite(b) || r <= 0 || g <= 0 || b <= 0) return false;
+            return ApplyNeutral(r, g, b);
+        }
+
+        private bool ApplyNeutral(double r, double g, double b)
+        {
+            bool inRange = PhotoOps.WbFromLinearSample(r, g, b, out double temp, out double tint);
             var rt = GetCoreRange("Temperature");
             var rn = GetCoreRange("Tint");
             Put(St with
@@ -673,13 +702,18 @@ public partial class MainWindow
                 Temperature = Math.Clamp(Math.Round(temp * 100.0), rt.Min, rt.Max),
                 Tint = Math.Clamp(Math.Round(tint * 100.0), rn.Min, rn.Max)
             });
-            return true;
+            return inRange;
         }
 
         // ---- pixels ----
 
-        public PhotoPixels GetImage(PhotoImageKind kind, int maxLongSide) =>
-            (kind == PhotoImageKind.Rendered ? _w.RenderedPixels(maxLongSide) : _w.SourcePixels(maxLongSide))!;
+        public PhotoPixels GetImage(PhotoImageKind kind, int maxLongSide) => (kind switch
+        {
+            PhotoImageKind.Rendered => _w.RenderedPixels(maxLongSide),
+            PhotoImageKind.Developed => _w.DevelopedPixels(maxLongSide),
+            PhotoImageKind.Source => _w.SourcePixels(maxLongSide),
+            _ => throw new ArgumentException($"unknown image kind {kind}")
+        })!;
 
         public PhotoHistogram GetHistogram()
         {

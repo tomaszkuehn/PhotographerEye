@@ -77,8 +77,8 @@ PhotographerEye loads .NET plugins that target `netstandard2.0` and reference `I
 - **Commands** (`AddCommand`) get an `ICommandContext`. Besides filter values, active flags and presets it offers:
   - core settings: `CoreKeys`, `GetCore` / `SetCore` / `GetCoreRange` (`Exposure`, `Contrast`, `Temperature`, `Tint`, `Saturation`, `Highlights`, `Shadows`, `Whites`, `Blacks`, `Clarity`, `Dehaze`, `Sharpen`, `Denoise`, `ColorNoise`, `Gamma`, `Mono`; values are clamped to the slider range)
   - geometry: `GetGeometry` / `SetGeometry` (crop rectangle, aspect, quarter turns, straighten angle) and `ResetGeometry`
-  - curves: `GetCurve` / `SetCurve` for the RGB curves, levels, histogram stretch (in display fractions or EV) and the RAW camera tone curve; `SetWhitePoint(x, y)` sets white balance from a neutral point of the photo
-  - pixels: `GetImage(Source | Rendered, maxLongSide)` (the source in linear sRGB for RAW, the current preview in sRGB) and `GetHistogram()` of the preview
+  - curves: `GetCurve` / `SetCurve` for the RGB curves, levels, histogram stretch (in display fractions or EV) and the RAW camera tone curve; `SetWhitePoint(x, y)` sets white balance from a neutral point of the photo, `SetWhiteBalanceFromNeutral(r, g, b)` from a linear colour measured on the Source image
+  - pixels: `GetImage(Source | Developed | Rendered, maxLongSide)` (the source in linear sRGB for RAW; the photo at default settings, without edits or plugins, in sRGB; the current preview in sRGB) and `GetHistogram()` of the preview
   - interaction: `Ask(title, parameters)` (a dialog built from `ParamDef`s, which remembers the last answers), `PickOpenFile` / `PickSaveFile`, and `RunInBackground(label, work, done)`: `work` runs on a worker thread with progress in the status bar, and is cancelled by Esc, by switching photo or by a new background run of the same plugin; `done` runs on the UI thread with a fresh context
   - the viewer: `View` (`Zoom`, `SetZoom` with an optional centre, `FitToWindow`, `ActualSize`, `ShowOriginal`)
   - masks: `GetMask` / `SetMask` (`MaskInfo`) of any filter that supports masks
@@ -131,16 +131,18 @@ The v2 sample plugins are separate projects, one plugin each: `eyePlugins/negati
 | `sample.negative` | Toolbar filter plus a command (Ctrl+Shift+N) |
 | `sample.bwred` | Black and white with a red mix; uses choice and toggle parameters and ships a preset |
 | `sample.grade` | Split-tone grade; uses color and curve parameters |
-| `sample.vignette` | Vignette in the Output stage; center picked as a point on the image |
+| `sample.vignette` | Vignette in the Output stage; center picked as a point on the image; can be limited by a mask |
 | `sample.netpbm` | `.ppm`/`.pgm` importer |
 | `sample.web` | Web JPEG exporter with options, plus an "outbox" exporter |
-| `sample.exposure` | Exposure-value metadata provider |
+| `sample.exposure` | Exposure-value metadata provider; "Clipped highlights and shadows" overlay (red: a channel at 255, blue: all channels at 0); command "Expose to the right" (exposure so the 99.5th percentile of the brightest channel reaches 250, −1/3 EV when more than 0.5 % is clipped; repeat to refine) |
 | `sample.sky` | Sky mask provider |
-| `sample.eventlog` | Logs host events |
+| `sample.eventlog` | Logs host events (opened, closed, save, export, edit changes with their keys, filters switched on/off) |
 
 Other bundled plugins: `eyePlugins/auto` (auto enhance, Ctrl+Shift+A). Its mode is chosen under Settings > Plugin settings > "Auto enhance mode":
 - **Measure once** (the default): Auto runs after develop, but measures the photo only once, the first time it renders with Auto on. The measurement is a small copy of the photo, kept in the plugin data folder (`baseline\`), so preview, export and later sessions agree. Later manual corrections then stay visible instead of being normalised away. The command "Auto enhance: measure photo again" takes a new measurement of the photo as it looks now.
 - **Base**: Auto runs first (`FilterStage.Base`) on the photo before the manual exposure and white balance, and the manual corrections act on its result.
+
+The command "Auto enhance: set sliders" measures the photo like Auto (strengths from its panel) in the background and writes the result to the regular adjustments instead: white balance to Temperature/Tint, the tone curve to histogram stretch points in EV (Exposure, Contrast, Highlights, Shadows, Whites and Blacks reset), vibrance to Saturation and the tilt to the straighten angle; Auto is switched off, everything is one undo step. Noise reduction is not transferred. "Straighten horizon" only sets the straighten angle.
 
 Harness tests: `TestAutoModes` (part of `--auto`). `--automodes <raw dir> [out dir]` compares the two modes on RAW files.
 
@@ -199,6 +201,7 @@ dotnet run --project tools\Harness\tools.csproj -c Release -- image1.jpg image2.
 ```
 
 Plugin API (`TestPluginApi`: EditChanged keys, core/curve/mask helpers, Output-stage masks, overlays): `--pluginapi`.
+Plugins using the command API (`TestPluginUpgrades`: Auto → sliders and straighten, exposure clipping map and ETTR, vignette mask, event log): `--upgrades`.
 
 E2E UIA (requires a running app): `scripts\uia-e2e.ps1 <pid>`
 

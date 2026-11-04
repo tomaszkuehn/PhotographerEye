@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using ImgViewer.Plugins;
 
@@ -35,7 +36,7 @@ public sealed class AutoEnhancePlugin : IEyePlugin
         Name = "Auto enhance",
         Version = "1.0",
         Author = "PhotographerEye",
-        Description = "One-click automatic processing: noise reduction, white balance, histogram balance, contrast, color and straightening."
+        Description = "One-click automatic processing: noise reduction, white balance, histogram balance, contrast, color and straightening; can also set the regular sliders from its measurement."
     };
 
     public void Initialize(IPluginHost host)
@@ -104,6 +105,20 @@ public sealed class AutoEnhancePlugin : IEyePlugin
                     : "Auto enhance will measure the photo as it looks now");
             }
         });
+        host.AddCommand(new CommandDescriptor
+        {
+            Id = "sliders",
+            Label = "Auto enhance: set sliders",
+            Placement = CommandPlacement.Menu,
+            Execute = c => RunSliders(c, true)
+        });
+        host.AddCommand(new CommandDescriptor
+        {
+            Id = "straighten",
+            Label = "Straighten horizon",
+            Placement = CommandPlacement.Menu,
+            Execute = c => RunSliders(c, false)
+        });
         host.AddPreset(new PresetDescriptor
         {
             Id = "gentle",
@@ -120,6 +135,72 @@ public sealed class AutoEnhancePlugin : IEyePlugin
             Values = new Dictionary<string, double> { ["auto/balance"] = 90, ["auto/contrast"] = 80, ["auto/denoise"] = 80, ["auto/wb"] = 100, ["auto/color"] = 70 },
             Active = new List<string> { FilterId }
         });
+    }
+
+    /// <summary>
+    /// Measures the photo like the Auto filter (strengths from its panel) in the background and writes the result to
+    /// the regular sliders (<paramref name="full"/>) or only straightens it; Auto itself is switched off.
+    /// </summary>
+    private static void RunSliders(ICommandContext c, bool full)
+    {
+        if (string.IsNullOrEmpty(c.CurrentPath)) { c.SetStatus("No photo open"); return; }
+        var dev = c.GetImage(PhotoImageKind.Developed, 1024);
+        var src = full ? c.GetImage(PhotoImageKind.Source, 1024) : null;
+        if (dev?.Image == null) { c.SetStatus("No photo shown"); return; }
+        double balance = full ? c.GetValue(FilterId, "balance") : 0;
+        double contrast = full ? c.GetValue(FilterId, "contrast") : 0;
+        double wb = full && src?.Image != null ? c.GetValue(FilterId, "wb") : 0;
+        double color = full ? c.GetValue(FilterId, "color") : 0;
+        bool straighten = !full || c.GetValue(FilterId, "straighten") >= 0.5;
+        double maxAngle = c.GetValue(FilterId, "maxangle");
+        if (!(maxAngle > 0)) maxAngle = 8;
+        bool srcLinear = src?.Space == PluginColorSpace.LinearSrgb;
+        c.RunInBackground(full ? "Auto enhance" : "Straighten horizon",
+            (p, ct) => AutoEnhance.SuggestSliders(src?.Image, srcLinear, dev.Image, balance, contrast, wb, color, straighten, maxAngle, ct),
+            (d, o) => ApplySliders(d, (AutoEnhance.SliderSuggestion)o, full, wb, color));
+    }
+
+    private static void ApplySliders(ICommandContext c, AutoEnhance.SliderSuggestion s, bool full, double wb, double color)
+    {
+        var parts = new List<string>();
+        if (full)
+        {
+            c.StepLabel = "Auto enhance: set sliders";
+            if (wb > 0)
+            {
+                if (s.Neutral != null) c.SetWhiteBalanceFromNeutral(s.Neutral[0], s.Neutral[1], s.Neutral[2]);
+                else
+                {
+                    c.SetCore("Temperature", c.GetCoreRange("Temperature").Default);
+                    c.SetCore("Tint", c.GetCoreRange("Tint").Default);
+                }
+                parts.Add(FormattableString.Invariant($"WB {c.GetCore("Temperature"):0}/{c.GetCore("Tint"):0}"));
+            }
+            foreach (var k in new[] { "Exposure", "Contrast", "Highlights", "Shadows", "Whites", "Blacks" })
+                c.SetCore(k, c.GetCoreRange(k).Default);
+            c.SetCurve(CurveKind.StretchEv, s.StretchEv);
+            if (s.StretchEv is { Length: > 0 }) parts.Add($"tone {s.StretchEv.Length} points");
+            if (color > 0)
+            {
+                c.SetCore("Saturation", s.Saturation);
+                parts.Add(FormattableString.Invariant($"saturation {c.GetCore("Saturation"):+0;-0;0}"));
+            }
+            c.SetActive(FilterId, false);
+        }
+        else c.StepLabel = "Straighten horizon";
+        if (s.Angle is double a)
+        {
+            var g = c.GetGeometry();
+            g.Angle = a;
+            c.SetGeometry(g);
+            parts.Add(FormattableString.Invariant($"angle {a:+0.0;-0.0}°"));
+        }
+        else if (!full)
+        {
+            c.SetStatus("No tilted horizon found");
+            return;
+        }
+        c.SetStatus((full ? "Auto enhance → sliders: " : "Straightened: ") + (parts.Count > 0 ? string.Join(", ", parts) : "no change"));
     }
 }
 
@@ -432,6 +513,124 @@ public static class AutoEnhance
 
         if (linear) EncodeSrgb(img, false);
         return res;
+    }
+
+    // =================================================================
+    //  Auto -> regular sliders
+    // =================================================================
+
+    /// <summary>What the "set sliders" command writes to the regular adjustments.</summary>
+    public sealed class SliderSuggestion
+    {
+        /// <summary>Linear colour (on the Source image) that should become neutral; null = no white balance change.</summary>
+        public double[] Neutral;
+        /// <summary>Histogram stretch knots [input EV, output EV]; null = no tone change.</summary>
+        public double[][] StretchEv;
+        /// <summary>Saturation slider value (-100..100).</summary>
+        public double Saturation;
+        /// <summary>Host straighten angle in degrees (null = not tilted or not confident).</summary>
+        public double? Angle;
+        public AutoResult Result = new AutoResult();
+    }
+
+    /// <summary>
+    /// The Auto measurement translated to regular sliders. <paramref name="source"/> (before white balance, linear
+    /// when <paramref name="sourceLinear"/>) gives the white balance; <paramref name="developed"/> (sRGB, default
+    /// settings) gives tone, colour and tilt. Strengths are the panel values (0..100), <paramref name="maxAngle"/> in degrees.
+    /// </summary>
+    public static SliderSuggestion SuggestSliders(PluginImage source, bool sourceLinear, PluginImage developed,
+        double balance, double contrast, double wb, double color, bool straighten, double maxAngle, CancellationToken ct = default)
+    {
+        var s = new SliderSuggestion();
+        var res = s.Result;
+        balance = Clamp(balance / 100.0, 0, 1);
+        contrast = Clamp(contrast / 100.0, 0, 1);
+        wb = Clamp(wb / 100.0, 0, 1);
+        color = Clamp(color / 100.0, 0, 1);
+        maxAngle = Clamp(maxAngle, 0.5, 20);
+
+        if (wb > 0 && source != null)
+        {
+            int sw = source.Width, sh = source.Height;
+            var aR = Downscale(source.R, sw, sh, ColorAnalysisSize, out _, out _);
+            var aG = Downscale(source.G, sw, sh, ColorAnalysisSize, out _, out _);
+            var aB = Downscale(source.B, sw, sh, ColorAnalysisSize, out _, out _);
+            if (sourceLinear)
+                for (int i = 0; i < aR.Length; i++) { aR[i] = ToSrgb(aR[i]); aG[i] = ToSrgb(aG[i]); aB[i] = ToSrgb(aB[i]); }
+            if (EstimateWhiteBalance(aR, aG, aB, wb, res))
+                s.Neutral = new[] { 1.0 / res.GainR, 1.0 / res.GainG, 1.0 / res.GainB };
+            else { res.GainR = res.GainG = res.GainB = 1; }
+        }
+        ct.ThrowIfCancellationRequested();
+        if (developed == null) return s;
+
+        int w = developed.Width, h = developed.Height;
+        float gR = (float)res.GainR, gG = (float)res.GainG, gB = (float)res.GainB;
+        bool gains = Math.Abs(gR - 1) > 1e-4f || Math.Abs(gG - 1) > 1e-4f || Math.Abs(gB - 1) > 1e-4f;
+        var L = new float[developed.Length];
+        Parallel.For(0, h, y =>
+        {
+            for (int i = y * w, e = i + w; i < e; i++)
+            {
+                float r = developed.R[i], g = developed.G[i], b = developed.B[i];
+                if (gains) { r = ToSrgb(ToLinear(r) * gR); g = ToSrgb(ToLinear(g) * gG); b = ToSrgb(ToLinear(b) * gB); }
+                L[i] = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+            }
+        });
+        var aL = Downscale(L, w, h, AnalysisSize, out int aw, out int ah);
+        ct.ThrowIfCancellationRequested();
+
+        if (color > 0)
+        {
+            var cR = Downscale(developed.R, w, h, ColorAnalysisSize, out _, out _);
+            var cG = Downscale(developed.G, w, h, ColorAnalysisSize, out _, out _);
+            var cB = Downscale(developed.B, w, h, ColorAnalysisSize, out _, out _);
+            res.Vibrance = VibranceStrength(cR, cG, cB, res, color);
+            s.Saturation = Math.Round(Clamp(res.Vibrance * 60.0, -100, 100));
+        }
+        if (balance > 0 || contrast > 0)
+        {
+            var lut = BuildToneLut(aL, balance, contrast, res);
+            s.StretchEv = KnotsFromLut(lut, res.Black, res.White);
+        }
+        ct.ThrowIfCancellationRequested();
+        if (straighten)
+        {
+            double a = DetectTilt(aL, aw, ah, maxAngle, out double conf);
+            res.Angle = a;
+            res.AngleConfidence = conf;
+            // Auto rotates the content by +a; the host straighten angle turns the other way.
+            if (Math.Abs(a) >= 0.1) s.Angle = Math.Round(-a, 2);
+        }
+        return s;
+    }
+
+    /// <summary>
+    /// Samples a display tone LUT (sRGB in, sRGB out) as histogram stretch knots in EV (EV = log2(linear / 0.18)):
+    /// the black and white points and a fixed grid between them. Inputs strictly increase, outputs never decrease;
+    /// null when the LUT is (nearly) the identity.
+    /// </summary>
+    public static double[][] KnotsFromLut(float[] lut, double black, double white)
+    {
+        static double Ev(double u) => Clamp(Math.Log(Math.Max(ToLinear((float)u), 1e-9f) / 0.18, 2), -14, 10);
+        var us = new List<double> { black };
+        foreach (var u in new[] { 0.03, 0.06, 0.1, 0.15, 0.22, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95 })
+            if (u > black + 0.01 && u < white - 0.01) us.Add(u);
+        us.Add(white);
+        var knots = new List<double[]>();
+        double lastIn = -14 + 1e-3, lastOut = -14;
+        bool identity = true;
+        foreach (var u in us)
+        {
+            double x = Ev(u);
+            if (x <= lastIn + 1e-3 || x >= 10 - 1e-3) continue;
+            double y = Math.Max(Ev(Lut(lut, (float)u)), lastOut);
+            x = Math.Round(x, 3); y = Math.Round(y, 3);
+            if (Math.Abs(x - y) > 0.02) identity = false;
+            knots.Add(new[] { x, y });
+            lastIn = x; lastOut = y;
+        }
+        return identity || knots.Count < 2 ? null : knots.ToArray();
     }
 
     // =================================================================

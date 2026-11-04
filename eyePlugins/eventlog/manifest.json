@@ -3,7 +3,7 @@
   "name": "Event log",
   "version": "2.0",
   "author": "PhotographerEye",
-  "description": "Writes opened, saved and exported files to events.log in its data folder.",
+  "description": "Writes opened, closed, saved and exported files, edits and filter switches to events.log in its data folder.",
   "api": 2,
   "entry": "ImgViewer.Plugins.EventLog.dll",
   "permissions": []

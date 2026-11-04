@@ -66,6 +66,21 @@ public static class PluginEditOps
     }
 
 
+    /// <summary>Area-averaged 16-bit copy with the long side at most <paramref name="maxLongSide"/> (same image when smaller).</summary>
+    public static Raw16Image Downscale16(Raw16Image raw, int maxLongSide)
+    {
+        if (maxLongSide <= 0 || Math.Max(raw.W, raw.H) <= maxLongSide) return raw;
+        var f = Downscale(raw, maxLongSide, 1f);
+        var o = new Raw16Image(f.Width, f.Height);
+        for (int i = 0; i < f.Length; i++)
+        {
+            o.R[i] = (ushort)Math.Clamp(Math.Round(f.R[i]), 0, 65535);
+            o.G[i] = (ushort)Math.Clamp(Math.Round(f.G[i]), 0, 65535);
+            o.B[i] = (ushort)Math.Clamp(Math.Round(f.B[i]), 0, 65535);
+        }
+        return o;
+    }
+
     /// <summary>Canonical core key ("Exposure", ...) for "exposure", "core.Exposure", "ShadowLift", ...; null when unknown.</summary>
     public static string? CoreKey(string? key)
     {

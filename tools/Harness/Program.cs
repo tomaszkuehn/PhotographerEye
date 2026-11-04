@@ -82,6 +82,12 @@ internal static partial class Program
             Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
             return;
         }
+        if (args.Length > 0 && args[0] == "--upgrades")
+        {
+            TestPluginUpgrades();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--pluginapi")
         {
             TestPluginApi();
@@ -303,6 +309,7 @@ internal static partial class Program
         TestEyeAutoSave();
         TestHistoryPlugin();
         TestPluginApi();
+        TestPluginUpgrades();
         TestPointMarkers();
         TestChannelCurves();
         TestShadowColor();

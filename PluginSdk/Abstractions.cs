@@ -710,14 +710,23 @@ public interface ICommandContext
     /// un-rotated, un-cropped photo. Returns false (and changes nothing) when the point is outside or clipped.
     /// </summary>
     bool SetWhitePoint(double x, double y);
+    /// <summary>
+    /// White balance that makes a colour neutral: <paramref name="r"/>, <paramref name="g"/>, <paramref name="b"/> are
+    /// linear-light values measured on <see cref="PhotoImageKind.Source"/> (before white balance), e.g. the average
+    /// of areas that should be grey. Sets Temperature and Tint; returns false when the colour cannot be neutralised
+    /// within their range (the clamped result is still applied) or is not positive.
+    /// </summary>
+    bool SetWhiteBalanceFromNeutral(double r, double g, double b);
 
     // ---- Pixels --------------------------------------------------------------------------------------------
 
     /// <summary>
     /// Pixels of the photo, downscaled so the long side is at most <paramref name="maxLongSide"/> (0 = as held in
     /// memory). <see cref="PhotoImageKind.Source"/>: unprocessed photo (RAW: linear light at the default brightness;
-    /// other formats: sRGB), un-rotated and un-cropped. <see cref="PhotoImageKind.Rendered"/>: the current preview
-    /// (sRGB, after crop and rotation). Null when no photo is shown.
+    /// other formats: sRGB), un-rotated and un-cropped. <see cref="PhotoImageKind.Developed"/>: the photo as it looks
+    /// with every setting at its default (RAW: default brightness and camera tone curve; no edits, no plugins), sRGB,
+    /// un-rotated and un-cropped. <see cref="PhotoImageKind.Rendered"/>: the current preview (sRGB, after crop and
+    /// rotation). Null when no photo is shown.
     /// </summary>
     PhotoPixels GetImage(PhotoImageKind kind, int maxLongSide);
     /// <summary>Histogram of the current preview (256 bins per channel), or null when none was computed yet.</summary>
@@ -828,7 +837,9 @@ public enum CurveKind
 public enum PhotoImageKind
 {
     Source = 0,
-    Rendered = 1
+    Rendered = 1,
+    /// <summary>Default development without edits (sRGB, un-cropped).</summary>
+    Developed = 2
 }
 
 public sealed class PhotoPixels

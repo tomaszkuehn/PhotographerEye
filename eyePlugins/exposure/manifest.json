@@ -3,7 +3,7 @@
   "name": "Exposure info",
   "version": "2.0",
   "author": "PhotographerEye",
-  "description": "Adds EV100 and megapixels to the photo info tooltip.",
+  "description": "Adds EV100 and megapixels to the photo info tooltip, a clipping overlay and an expose-to-the-right command.",
   "api": 2,
   "entry": "ImgViewer.Plugins.ExposureInfo.dll",
   "permissions": []
