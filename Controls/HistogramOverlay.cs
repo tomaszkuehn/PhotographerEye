@@ -142,6 +142,10 @@ public sealed class HistogramOverlay : FrameworkElement
         InvalidateVisual();
     }
 
+    /// <summary>Last histogram set (luma, R, G, B; 256 bins each), or null.</summary>
+    public (int[] Lum, int[] R, int[] G, int[] B)? Histogram =>
+        _lum is null || _r is null || _g is null || _b is null ? null : (_lum, _r, _g, _b);
+
     public void SetHistogram(int[] lum, int[] r, int[] g, int[] b)
     {
         _lum = lum;

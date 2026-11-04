@@ -154,6 +154,8 @@ public interface IPluginHost
     /// Initialize; <see cref="IPluginSetting.Value"/> already holds the stored choice when it returns.
     /// </summary>
     IPluginSetting AddSetting(SettingDescriptor setting);
+    /// <summary>Drawing over the photo (shapes and an RGBA map), switched on and off in the viewer's menu. Call inside Initialize.</summary>
+    IOverlay AddOverlay(OverlayDescriptor overlay);
 }
 
 // ---------------------------------------------------------------------
@@ -674,6 +676,82 @@ public interface ICommandContext
     void SetActive(string filterId, bool active);
     /// <summary>Apply a preset of this plugin by id.</summary>
     void ApplyPreset(string presetId);
+
+    // ---- Core adjustments, geometry and curves -------------------------------------------------------------
+    // Changes made by one command (or one RunInBackground completion) become a single undo step, labelled with
+    // StepLabel (default: the command label). Reads return the value including changes made earlier in the
+    // same command. The preview re-renders once after the command returns.
+
+    /// <summary>Label of the undo step this command creates (default: the command label).</summary>
+    string StepLabel { get; set; }
+    /// <summary>Keys accepted by <see cref="GetCore"/> / <see cref="SetCore"/>: "Exposure", "Contrast", ... (see <see cref="CoreKeys"/>).</summary>
+    IReadOnlyList<string> CoreKeys { get; }
+    /// <summary>Core adjustment, key with or without the "core." prefix (e.g. "Exposure" or "core.Exposure").</summary>
+    double GetCore(string key);
+    /// <summary>Sets a core adjustment (clamped to the slider range; "Mono": 0 colour, 1 documentary B&W, 2 Tri-X B&W).</summary>
+    void SetCore(string key, double value);
+    /// <summary>Slider range of a core adjustment.</summary>
+    CoreRange GetCoreRange(string key);
+    /// <summary>Crop, straighten and quarter rotation of the photo.</summary>
+    PhotoGeometry GetGeometry();
+    void SetGeometry(PhotoGeometry geometry);
+    /// <summary>Removes crop, straightening and rotation.</summary>
+    void ResetGeometry();
+    /// <summary>
+    /// Curve points as [input, output] pairs. Red/Green/Blue curves and levels and the histogram stretch use display
+    /// fractions 0..1; <see cref="CurveKind.StretchEv"/> uses EV; <see cref="CurveKind.ToneCurve"/> is the camera tone
+    /// curve (linear 0..1). An empty array means "no curve".
+    /// </summary>
+    double[][] GetCurve(CurveKind kind);
+    /// <summary>Replaces a curve (null or empty resets it).</summary>
+    void SetCurve(CurveKind kind, double[][] points);
+    /// <summary>
+    /// White balance from a neutral point, like the white point eyedropper. Coordinates are fractions of the
+    /// un-rotated, un-cropped photo. Returns false (and changes nothing) when the point is outside or clipped.
+    /// </summary>
+    bool SetWhitePoint(double x, double y);
+
+    // ---- Pixels --------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Pixels of the photo, downscaled so the long side is at most <paramref name="maxLongSide"/> (0 = as held in
+    /// memory). <see cref="PhotoImageKind.Source"/>: unprocessed photo (RAW: linear light at the default brightness;
+    /// other formats: sRGB), un-rotated and un-cropped. <see cref="PhotoImageKind.Rendered"/>: the current preview
+    /// (sRGB, after crop and rotation). Null when no photo is shown.
+    /// </summary>
+    PhotoPixels GetImage(PhotoImageKind kind, int maxLongSide);
+    /// <summary>Histogram of the current preview (256 bins per channel), or null when none was computed yet.</summary>
+    PhotoHistogram GetHistogram();
+
+    // ---- Interaction ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Shows a dialog with the given parameters (Slider, Toggle, Choice, Text) and returns the values, or null when the
+    /// user cancelled. The last values are remembered per <paramref name="title"/> for this session.
+    /// </summary>
+    FilterParams Ask(string title, IReadOnlyList<ParamDef> parameters);
+    /// <summary>File open dialog; returns the path or null. <paramref name="filter"/> like "Images|*.jpg;*.png".</summary>
+    string PickOpenFile(string title, string filter);
+    /// <summary>File save dialog; returns the path or null.</summary>
+    string PickSaveFile(string title, string filter, string defaultName);
+    /// <summary>
+    /// Runs <paramref name="work"/> on a worker thread with progress (0..1) in the status bar; Esc, switching to
+    /// another photo or another RunInBackground call of the same plugin cancels it. <paramref name="done"/> runs on the UI thread with a fresh
+    /// context when the work finished (not when it was cancelled or failed); its edits become one undo step.
+    /// </summary>
+    void RunInBackground(string label, Func<IProgress<double>, System.Threading.CancellationToken, object> work, Action<ICommandContext, object> done);
+
+    // ---- Viewer --------------------------------------------------------------------------------------------
+
+    /// <summary>Zoom, fit, 100% and the before/after view.</summary>
+    IViewerControl View { get; }
+
+    // ---- Masks ---------------------------------------------------------------------------------------------
+
+    /// <summary>Mask of a filter (this plugin's "filterId" or "pluginId:filterId"), or null when it has none.</summary>
+    MaskInfo GetMask(string filterId);
+    /// <summary>Sets (or with null removes) the mask of a filter that supports masks.</summary>
+    void SetMask(string filterId, MaskInfo mask);
 }
 
 public sealed class CommandDescriptor
@@ -706,6 +784,210 @@ public sealed class PresetDescriptor
 }
 
 // ---------------------------------------------------------------------
+//  Command helpers: geometry, curves, pixels, viewer, masks
+// ---------------------------------------------------------------------
+
+public struct CoreRange
+{
+    public double Min { get; set; }
+    public double Max { get; set; }
+    public double Default { get; set; }
+}
+
+public sealed class PhotoGeometry
+{
+    /// <summary>Quarter turns clockwise, 0..3.</summary>
+    public int Rot90 { get; set; }
+    /// <summary>Straightening angle in degrees, -45..45.</summary>
+    public double Angle { get; set; }
+    /// <summary>Crop rectangle as fractions of the rotated and straightened photo.</summary>
+    public double CropX { get; set; }
+    public double CropY { get; set; }
+    public double CropW { get; set; } = 1.0;
+    public double CropH { get; set; } = 1.0;
+    /// <summary>"original", "3:2", "4:3", "16:9" or "16:10" (as in the crop tool).</summary>
+    public string Aspect { get; set; } = "original";
+}
+
+public enum CurveKind
+{
+    Red = 0,
+    Green = 1,
+    Blue = 2,
+    LevelsRed = 3,
+    LevelsGreen = 4,
+    LevelsBlue = 5,
+    /// <summary>Histogram stretch in display fractions 0..1.</summary>
+    Stretch = 6,
+    /// <summary>Histogram stretch in EV.</summary>
+    StretchEv = 7,
+    /// <summary>Camera tone curve (RAW).</summary>
+    ToneCurve = 8
+}
+
+public enum PhotoImageKind
+{
+    Source = 0,
+    Rendered = 1
+}
+
+public sealed class PhotoPixels
+{
+    public PluginImage Image { get; set; }
+    public PluginColorSpace Space { get; set; }
+    /// <summary>Size of the full-resolution image these pixels stand for (Source: the photo; Rendered: the cropped output).</summary>
+    public int FullWidth { get; set; }
+    public int FullHeight { get; set; }
+}
+
+public sealed class PhotoHistogram
+{
+    public int[] Luma { get; set; }
+    public int[] R { get; set; }
+    public int[] G { get; set; }
+    public int[] B { get; set; }
+}
+
+public interface IViewerControl
+{
+    /// <summary>1.0 = 100 % (one image pixel per screen pixel).</summary>
+    double Zoom { get; }
+    /// <summary>Sets the zoom (0.05..4), keeping <paramref name="centerX"/>/<paramref name="centerY"/> (fractions of the shown image) in the middle when given.</summary>
+    void SetZoom(double zoom, double centerX = double.NaN, double centerY = double.NaN);
+    void FitToWindow();
+    void ActualSize();
+    /// <summary>Shows the unedited photo (like holding Space) until set back to false.</summary>
+    bool ShowOriginal { get; set; }
+}
+
+/// <summary>
+/// Mask of a filter. Coordinates are fractions of the un-rotated, un-cropped photo (also for Output-stage filters;
+/// the host maps them through the crop).
+/// Kind "linear": P = x1, y1, x2, y2 (full effect at the first point, none past the second).
+/// "radial": P = cx, cy, rx, ry, feather (0..1). "luma": P = low, high, feather (0..1).
+/// "brush": Strokes = [mode (1 paint, 0 erase), radius (fraction of width), x1, y1, x2, y2, ...].
+/// "plugin:pluginId:maskId": a mask provider with <see cref="Values"/> / <see cref="Text"/>.
+/// </summary>
+public sealed class MaskInfo
+{
+    public string Kind { get; set; } = "";
+    public double[] P { get; set; }
+    public bool Invert { get; set; }
+    public IList<double[]> Strokes { get; set; }
+    public IDictionary<string, double> Values { get; set; }
+    public IDictionary<string, string> Text { get; set; }
+}
+
+// ---------------------------------------------------------------------
+//  Overlays drawn over the photo
+// ---------------------------------------------------------------------
+
+public enum OverlaySpace
+{
+    /// <summary>Fractions of the shown image (after crop and rotation).</summary>
+    Shown = 0,
+    /// <summary>Fractions of the un-rotated, un-cropped photo (follows crop and rotation).</summary>
+    Source = 1
+}
+
+public enum OverlayShapeKind
+{
+    Line = 0,
+    Rectangle = 1,
+    Ellipse = 2,
+    Polyline = 3,
+    Polygon = 4,
+    Text = 5
+}
+
+public sealed class OverlayShape
+{
+    public OverlayShapeKind Kind { get; set; }
+    /// <summary>Line: x1, y1, x2, y2. Rectangle / Ellipse: x, y, w, h (ellipse: bounding box). Polyline / Polygon: x1, y1, x2, y2, ... Text: x, y.</summary>
+    public double[] Points { get; set; }
+    /// <summary>ARGB, e.g. 0xFFFF0000 (opaque red).</summary>
+    public uint Stroke { get; set; } = 0xFFFFFFFF;
+    /// <summary>ARGB fill (0 = none).</summary>
+    public uint Fill { get; set; }
+    /// <summary>Line width in screen pixels.</summary>
+    public double Thickness { get; set; } = 1.5;
+    public bool Dashed { get; set; }
+    public string Text { get; set; }
+    /// <summary>Text size in screen pixels.</summary>
+    public double FontSize { get; set; } = 12;
+}
+
+/// <summary>RGBA raster stretched over the shown image (e.g. a clipping map). Pixels: 4 bytes per pixel, R G B A, row-major.</summary>
+public sealed class OverlayBitmap
+{
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public byte[] Rgba { get; set; }
+}
+
+public sealed class OverlayContent
+{
+    public OverlaySpace Space { get; set; }
+    public IList<OverlayShape> Shapes { get; set; } = new List<OverlayShape>();
+    /// <summary>Covers the shown image (always in <see cref="OverlaySpace.Shown"/>).</summary>
+    public OverlayBitmap Bitmap { get; set; }
+}
+
+public sealed class OverlayDescriptor
+{
+    public string Id { get; set; } = "";
+    /// <summary>Name in the settings menu > "Plugin overlays".</summary>
+    public string Label { get; set; } = "";
+    /// <summary>Shown when the plugin loads (the user can switch it off in the menu).</summary>
+    public bool DefaultVisible { get; set; }
+    /// <summary>
+    /// Called on the UI thread when the overlay is visible and the photo, the render or <see cref="IOverlay.Refresh"/>
+    /// asks for new content. <see cref="OverlayRequest.Rendered"/> is the current preview (sRGB), when available.
+    /// Return null to draw nothing.
+    /// </summary>
+    public Func<OverlayRequest, OverlayContent> Draw { get; set; }
+}
+
+public sealed class OverlayRequest
+{
+    public string Path { get; set; }
+    public ImageMeta Meta { get; set; }
+    /// <summary>Lazily fetched current preview (sRGB, after crop), long side at most 1024; null when nothing is shown.</summary>
+    public Func<PhotoPixels> Rendered { get; set; }
+}
+
+public interface IOverlay
+{
+    bool Visible { get; set; }
+    /// <summary>Ask for <see cref="OverlayDescriptor.Draw"/> again (any thread).</summary>
+    void Refresh();
+}
+
+// ---------------------------------------------------------------------
+//  Edit events
+// ---------------------------------------------------------------------
+
+public sealed class EditChangedEventArgs : EventArgs
+{
+    public string Path { get; set; } = "";
+    /// <summary>
+    /// What changed: "core.Exposure", "core.Crop", "core.CurveR", ... and for filters "pluginId:filterId/paramId",
+    /// "pluginId:filterId#active", "pluginId:filterId#mask", "#order".
+    /// </summary>
+    public IReadOnlyList<string> Keys { get; set; } = new string[0];
+    /// <summary>True when the change came from undo, redo or a jump in the history.</summary>
+    public bool FromHistory { get; set; }
+}
+
+public sealed class FilterToggledEventArgs : EventArgs
+{
+    public string Path { get; set; } = "";
+    /// <summary>"pluginId:filterId".</summary>
+    public string FilterId { get; set; } = "";
+    public bool Active { get; set; }
+}
+
+// ---------------------------------------------------------------------
 //  Host events
 // ---------------------------------------------------------------------
 
@@ -733,6 +1015,12 @@ public interface IHostEvents
     event EventHandler<SaveEventArgs> BeforeSave;
     event EventHandler<SaveEventArgs> AfterSave;
     event EventHandler<SaveEventArgs> AfterExport;
+    /// <summary>The shown photo is about to be replaced by another one or the viewer closes (UI thread).</summary>
+    event EventHandler<ImageEventArgs> ImageClosed;
+    /// <summary>An edit of the shown photo became an undo step, or undo / redo changed it (UI thread).</summary>
+    event EventHandler<EditChangedEventArgs> EditChanged;
+    /// <summary>A filter was switched on or off (UI thread; raised with <see cref="EditChanged"/>).</summary>
+    event EventHandler<FilterToggledEventArgs> FilterToggled;
 }
 
 // ---------------------------------------------------------------------

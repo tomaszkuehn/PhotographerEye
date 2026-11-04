@@ -178,6 +178,16 @@ public sealed partial class ImageViewer : Grid
         RaiseZoomChanged();
     }
 
+    /// <summary>Scrolls so the point (fractions of the shown image) is in the middle of the viewport, as far as the edges allow.</summary>
+    public void CenterOn(double fx, double fy)
+    {
+        if (_image.Source is null || !double.IsFinite(fx) || !double.IsFinite(fy)) return;
+        double ox = ActualWidth / 2.0 - Math.Clamp(fx, 0.0, 1.0) * DisplayedWidth;
+        double oy = ActualHeight / 2.0 - Math.Clamp(fy, 0.0, 1.0) * DisplayedHeight;
+        SetMargins(ox, oy);
+        ClampAndCenter();
+    }
+
     public void ToggleFitNative()
     {
         if (_image.Source is null) return;

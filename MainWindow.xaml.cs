@@ -187,6 +187,8 @@ public partial class MainWindow : Window
         Closing += (_, _) =>
         {
             CommitHistNow();
+            CancelBackgroundTasks(quiet: true);
+            if (_currentPath is not null) RaiseImageClosed();
             _loadCts?.Cancel();
             _applyCts?.Cancel();
             FlushRendered(sync: true);
@@ -258,6 +260,8 @@ public partial class MainWindow : Window
             CommitHistNow();
             var cur = CaptureEyeState();
             _session[_currentPath] = cur with { History = new List<EyeState>(_hist), HistoryPos = _histPos };
+            CancelBackgroundTasks(quiet: true);
+            RaiseImageClosed();
         }
         FlushRendered(sync: false);
         _instantShown = false;
@@ -619,6 +623,7 @@ public partial class MainWindow : Window
                     var (gdisp, gbox) = PhotoGeo.Apply(disp, box, displayGeo);
                     if (runOutput)
                     {
+                        job.OutputGeo = (displayGeo, disp.PixelWidth, disp.PixelHeight);
                         var outB = PluginPipeline.ApplyBitmap(gdisp, FilterStage.Output, job,
                             (int)Math.Round(gdisp.PixelWidth / pScale), (int)Math.Round(gdisp.PixelHeight / pScale));
                         if (outB is not null) { gdisp = outB; postRan = true; }
@@ -650,6 +655,7 @@ public partial class MainWindow : Window
                 var (gprocessed, gbox8) = PhotoGeo.Apply(processedOut, box, displayGeo);
                 if (runOutput)
                 {
+                    job.OutputGeo = (displayGeo, processedOut.PixelWidth, processedOut.PixelHeight);
                     var outB = PluginPipeline.ApplyBitmap(gprocessed, FilterStage.Output, job,
                         (int)Math.Round(gprocessed.PixelWidth / pScale), (int)Math.Round(gprocessed.PixelHeight / pScale));
                     if (outB is not null) { gprocessed = outB; postRan8 = true; }
@@ -891,6 +897,7 @@ public partial class MainWindow : Window
         }
         // Consecutive edits of the same control keep only the last value as one step.
         _histLastKey = HistoryCoalesce.Commit(_hist, ref _histPos, cur, _histLastKey, HistMax, HistEqual);
+        LabelNewStep();
         Debug.Log($"HIST: stored count={_hist.Count} pos={_histPos} key={_histLastKey}");
         SyncSessionHist();
         UpdateUndoButtons();
@@ -955,6 +962,7 @@ public partial class MainWindow : Window
         _histLastKey = null;
         var st = _hist[_histPos];
         Debug.Log($"HIST: undo -> pos={_histPos} exp={st.Exposure:0.###} sh={st.ShadowLift:0.#} knots={st.StretchEv?.Length ?? 0}");
+        _histFromNav = true;
         ApplyEyeStateSuppressed(st);
         SyncSessionHist();
         UpdateUndoButtons();
@@ -968,6 +976,7 @@ public partial class MainWindow : Window
         _histLastKey = null;
         var st = _hist[_histPos];
         Debug.Log($"HIST: redo -> pos={_histPos} exp={st.Exposure:0.###}");
+        _histFromNav = true;
         ApplyEyeStateSuppressed(st);
         SyncSessionHist();
         UpdateUndoButtons();

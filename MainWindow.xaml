@@ -73,6 +73,7 @@
                             <MenuItem x:Name="MnuExport" Header="Export" />
                             <MenuItem x:Name="MnuCommands" Header="Plugin commands" />
                             <MenuItem x:Name="MnuPluginSettings" Header="Plugin settings" />
+                            <MenuItem x:Name="MnuPluginOverlays" Header="Plugin overlays" ToolTip="Information drawn over the photo by plugins" />
                             <MenuItem Header="Preview quality" ToolTip="Resolution of the live preview while editing RAW photos. Export always uses the full image.">
                                 <MenuItem x:Name="MnuPreviewWindow" Header="Fast (window size)" IsCheckable="True" Tag="window" Click="OnPreviewQualityClick" />
                                 <MenuItem x:Name="MnuPreviewSharp" Header="Sharp (2× window size)" IsCheckable="True" Tag="sharp" Click="OnPreviewQualityClick" />
@@ -182,6 +183,7 @@
                     Click="OnNextClick"
                     ToolTip="Next image (&#x2192;)" />
             <v:CropOverlay x:Name="CropOverlay" Visibility="Collapsed" />
+            <v:PluginOverlayCanvas x:Name="PluginOverlays" Visibility="Collapsed" />
             <v:PointMarkerOverlay x:Name="PointMarkers" Visibility="Collapsed" />
             <v:MaskOverlay x:Name="MaskOverlay" Visibility="Collapsed" />
             <Grid x:Name="HistHost"

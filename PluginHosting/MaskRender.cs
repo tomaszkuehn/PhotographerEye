@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using ImgViewer.Imaging;
 using ImgViewer.Plugins;
 using ImgViewer.Services;
 
@@ -72,6 +73,43 @@ public static class MaskRender
                 }
                 return null;
         }
+        return Invertible(m, spec);
+    }
+
+    public static bool IsGeometric(string kind) => kind is Linear or Radial or Brush;
+
+    /// <summary>
+    /// Geometric mask (source fractions) for an image after crop and rotation (<paramref name="w"/> x <paramref name="h"/>):
+    /// rendered on a grid shaped like the source at the output's pixel density and sampled through the inverse geometry.
+    /// </summary>
+    public static float[] RenderMapped(MaskSpec spec, int w, int h, GeoState g, double srcW, double srcH)
+    {
+        srcW = Math.Max(1, srcW);
+        srcH = Math.Max(1, srcH);
+        double outW = Math.Max(1e-6, PhotoGeo.OutputWidth(g, srcW, srcH));
+        double k = w / outW;
+        double gw0 = srcW * k, gh0 = srcH * k;
+        double cap = Math.Min(1.0, 6000.0 / Math.Max(gw0, gh0));
+        int gw = Math.Max(1, (int)Math.Round(gw0 * cap)), gh = Math.Max(1, (int)Math.Round(gh0 * cap));
+        var grid = spec.Kind switch
+        {
+            Linear => RenderLinear(spec, gw, gh),
+            Radial => RenderRadial(spec, gw, gh),
+            _ => RenderBrush(spec, gw, gh)
+        };
+        var m = new float[w * h];
+        Parallel.For(0, h, y =>
+        {
+            for (int x = 0; x < w; x++)
+            {
+                var p = PhotoGeo.MapFromOutput(g, srcW, srcH, new System.Windows.Point((x + 0.5) / w, (y + 0.5) / h));
+                double fx = p.X * gw - 0.5, fy = p.Y * gh - 0.5;
+                int x0 = (int)Math.Floor(fx), y0 = (int)Math.Floor(fy);
+                double ax = fx - x0, ay = fy - y0;
+                float S(int xx, int yy) => grid[Math.Clamp(yy, 0, gh - 1) * gw + Math.Clamp(xx, 0, gw - 1)];
+                m[y * w + x] = (float)((S(x0, y0) * (1 - ax) + S(x0 + 1, y0) * ax) * (1 - ay) + (S(x0, y0 + 1) * (1 - ax) + S(x0 + 1, y0 + 1) * ax) * ay);
+            }
+        });
         return Invertible(m, spec);
     }
 

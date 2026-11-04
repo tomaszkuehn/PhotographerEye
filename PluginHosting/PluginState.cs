@@ -110,7 +110,7 @@ public sealed class PluginEditState
     }
 
     public MaskSpec? MaskFor(Registered<FilterDescriptor> f) =>
-        f.D.SupportsMask && f.D.Stage != FilterStage.Output && Masks.TryGetValue(f.FullId, out var m) && !string.IsNullOrEmpty(m.Kind) ? m : null;
+        f.D.SupportsMask && Masks.TryGetValue(f.FullId, out var m) && !string.IsNullOrEmpty(m.Kind) ? m : null;
 
     /// <summary>Filters of one stage in execution order.</summary>
     public List<Registered<FilterDescriptor>> Ordered(PluginRegistry reg, FilterStage stage)

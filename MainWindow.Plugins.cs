@@ -58,6 +58,7 @@ public partial class MainWindow
         _importerExts = new HashSet<string>(_pluginReg.ImporterExtensions, StringComparer.OrdinalIgnoreCase);
         MaskOverlay.Attach(Viewer);
         PointMarkers.Attach(Viewer);
+        PluginOverlays.Attach(Viewer);
         PointMarkers.MarkerMoved += OnPointMarkerMoved;
         PointMarkers.MarkerGrabbed += OnPointMarkerGrabbed;
         MaskOverlay.SpecChanged += OnMaskSpecChanged;
@@ -256,6 +257,7 @@ public partial class MainWindow
             var corrected = Correct16(base16, sn.BaseEv, sn.Extra, sn.S, sn.G, sn.Manual, sn.Mono, sn.Seed, sn.Curve, job, fw, fh, CancellationToken.None, out _, out _);
             corrected = PluginPipeline.ApplyRaw16(corrected, FilterStage.Display, job, fw, fh) ?? corrected;
             var geo16 = PhotoGeo.Apply(corrected, sn.Geo);
+            job.OutputGeo = (sn.Geo, corrected.W, corrected.H);
             geo16 = PluginPipeline.ApplyRaw16(geo16, FilterStage.Output, job, geo16.W, geo16.H) ?? geo16;
             return (geo16, null);
         }
@@ -268,6 +270,7 @@ public partial class MainWindow
             ?? throw new InvalidOperationException("Failed to process image");
         BitmapSource outB = PluginPipeline.ApplyBitmap(processed, FilterStage.Display, job, w, h) ?? processed;
         var (geo8, _) = PhotoGeo.Apply(outB, new Size(outB.PixelWidth, outB.PixelHeight), sn.Geo);
+        job.OutputGeo = (sn.Geo, outB.PixelWidth, outB.PixelHeight);
         geo8 = PluginPipeline.ApplyBitmap(geo8, FilterStage.Output, job, geo8.PixelWidth, geo8.PixelHeight) ?? geo8;
         return (null, geo8);
     }
@@ -892,7 +895,7 @@ public partial class MainWindow
                 Debug.Log($"PLUGINS: param {f.FullId}/{d.Id} UI failed: {ex.Message}");
             }
         }
-        if (f.D.SupportsMask && f.D.Stage != FilterStage.Output)
+        if (f.D.SupportsMask)
             body.Children.Add(BuildMaskControls(f.FullId, f.D.Label, muted));
         return body;
     }
@@ -1365,6 +1368,7 @@ public partial class MainWindow
     /// </summary>
     private void RefreshPointMarkers()
     {
+        RefreshPluginOverlays();
         if (PointMarkers is null) return;
         if (_cropMode || _baseInfo is not ImageInfo bi || _lastDisplayed is null && _baseBitmap is null)
         {
@@ -2012,6 +2016,7 @@ public partial class MainWindow
         }
         MnuCommands.Visibility = MnuCommands.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
+        BuildOverlayMenu();
         if (MnuPluginSettings is null) return;
         MnuPluginSettings.Items.Clear();
         foreach (var st in _pluginReg.Settings)
@@ -2086,6 +2091,11 @@ public partial class MainWindow
     /// <summary>Esc for point picking and plugin command shortcuts. Returns true when handled.</summary>
     private bool HandlePluginKey(KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && _pointPick is null && _maskEditFilter is null && CancelBackgroundTasks())
+        {
+            e.Handled = true;
+            return true;
+        }
         if (_pointPick is not null && e.Key == Key.Escape)
         {
             CancelPointPick();
@@ -2108,103 +2118,6 @@ public partial class MainWindow
             return true;
         }
         return false;
-    }
-
-    private void RunCommand(Registered<CommandDescriptor> c)
-    {
-        if (c.Owner is { Faulted: true })
-        {
-            SetStatus($"{c.D.Label}: plugin {c.PluginName} is disabled", error: true);
-            return;
-        }
-        var ctx = new CommandContext(this, c.PluginId);
-        try
-        {
-            c.D.Execute?.Invoke(ctx);
-            PluginManager.ReportSuccess(c.Owner);
-        }
-        catch (Exception ex)
-        {
-            PluginManager.Instance.ReportFailure(c.Owner, $"command {c.FullId}", ex);
-            SetStatus($"{c.D.Label}: {ex.Message}", error: true);
-        }
-        if (ctx.Dirty)
-        {
-            RebuildPluginUi();
-            OnPluginUiChanged();
-        }
-    }
-
-    private sealed class CommandContext : ICommandContext
-    {
-        private readonly MainWindow _w;
-        private readonly string _pid;
-        public bool Dirty;
-
-        public CommandContext(MainWindow w, string pluginId)
-        {
-            _w = w;
-            _pid = pluginId;
-        }
-
-        public string CurrentPath => _w._currentPath!;
-        public ImageMeta Meta => _w.CurrentMeta();
-        public void SetStatus(string text) => _w.SetStatus(text ?? "", error: false);
-        public void ShowMessage(string text) => MessageBox.Show(_w, text ?? "", "PhotographerEye");
-
-        private Registered<FilterDescriptor> F(string id) =>
-            _w._pluginReg.FindFilter(id.Contains(':') ? id : _pid + ":" + id) ?? throw new ArgumentException($"unknown filter '{id}'");
-
-        private static ParamDef P(Registered<FilterDescriptor> f, string id) =>
-            f.D.Params.FirstOrDefault(p => p.Id == id) ?? throw new ArgumentException($"unknown parameter '{id}' of {f.FullId}");
-
-        public double GetValue(string filterId, string paramId)
-        {
-            var f = F(filterId);
-            return _w._pluginState.GetValue(f, P(f, paramId));
-        }
-
-        public void SetValue(string filterId, string paramId, double value)
-        {
-            var f = F(filterId);
-            var d = P(f, paramId);
-            if (d.IsText) throw new ArgumentException($"parameter '{paramId}' is text; use SetText");
-            if (d.Kind == ParamKind.Slider) value = Math.Clamp(value, Math.Min(d.Min, d.Max), Math.Max(d.Min, d.Max));
-            _w._pluginState.SetValue(f, d, value);
-            Dirty = true;
-        }
-
-        public void SetText(string filterId, string paramId, string value)
-        {
-            var f = F(filterId);
-            var d = P(f, paramId);
-            if (!d.IsText) throw new ArgumentException($"parameter '{paramId}' is numeric; use SetValue");
-            _w._pluginState.SetText(f, d, value);
-            Dirty = true;
-        }
-
-        public bool IsActive(string filterId) => _w._pluginState.IsFilterOn(F(filterId));
-
-        public void SetActive(string filterId, bool active)
-        {
-            var f = F(filterId);
-            if (active) _w._pluginState.Active.Add(f.FullId);
-            else _w._pluginState.Active.Remove(f.FullId);
-            Dirty = true;
-        }
-
-        public void ApplyPreset(string presetId)
-        {
-            var reg = _w._pluginReg;
-            var all = PresetStore.FromRegistry(reg);
-            for (int i = 0; i < reg.Presets.Count && i < all.Count; i++)
-            {
-                if (reg.Presets[i].PluginId != _pid || reg.Presets[i].D.Id != presetId) continue;
-                _w.ApplyPreset(all[i]);
-                return;
-            }
-            throw new ArgumentException($"unknown preset '{presetId}'");
-        }
     }
 
     // ------------------------------------------------------------------
@@ -2315,86 +2228,6 @@ public partial class MainWindow
         });
     }
 
-    private FilterParams? ShowExportOptions(Registered<ExporterDescriptor> exp)
-    {
-        var defs = exp.D.Options;
-        _exportOptions.TryGetValue(exp.FullId, out var last);
-        var values = new Dictionary<string, double>();
-        var text = new Dictionary<string, string>();
-        foreach (var d in defs)
-        {
-            if (d.IsText) text[d.Id] = last.Text is not null && last.Text.TryGetValue(d.Id, out var t) ? t : d.DefaultText;
-            else values[d.Id] = last.Values is not null && last.Values.TryGetValue(d.Id, out var v) ? v : d.Default;
-        }
-
-        var w = new Window
-        {
-            Title = exp.D.Label,
-            Owner = this,
-            SizeToContent = SizeToContent.WidthAndHeight,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            ResizeMode = ResizeMode.NoResize,
-            ShowInTaskbar = false
-        };
-        w.SetResourceReference(BackgroundProperty, "PanelBrush");
-        w.SetResourceReference(ForegroundProperty, "ForegroundBrush");
-        var muted = (Brush)FindResource("MutedBrush");
-        var sp = new StackPanel { Margin = new Thickness(14), Width = 300 };
-        var readers = new List<Action>();
-        foreach (var d in defs)
-        {
-            var pd = d;
-            switch (d.Kind)
-            {
-                case ParamKind.Toggle:
-                {
-                    var cb = new CheckBox { Content = d.Label, IsChecked = values[d.Id] >= 0.5, Margin = new Thickness(0, 8, 0, 0) };
-                    readers.Add(() => values[pd.Id] = cb.IsChecked == true ? 1 : 0);
-                    sp.Children.Add(cb);
-                    break;
-                }
-                case ParamKind.Choice:
-                {
-                    sp.Children.Add(LabelRow(d.Label, out _, muted));
-                    var combo = new ComboBox { Margin = new Thickness(0, 4, 0, 0) };
-                    foreach (var ch in d.Choices)
-                    {
-                        var it = new ComboBoxItem { Content = ch.Label, Tag = ch.Id };
-                        combo.Items.Add(it);
-                        if (ch.Id == text[d.Id]) combo.SelectedItem = it;
-                    }
-                    if (combo.SelectedItem is null && combo.Items.Count > 0) combo.SelectedIndex = 0;
-                    readers.Add(() => { if (combo.SelectedItem is ComboBoxItem { Tag: string id }) text[pd.Id] = id; });
-                    sp.Children.Add(combo);
-                    break;
-                }
-                case ParamKind.Slider:
-                {
-                    sp.Children.Add(LabelRow(d.Label, out var v, muted));
-                    double min = Math.Min(d.Min, d.Max), max = Math.Max(d.Min, d.Max);
-                    var s = new Slider { Minimum = min, Maximum = max, Value = Math.Clamp(values[d.Id], min, max), SmallChange = Math.Max(0.001, d.Step), LargeChange = Math.Max(0.01, d.Step * 10), Margin = new Thickness(0, 4, 0, 0) };
-                    PhotoshopSlider.SetEnable(s, true);
-                    v.Text = FormatParam(s.Value, d);
-                    s.ValueChanged += (_, e) => v.Text = FormatParam(e.NewValue, pd);
-                    readers.Add(() => values[pd.Id] = s.Value);
-                    sp.Children.Add(s);
-                    break;
-                }
-                default:
-                {
-                    sp.Children.Add(LabelRow(d.Label, out _, muted));
-                    var tb = new TextBox { Text = text[d.Id], Margin = new Thickness(0, 4, 0, 0) };
-                    readers.Add(() => text[pd.Id] = tb.Text);
-                    sp.Children.Add(tb);
-                    break;
-                }
-            }
-        }
-        sp.Children.Add(DialogButtons(w));
-        w.Content = sp;
-        if (w.ShowDialog() != true) return null;
-        foreach (var r in readers) r();
-        _exportOptions[exp.FullId] = (new Dictionary<string, double>(values), new Dictionary<string, string>(text));
-        return new FilterParams(defs, values, text);
-    }
+    private FilterParams? ShowExportOptions(Registered<ExporterDescriptor> exp) =>
+        ShowParamsDialog(exp.D.Label, exp.D.Options, exp.FullId);
 }

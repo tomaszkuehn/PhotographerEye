@@ -175,6 +175,52 @@ internal sealed class PluginHostImpl : IPluginHost
         _p.Settings.Add(Wrap(id, handle, _p.Settings.Count));
         return handle;
     }
+
+    public IOverlay AddOverlay(OverlayDescriptor overlay)
+    {
+        var id = CheckId(overlay?.Id, "overlay", _p.Overlays.Select(f => f.LocalId));
+        if (overlay!.Draw is null) throw new ArgumentException($"overlay '{id}' has no Draw");
+        overlay.Id = id;
+        if (string.IsNullOrWhiteSpace(overlay.Label)) overlay.Label = id;
+        var handle = new OverlayHandle(overlay);
+        _p.Overlays.Add(Wrap(id, handle, _p.Overlays.Count));
+        return handle;
+    }
+}
+
+/// <summary>Registered overlay; the main window draws it while <see cref="Visible"/> and sets <see cref="OnRefresh"/>.</summary>
+public sealed class OverlayHandle : IOverlay
+{
+    private bool _visible;
+    public OverlayDescriptor D { get; }
+    /// <summary>Called on the UI thread when the overlay asks for new content or its visibility changes.</summary>
+    public Action? OnRefresh { get; set; }
+
+    public OverlayHandle(OverlayDescriptor d)
+    {
+        D = d;
+        _visible = d.DefaultVisible;
+    }
+
+    public bool Visible
+    {
+        get => _visible;
+        set
+        {
+            if (_visible == value) return;
+            _visible = value;
+            Refresh();
+        }
+    }
+
+    public void Refresh()
+    {
+        var h = OnRefresh;
+        if (h is null) return;
+        var disp = Application.Current?.Dispatcher;
+        if (disp is null || disp.CheckAccess()) h();
+        else disp.BeginInvoke(h);
+    }
 }
 
 /// <summary>Registered plugin setting; the choice is kept in settings.json of the plugin's data directory.</summary>
@@ -314,6 +360,9 @@ internal sealed class HostEventsImpl : IHostEvents
     public event EventHandler<SaveEventArgs>? BeforeSave;
     public event EventHandler<SaveEventArgs>? AfterSave;
     public event EventHandler<SaveEventArgs>? AfterExport;
+    public event EventHandler<ImageEventArgs>? ImageClosed;
+    public event EventHandler<EditChangedEventArgs>? EditChanged;
+    public event EventHandler<FilterToggledEventArgs>? FilterToggled;
 
     private static void Safe(LoadedPlugin p, string what, Action a)
     {
@@ -332,6 +381,9 @@ internal sealed class HostEventsImpl : IHostEvents
     public void RaiseBeforeSave(LoadedPlugin p, SaveEventArgs e) { var h = BeforeSave; if (h is not null) Safe(p, "BeforeSave", () => h(this, e)); }
     public void RaiseAfterSave(LoadedPlugin p, SaveEventArgs e) { var h = AfterSave; if (h is not null) Safe(p, "AfterSave", () => h(this, e)); }
     public void RaiseAfterExport(LoadedPlugin p, SaveEventArgs e) { var h = AfterExport; if (h is not null) Safe(p, "AfterExport", () => h(this, e)); }
+    public void RaiseImageClosed(LoadedPlugin p, ImageEventArgs e) { var h = ImageClosed; if (h is not null) Safe(p, "ImageClosed", () => h(this, e)); }
+    public void RaiseEditChanged(LoadedPlugin p, EditChangedEventArgs e) { var h = EditChanged; if (h is not null) Safe(p, "EditChanged", () => h(this, e)); }
+    public void RaiseFilterToggled(LoadedPlugin p, FilterToggledEventArgs e) { var h = FilterToggled; if (h is not null) Safe(p, "FilterToggled", () => h(this, e)); }
 }
 
 /// <summary>Host imaging services for plugins (and built-ins). GPU blur when available.</summary>

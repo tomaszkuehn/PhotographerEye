@@ -65,6 +65,7 @@ public sealed class LoadedPlugin
     public List<Registered<PresetDescriptor>> Presets { get; } = new();
     public List<Registered<ListPanelHandle>> ListPanels { get; } = new();
     public List<Registered<PluginSettingHandle>> Settings { get; } = new();
+    public List<Registered<OverlayHandle>> Overlays { get; } = new();
 }
 
 public sealed class Registered<T>
@@ -97,6 +98,7 @@ public sealed class PluginRegistry
     public IReadOnlyList<Registered<PresetDescriptor>> Presets { get; }
     public IReadOnlyList<Registered<ListPanelHandle>> ListPanels { get; }
     public IReadOnlyList<Registered<PluginSettingHandle>> Settings { get; }
+    public IReadOnlyList<Registered<OverlayHandle>> Overlays { get; }
     public IReadOnlyList<LoadedPlugin> Plugins { get; }
     private readonly Dictionary<string, Registered<FilterDescriptor>> _filterById;
 
@@ -116,6 +118,7 @@ public sealed class PluginRegistry
         Presets = active.SelectMany(p => p.Presets).ToList();
         ListPanels = active.SelectMany(p => p.ListPanels).ToList();
         Settings = active.SelectMany(p => p.Settings).ToList();
+        Overlays = active.SelectMany(p => p.Overlays).ToList();
         _filterById = new Dictionary<string, Registered<FilterDescriptor>>(StringComparer.Ordinal);
         foreach (var f in filters) _filterById.TryAdd(f.FullId, f);
     }
@@ -421,6 +424,7 @@ public sealed class PluginManager
                 lp.Presets.Clear();
                 lp.ListPanels.Clear();
                 lp.Settings.Clear();
+                lp.Overlays.Clear();
             }
         }
         entry.Plugins.Add(lp);
@@ -589,6 +593,23 @@ public sealed class PluginManager
     {
         foreach (var p in Registry.Plugins)
             p.Host?.EventsImpl.RaiseImageOpened(p, new ImageEventArgs { Path = path, Meta = meta });
+    }
+
+    public void RaiseImageClosed(string path, ImageMeta meta)
+    {
+        foreach (var p in Registry.Plugins)
+            p.Host?.EventsImpl.RaiseImageClosed(p, new ImageEventArgs { Path = path, Meta = meta });
+    }
+
+    public void RaiseEditChanged(string path, IReadOnlyList<string> keys, bool fromHistory, IReadOnlyList<(string Id, bool On)> toggled)
+    {
+        foreach (var p in Registry.Plugins)
+        {
+            if (p.Host is null) continue;
+            p.Host.EventsImpl.RaiseEditChanged(p, new EditChangedEventArgs { Path = path, Keys = keys.ToArray(), FromHistory = fromHistory });
+            foreach (var t in toggled)
+                p.Host.EventsImpl.RaiseFilterToggled(p, new FilterToggledEventArgs { Path = path, FilterId = t.Id, Active = t.On });
+        }
     }
 
     /// <summary>Returns a cancel reason when a plugin cancelled the save.</summary>

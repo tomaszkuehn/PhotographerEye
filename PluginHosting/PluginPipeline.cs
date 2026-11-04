@@ -26,6 +26,11 @@ public sealed class PluginRenderJob
     public double Scale { get; init; } = 1.0;
     public CancellationToken Cancel { get; init; }
     public PipelineReport Report { get; } = new();
+    /// <summary>
+    /// Geometry between the source photo (SrcW x SrcH, any unit) and the Output stage image. Set before the Output
+    /// stage runs, so masks (given in source fractions) are mapped through crop and rotation.
+    /// </summary>
+    public (GeoState Geo, double SrcW, double SrcH)? OutputGeo { get; set; }
 
     public bool Has(FilterStage stage) => State.HasEffect(Registry, stage);
 }
@@ -218,7 +223,9 @@ public static class PluginPipeline
         {
             try
             {
-                mask = MaskRender.Render(maskSpec, img, ctx, job.Registry);
+                mask = ctx.Stage == FilterStage.Output && job.OutputGeo is { } og && MaskRender.IsGeometric(maskSpec.Kind)
+                    ? MaskRender.RenderMapped(maskSpec, img.Width, img.Height, og.Geo, og.SrcW, og.SrcH)
+                    : MaskRender.Render(maskSpec, img, ctx, job.Registry);
             }
             catch (OperationCanceledException) when (job.Cancel.IsCancellationRequested)
             {

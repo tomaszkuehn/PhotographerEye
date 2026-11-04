@@ -34,6 +34,7 @@ public partial class MainWindow
 
     private string StepLabel(EyeState prev, EyeState cur)
     {
+        if (_stepCustomLabels.TryGetValue(cur, out var custom)) return custom;
         if (_histLabels.TryGetValue(cur, out var c) && ReferenceEquals(c.Item1, prev)) return c.Item2;
         string label;
         try
@@ -76,6 +77,7 @@ public partial class MainWindow
         _histLastKey = null;
         var st = _hist[_histPos];
         Debug.Log($"HIST: goto -> pos={_histPos}/{_hist.Count}");
+        _histFromNav = true;
         ApplyEyeStateSuppressed(st);
         SyncSessionHist();
         UpdateUndoButtons();
@@ -93,7 +95,52 @@ public partial class MainWindow
             && ReferenceEquals(last, _histRaised.Item4) && string.Equals(_currentPath, _histRaised.Item5, StringComparison.Ordinal))
             return;
         _histRaised = sig;
+        RaiseEditEvents(cur);
         EditHistoryService.RaiseChanged();
+    }
+
+    private EyeState? _editRaisedState;
+    private string? _editRaisedPath;
+    private bool _histFromNav;
+
+    /// <summary>EditChanged / FilterToggled for what differs from the state plugins saw last (same photo only).</summary>
+    private void RaiseEditEvents(EyeState? cur)
+    {
+        bool nav = _histFromNav;
+        _histFromNav = false;
+        var prev = _editRaisedState;
+        bool samePath = _currentPath is not null && string.Equals(_editRaisedPath, _currentPath, StringComparison.Ordinal);
+        _editRaisedState = cur;
+        _editRaisedPath = cur is null ? null : _currentPath;
+        if (cur is null || prev is null || !samePath || ReferenceEquals(prev, cur)) return;
+        List<string> keys;
+        List<(string Id, bool On)> toggled;
+        try
+        {
+            keys = EditChangeKeys.Map(prev, cur, out toggled);
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"EDIT: change keys failed [{ex.GetType().Name}] {ex.Message}");
+            return;
+        }
+        if (keys.Count == 0) return;
+        PluginManager.Instance.RaiseEditChanged(_currentPath!, keys, nav, toggled);
+    }
+
+    private void RaiseImageClosed()
+    {
+        if (_currentPath is null) return;
+        try
+        {
+            PluginManager.Instance.RaiseImageClosed(_currentPath, CurrentMeta());
+        }
+        catch (Exception ex)
+        {
+            Debug.Log($"EDIT: image closed event failed [{ex.GetType().Name}] {ex.Message}");
+        }
+        _editRaisedState = null;
+        _editRaisedPath = null;
     }
 
     // ------------------------------------------------------------------

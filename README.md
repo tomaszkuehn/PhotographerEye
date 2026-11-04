@@ -70,9 +70,20 @@ PhotographerEye loads .NET plugins that target `netstandard2.0` and reference `I
   - commands (`AddCommand`)
   - presets (`AddPreset`)
   - list panels (`AddListPanel`): a section in the Adjustments panel with a selectable list (mouse, arrow keys, Home/End); the plugin supplies `Items`, `Selected` and `Select`, and calls `IListPanel.Refresh()` when its data change
+  - overlays (`AddOverlay`, `OverlayDescriptor`): information drawn over the photo (lines, rectangles, ellipses, polylines, polygons, text and an RGBA raster such as a clipping map), switched on and off under Settings > "Plugin overlays". Shapes are given in fractions of the shown image or of the source photo (`OverlaySpace.Source` follows crop and rotation). `Draw` runs on the UI thread when the photo or the render changes, or when the plugin calls `IOverlay.Refresh()`; `OverlayRequest.Rendered` lazily returns the current preview. Overlays never take the mouse and are hidden in crop mode.
   - settings (`AddSetting`, `SettingDescriptor`): a plugin-wide choice, not stored per photo, shown under Settings > "Plugin settings". The host keeps the choice in `settings.json` in the plugin's data folder. `IPluginSetting.Value` holds the stored choice as soon as `AddSetting` returns. `Changed` runs on the UI thread when the user picks a different choice, and may change a filter's `Stage`; the host then clears its stage caches, rebuilds the plugin panels and re-renders. A setting change is not an undo step.
 - `host.History` (`IEditHistory`) exposes the undo steps of the current photo (`Steps` with labels, `Position`), `GoTo(index)` (like undo/redo to that step; the next edit drops the later steps) and a `Changed` event raised on the UI thread after each committed step, undo/redo and photo switch.
-- `host.Events` exposes `ImageOpened`, `BeforeSave` (which can cancel the save), `AfterSave` and `AfterExport`. `host.DataDirectory` is a writable folder for each plugin. `host.Imaging` provides blur, resize and JPEG/PNG encoding, and uses the GPU when one is available (`host.GpuAvailable`).
+- `host.Events` exposes `ImageOpened`, `ImageClosed` (before switching to another photo and on exit), `BeforeSave` (which can cancel the save), `AfterSave`, `AfterExport`, `EditChanged` and `FilterToggled`. `EditChanged` is raised on the UI thread after each committed undo step, undo/redo and history jump (`FromHistory`), with the changed keys: `core.Exposure`, `core.Crop`, `core.Stretch`, ... for the core settings, `pluginId:filterId/paramId` for filter parameters, `pluginId:filterId#active`, `pluginId:filterId#mask` and `#order`. `FilterToggled` reports each filter switched on or off. `host.DataDirectory` is a writable folder for each plugin. `host.Imaging` provides blur, resize and JPEG/PNG encoding, and uses the GPU when one is available (`host.GpuAvailable`).
+- **Commands** (`AddCommand`) get an `ICommandContext`. Besides filter values, active flags and presets it offers:
+  - core settings: `CoreKeys`, `GetCore` / `SetCore` / `GetCoreRange` (`Exposure`, `Contrast`, `Temperature`, `Tint`, `Saturation`, `Highlights`, `Shadows`, `Whites`, `Blacks`, `Clarity`, `Dehaze`, `Sharpen`, `Denoise`, `ColorNoise`, `Gamma`, `Mono`; values are clamped to the slider range)
+  - geometry: `GetGeometry` / `SetGeometry` (crop rectangle, aspect, quarter turns, straighten angle) and `ResetGeometry`
+  - curves: `GetCurve` / `SetCurve` for the RGB curves, levels, histogram stretch (in display fractions or EV) and the RAW camera tone curve; `SetWhitePoint(x, y)` sets white balance from a neutral point of the photo
+  - pixels: `GetImage(Source | Rendered, maxLongSide)` (the source in linear sRGB for RAW, the current preview in sRGB) and `GetHistogram()` of the preview
+  - interaction: `Ask(title, parameters)` (a dialog built from `ParamDef`s, which remembers the last answers), `PickOpenFile` / `PickSaveFile`, and `RunInBackground(label, work, done)`: `work` runs on a worker thread with progress in the status bar, and is cancelled by Esc, by switching photo or by a new background run of the same plugin; `done` runs on the UI thread with a fresh context
+  - the viewer: `View` (`Zoom`, `SetZoom` with an optional centre, `FitToWindow`, `ActualSize`, `ShowOriginal`)
+  - masks: `GetMask` / `SetMask` (`MaskInfo`) of any filter that supports masks
+
+  All changes made by one command (or by one `done` callback) become a single undo step, labelled with `StepLabel` (the command label by default), and the preview re-renders once.
 - **Filters** receive a `PluginImage` with float RGB planes in 0..1, the `FilterParams`, and a `RenderContext`. The context carries the stage, color space, preview flag, preview scale, full-resolution size, `ImageMeta`, cancellation token and progress callback.
 - **Stages** decide where a filter runs:
   - `Base`: linear light, before everything else, including the manual exposure and white balance. Its result does not depend on them; they are applied on top of it. For a RAW photo it runs after the default brightness and before the camera tone curve. It is cached separately, so moving the exposure slider does not run it again.
@@ -82,7 +93,7 @@ PhotographerEye loads .NET plugins that target `netstandard2.0` and reference `I
 - **Placement**: a filter goes either on the toolbar (a toggle button) or in the Adjustments panel (a collapsible section per `Group`, with up/down/reset buttons). The user's filter order is stored in `.eye`.
 - **Parameter kinds**: `Slider`, `Toggle`, `Choice`, `Color` (hex, with an HSL picker), `Curve` (`x,y;...`, with a curve editor), `Point` (pick on the image), `File` (browse). Optional `IsIdentity` skips a filter while it would have no effect.
 - **IDs are namespaced**: `pluginId:filterId`, and parameter values are stored as `pluginId:filterId/paramId`. Values that belong to plugins which are not installed are kept untouched in `.eye`, so a photo survives a round-trip through a machine without the plugin.
-- **Masks**: any filter with `SupportsMask` (in the SceneLinear and Display stages) can be limited by one of:
+- **Masks**: any filter with `SupportsMask` (in every stage; masks of Output filters are mapped through crop and rotation) can be limited by one of:
   - a linear gradient
   - a radial gradient
   - a brush
@@ -186,6 +197,8 @@ Auto-stretch diagnostic mode (channel percentiles, luminance thresholds, post-ad
 ```
 dotnet run --project tools\Harness\tools.csproj -c Release -- image1.jpg image2.jpg
 ```
+
+Plugin API (`TestPluginApi`: EditChanged keys, core/curve/mask helpers, Output-stage masks, overlays): `--pluginapi`.
 
 E2E UIA (requires a running app): `scripts\uia-e2e.ps1 <pid>`
 
