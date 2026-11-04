@@ -28,6 +28,8 @@ public sealed record ViewerSettings
     public bool? PanelPicture { get; init; }
     /// <summary>Blur the background picture (null = on).</summary>
     public bool? ViewerBackgroundBlur { get; init; }
+    /// <summary>Show the markers of all masks on the photo also when no mask is being edited (null = off).</summary>
+    public bool? ShowMaskMarkers { get; init; }
     /// <summary>How much the background picture is darkened, 0..0.9 (null = 0.6).</summary>
     public double? ViewerBackgroundDim { get; init; }
     /// <summary>Folders opened recently, newest first (welcome screen).</summary>

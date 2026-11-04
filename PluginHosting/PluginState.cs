@@ -100,17 +100,54 @@ public sealed class PluginEditState
 
     public bool HasEffect(PluginRegistry reg, FilterStage stage) => reg.Filters.Any(f => f.D.Stage == stage && IsFilterActive(f));
 
-    public void ResetFilter(Registered<FilterDescriptor> f)
+    /// <summary>Clears the filter's settings; its mask too unless <paramref name="keepMask"/> (masks linked to it then get their own copy).</summary>
+    public void ResetFilter(Registered<FilterDescriptor> f, bool keepMask = false)
     {
         var prefix = f.FullId + "/";
         foreach (var k in Values.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList()) Values.Remove(k);
         foreach (var k in Text.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList()) Text.Remove(k);
         Active.Remove(f.FullId);
+        if (keepMask) return;
+        DetachLinksTo(f.FullId);
         Masks.Remove(f.FullId);
     }
 
     public MaskSpec? MaskFor(Registered<FilterDescriptor> f) =>
-        f.D.SupportsMask && Masks.TryGetValue(f.FullId, out var m) && !string.IsNullOrEmpty(m.Kind) ? m : null;
+        f.D.SupportsMask && Masks.TryGetValue(f.FullId, out var m) ? Resolve(m) : null;
+
+    /// <summary>
+    /// The mask that actually applies: a "link" mask gives the mask of its <see cref="MaskSpec.Ref"/> (inverted when the
+    /// link is inverted); a link to a missing mask or to another link gives null (whole photo).
+    /// </summary>
+    public MaskSpec? Resolve(MaskSpec? m)
+    {
+        if (m is null || string.IsNullOrEmpty(m.Kind)) return null;
+        if (m.Kind != MaskRender.Link) return m;
+        if (m.Ref is null || !Masks.TryGetValue(m.Ref, out var src) || src is null || string.IsNullOrEmpty(src.Kind) || src.Kind == MaskRender.Link)
+            return null;
+        return m.Invert ? src with { Invert = !src.Invert } : src;
+    }
+
+    /// <summary>Keys of the masks linked to the mask of <paramref name="key"/>.</summary>
+    public List<string> LinksTo(string key) =>
+        Masks.Where(kv => kv.Value is { Kind: MaskRender.Link } l && l.Ref == key).Select(kv => kv.Key).OrderBy(k => k, StringComparer.Ordinal).ToList();
+
+    /// <summary>
+    /// Before the mask of <paramref name="key"/> is removed or replaced: the masks linked to it become their own copies
+    /// of it (with their invert), so they keep looking the same.
+    /// </summary>
+    public void DetachLinksTo(string key)
+    {
+        var links = LinksTo(key);
+        if (links.Count == 0) return;
+        Masks.TryGetValue(key, out var src);
+        foreach (var k in links)
+        {
+            var l = Masks[k];
+            if (src is null || string.IsNullOrEmpty(src.Kind) || src.Kind == MaskRender.Link) { Masks.Remove(k); continue; }
+            Masks[k] = CloneMask(src) with { Invert = src.Invert ^ l.Invert, Ref = null, Adjust = CopyAdjust(l.Adjust) };
+        }
+    }
 
     /// <summary>Filters of one stage in execution order.</summary>
     public List<Registered<FilterDescriptor>> Ordered(PluginRegistry reg, FilterStage stage)
@@ -210,8 +247,12 @@ public sealed class PluginEditState
         P = m.P is null ? null : (double[])m.P.Clone(),
         Strokes = m.Strokes?.Select(s => (double[])s.Clone()).ToList(),
         Values = m.Values is null ? null : new Dictionary<string, double>(m.Values),
-        Text = m.Text is null ? null : new Dictionary<string, string>(m.Text)
+        Text = m.Text is null ? null : new Dictionary<string, string>(m.Text),
+        Adjust = CopyAdjust(m.Adjust)
     };
+
+    public static Dictionary<string, double>? CopyAdjust(Dictionary<string, double>? a) =>
+        a is null ? null : new Dictionary<string, double>(a);
 
     public bool ContentEquals(PluginEditState o)
     {

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -9,10 +10,11 @@ using ImgViewer.Services;
 namespace ImgViewer;
 
 /// <summary>
-/// Mask for the main Adjustments panel (STANDARD / DETAIL sliders and the R/G/B curves).
+/// Mask for the main Adjustments panel (STANDARD / DETAIL sliders). The panel has two sets of values: the whole-photo
+/// ones (everywhere) and the mask's own (<see cref="MaskSpec.Adjust"/>, added to the whole-photo ones inside the mask).
 /// Stored in <see cref="PluginEditState.Masks"/> under <see cref="Key"/>, so undo, history and .eye files keep it.
-/// The panel is rendered twice (with and without the panel values) and the two are blended by the mask,
-/// which is computed on the render without the panel values (Display stage, sRGB).
+/// The photo is rendered with the whole-photo values and with the combined values, and the two are blended by the
+/// mask, which is computed on the whole-photo render (Display stage, sRGB). R/G/B curves stay whole-photo.
 /// </summary>
 public static class AdjustMask
 {
@@ -20,7 +22,15 @@ public static class AdjustMask
     public const string Label = "Adjustments";
 
     public static MaskSpec? For(PluginEditState state) =>
-        state.Masks.TryGetValue(Key, out var m) && !string.IsNullOrEmpty(m.Kind) ? m : null;
+        state.Masks.TryGetValue(Key, out var m) ? state.Resolve(m) : null;
+
+    /// <summary>The mask's own slider values (stored on the Adjustments mask itself, also when it is a link), or null.</summary>
+    public static Dictionary<string, double>? Values(PluginEditState state) =>
+        state.Masks.TryGetValue(Key, out var m) && m.Adjust is { Count: > 0 } a ? a : null;
+
+    /// <summary>Whole-photo value plus the mask's value of one slider, clamped to the slider range.</summary>
+    public static double Combine(CoreParam p, double global, Dictionary<string, double>? local) =>
+        local is not null && local.TryGetValue(p.Key, out var l) ? Math.Clamp(global + l, p.Min, p.Max) : global;
 
     private static float[]? Render(MaskSpec spec, PluginImage img, PluginRenderJob job, int fullW, int fullH)
     {

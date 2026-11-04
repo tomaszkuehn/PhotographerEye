@@ -36,6 +36,19 @@ public sealed class MaskOverlay : Canvas
     /// <summary>Raised while dragging (final = false) and on mouse up (final = true).</summary>
     public event Action<MaskSpec, bool>? SpecChanged;
 
+    /// <summary>Marker of a mask on the photo (<see cref="SetPins"/>); Src in source fractions.</summary>
+    public sealed record MaskPin(string Key, string Label, MaskSpec Spec, Point Src);
+
+    /// <summary>Clicked marker: the masks under it (several when markers overlap) and the click position in the overlay.</summary>
+    public event Action<IReadOnlyList<MaskPin>, Point>? PinClicked;
+
+    private const double PinR = 7;
+    private const double PinMerge = 16;
+    private List<MaskPin> _pins = new();
+    private bool _pinsVisible;
+    private int _hoverPin = -1;
+    private List<(Point At, List<MaskPin> Pins)> _clusters = new();
+
     /// <summary>Brush radius as a fraction of the photo width.</summary>
     public double BrushRadius { get; set; } = 0.04;
     public bool BrushErase { get; set; }
@@ -51,7 +64,7 @@ public sealed class MaskOverlay : Canvas
         MouseLeftButtonDown += OnDown;
         MouseMove += OnMove;
         MouseLeftButtonUp += OnUp;
-        MouseLeave += (_, _) => { _mouseInside = false; Redraw(); };
+        MouseLeave += (_, _) => { _mouseInside = false; _hoverPin = -1; UpdateCursor(); Redraw(); };
         MouseWheel += (_, e) =>
         {
             if (_viewer is null) return;
@@ -79,10 +92,67 @@ public sealed class MaskOverlay : Canvas
     {
         _spec = spec;
         Editing = editing && spec is not null;
-        IsHitTestVisible = Editing;
-        Background = Editing ? Brushes.Transparent : null;
-        Cursor = Editing && spec?.Kind == "brush" ? Cursors.None : Cursors.Arrow;
+        UpdateHitTest();
         Redraw();
+    }
+
+    /// <summary>
+    /// Markers of the photo's other masks; clicking one raises <see cref="PinClicked"/>. With no mask being edited
+    /// only the markers take the mouse, the rest of the photo still pans and zooms.
+    /// </summary>
+    public void SetPins(IReadOnlyList<MaskPin> pins, bool visible)
+    {
+        _pins = pins.ToList();
+        _pinsVisible = visible;
+        if (!PinsShown) _hoverPin = -1;
+        UpdateHitTest();
+        Redraw();
+    }
+
+    /// <summary>Number of markers drawn now (test hook and status).</summary>
+    public int PinCount => PinsShown ? _pins.Count : 0;
+
+    private bool PinsShown => _pinsVisible && _pins.Count > 0;
+
+    private void UpdateHitTest()
+    {
+        IsHitTestVisible = Editing || PinsShown;
+        Background = Editing ? Brushes.Transparent : null;
+        UpdateCursor();
+    }
+
+    private void UpdateCursor()
+    {
+        Cursor = _hoverPin >= 0 ? Cursors.Hand : Editing && _spec?.Kind == "brush" ? Cursors.None : Cursors.Arrow;
+    }
+
+    /// <summary>Without a background only the markers are hit (the photo under the rest keeps panning).</summary>
+    protected override HitTestResult? HitTestCore(PointHitTestParameters hitTestParameters)
+    {
+        if (Editing) return base.HitTestCore(hitTestParameters);
+        return PinAt(hitTestParameters.HitPoint) >= 0 ? new PointHitTestResult(this, hitTestParameters.HitPoint) : null;
+    }
+
+    /// <summary>Markers grouped in view coordinates: ones closer than <see cref="PinMerge"/> share one marker.</summary>
+    private List<(Point At, List<MaskPin> Pins)> BuildClusters()
+    {
+        var list = new List<(Point At, List<MaskPin> Pins)>();
+        if (!PinsShown || Frame.IsEmpty) return list;
+        foreach (var pin in _pins)
+        {
+            var v = ToView(pin.Src.X, pin.Src.Y);
+            int hit = list.FindIndex(c => (c.At - v).Length < PinMerge);
+            if (hit >= 0) list[hit].Pins.Add(pin);
+            else list.Add((v, new List<MaskPin> { pin }));
+        }
+        return list;
+    }
+
+    private int PinAt(Point view)
+    {
+        for (int i = _clusters.Count - 1; i >= 0; i--)
+            if ((_clusters[i].At - view).Length <= PinR + 3) return i;
+        return -1;
     }
 
     /// <summary>Tinted mask preview, already in display geometry (same size ratio as the displayed image).</summary>
@@ -97,8 +167,8 @@ public sealed class MaskOverlay : Canvas
         _spec = null;
         _preview = null;
         Editing = false;
-        IsHitTestVisible = false;
-        Background = null;
+        _hoverPin = -1;
+        UpdateHitTest();
         _drag = -1;
         _stroke = null;
         if (IsMouseCaptured) ReleaseMouseCapture();
@@ -234,22 +304,136 @@ public sealed class MaskOverlay : Canvas
             SetTop(img, f.Y);
             Children.Add(img);
         }
-        if (_spec is null || !Editing) return;
-
-        switch (_spec.Kind)
+        _clusters = BuildClusters();
+        if (_hoverPin >= _clusters.Count) _hoverPin = -1;
+        if (_spec is not null && Editing)
         {
-            case "linear":
-                DrawLinear();
-                break;
-            case "radial":
-                DrawRadial();
-                break;
-            case "brush":
-                DrawBrush();
-                break;
+            switch (_spec.Kind)
+            {
+                case "linear":
+                    DrawLinear();
+                    break;
+                case "radial":
+                    DrawRadial();
+                    break;
+                case "brush":
+                    DrawBrush();
+                    break;
+            }
+            var hs = Handles();
+            for (int i = 0; i < hs.Count; i++) AddHandle(hs[i], _spec.Kind == "radial" && i == RotateHandle);
         }
-        var hs = Handles();
-        for (int i = 0; i < hs.Count; i++) AddHandle(hs[i], _spec.Kind == "radial" && i == RotateHandle);
+        DrawPins();
+    }
+
+    private static readonly Brush PinFill = Frozen(Color.FromArgb(215, 30, 32, 38));
+    private static readonly Brush PinHoverFill = Frozen(Color.FromArgb(255, 255, 120, 90));
+    private static readonly Brush OutlineBrush = Frozen(Color.FromArgb(230, 255, 200, 120));
+    private static readonly Brush OutlinePaint = Frozen(Color.FromArgb(70, 255, 200, 120));
+
+    private void DrawPins()
+    {
+        if (_hoverPin >= 0)
+            foreach (var pin in _clusters[_hoverPin].Pins) DrawOutline(pin.Spec);
+        for (int i = 0; i < _clusters.Count; i++)
+        {
+            var (at, pins) = _clusters[i];
+            bool hover = i == _hoverPin;
+            var e = new Ellipse { Width = PinR * 2, Height = PinR * 2, Fill = hover ? PinHoverFill : PinFill, Stroke = Light, StrokeThickness = 2, IsHitTestVisible = false };
+            SetLeft(e, at.X - PinR);
+            SetTop(e, at.Y - PinR);
+            Children.Add(e);
+            if (pins.Count > 1)
+            {
+                var n = new TextBlock { Text = pins.Count.ToString(), Foreground = Light, FontSize = 9, FontWeight = FontWeights.Bold, IsHitTestVisible = false };
+                n.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                SetLeft(n, at.X - n.DesiredSize.Width / 2);
+                SetTop(n, at.Y - n.DesiredSize.Height / 2);
+                Children.Add(n);
+            }
+            else
+            {
+                var d = new Ellipse { Width = 4, Height = 4, Fill = Light, IsHitTestVisible = false };
+                SetLeft(d, at.X - 2);
+                SetTop(d, at.Y - 2);
+                Children.Add(d);
+            }
+        }
+        if (_hoverPin < 0) return;
+        var (pa, list) = _clusters[_hoverPin];
+        var text = string.Join("\n", list.Select(p => p.Label)) + (list.Count > 1 ? "\nClick to choose which one to edit" : "\nClick to edit this mask");
+        var label = new Border
+        {
+            Background = PinFill,
+            BorderBrush = Light,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 3, 6, 3),
+            IsHitTestVisible = false,
+            Child = new TextBlock { Text = text, Foreground = Light, FontSize = 11 }
+        };
+        label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double lx = pa.X + PinR + 6, ly = pa.Y - label.DesiredSize.Height / 2;
+        if (lx + label.DesiredSize.Width > ActualWidth - 4) lx = pa.X - PinR - 6 - label.DesiredSize.Width;
+        ly = Math.Clamp(ly, 4, Math.Max(4, ActualHeight - label.DesiredSize.Height - 4));
+        SetLeft(label, lx);
+        SetTop(label, ly);
+        Children.Add(label);
+    }
+
+    /// <summary>Thin outline of another mask (shown while its marker is hovered).</summary>
+    private void DrawOutline(MaskSpec spec)
+    {
+        double P(int i, double def) => spec.P is not null && spec.P.Length > i && double.IsFinite(spec.P[i]) ? spec.P[i] : def;
+        switch (spec.Kind)
+        {
+            case "radial":
+            {
+                var p = new[] { P(0, 0.5), P(1, 0.5), P(2, 0.3), P(3, 0.3), P(4, 0.5), P(5, 0) };
+                var pts = new PointCollection();
+                for (int i = 0; i <= 72; i++)
+                {
+                    double a = i * Math.PI * 2 / 72;
+                    pts.Add(RadialPoint(p, Math.Cos(a), Math.Sin(a)));
+                }
+                Children.Add(new Polyline { Points = pts, Stroke = Dark, StrokeThickness = 3, IsHitTestVisible = false });
+                Children.Add(new Polyline { Points = pts, Stroke = OutlineBrush, StrokeThickness = 1.4, IsHitTestVisible = false });
+                break;
+            }
+            case "linear":
+            {
+                Point a = ToView(P(0, 0.5), P(1, 0.25)), b = ToView(P(2, 0.5), P(3, 0.6));
+                double dx = b.X - a.X, dy = b.Y - a.Y, len = Math.Sqrt(dx * dx + dy * dy);
+                if (len < 1e-3) return;
+                double nx = -dy / len, ny = dx / len, L = Math.Max(ActualWidth, ActualHeight) * 2;
+                foreach (var (q, dash) in new[] { (a, false), (b, true) })
+                {
+                    var q1 = new Point(q.X - nx * L, q.Y - ny * L);
+                    var q2 = new Point(q.X + nx * L, q.Y + ny * L);
+                    AddLine(q1, q2, Dark, 3, dash);
+                    AddLine(q1, q2, OutlineBrush, 1.4, dash);
+                }
+                break;
+            }
+            case "brush":
+            {
+                double k = DipPerSrcWidth;
+                foreach (var st in spec.Strokes ?? new List<double[]>())
+                {
+                    if (st is null || st.Length < 4 || st[0] < 0.5) continue;
+                    var pts = new PointCollection();
+                    for (int i = 2; i + 1 < st.Length; i += 2) pts.Add(ToView(st[i], st[i + 1]));
+                    if (pts.Count == 1) pts.Add(new Point(pts[0].X + 0.01, pts[0].Y));
+                    Children.Add(new Polyline
+                    {
+                        Points = pts, Stroke = OutlinePaint, StrokeThickness = Math.Max(1, st[1] * 2 * k),
+                        StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+                        IsHitTestVisible = false
+                    });
+                }
+                break;
+            }
+        }
     }
 
     private void AddLine(Point a, Point b, Brush stroke, double thickness, bool dashed = false)
@@ -331,7 +515,7 @@ public sealed class MaskOverlay : Canvas
                 IsHitTestVisible = false
             });
         }
-        if (_mouseInside)
+        if (_mouseInside && _hoverPin < 0)
         {
             double r = BrushRadius * k;
             foreach (var (brush, th) in new[] { (Dark, 3.0), (BrushErase ? Frozen(Color.FromArgb(255, 120, 180, 255)) : Light, 1.2) })
@@ -350,8 +534,16 @@ public sealed class MaskOverlay : Canvas
 
     private void OnDown(object sender, MouseButtonEventArgs e)
     {
-        if (!Editing || _spec is null) return;
         var pos = e.GetPosition(this);
+        int pin = PinAt(pos);
+        // A marker wins over painting and moving the shape, but not over a handle of the mask being edited.
+        if (pin >= 0 && !(Editing && _spec is not null && _spec.Kind != "brush" && Handles().Any(h => (h - pos).Length <= HandleR + 4)))
+        {
+            e.Handled = true;
+            PinClicked?.Invoke(_clusters[pin].Pins.ToList(), pos);
+            return;
+        }
+        if (!Editing || _spec is null) return;
         e.Handled = true;
         if (_spec.Kind == "brush")
         {
@@ -376,6 +568,16 @@ public sealed class MaskOverlay : Canvas
     {
         _mouse = e.GetPosition(this);
         _mouseInside = true;
+        if (_drag < 0 && _stroke is null)
+        {
+            int h = PinAt(_mouse);
+            if (h != _hoverPin)
+            {
+                _hoverPin = h;
+                UpdateCursor();
+                Redraw();
+            }
+        }
         if (_spec is null || !Editing) return;
         if (_stroke is not null)
         {

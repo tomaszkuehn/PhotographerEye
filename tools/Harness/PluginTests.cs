@@ -211,6 +211,25 @@ internal static partial class Program
             var sq = MaskRender.DefaultFor(MaskRender.Radial);
             Check(sq.P is { Length: 5 } && Math.Abs(sq.P[2] - 0.075) < 1e-12 && Math.Abs(sq.P[3] - 0.075) < 1e-12, "radial mask default without aspect: 0.075 radius");
         }
+        {
+            // On-photo mask markers: radial centre, middle of a linear gradient, a painted brush point; none for luma / empty brush.
+            bool Near((double X, double Y)? p, double x, double y) => p is { } q && Math.Abs(q.X - x) < 1e-9 && Math.Abs(q.Y - y) < 1e-9;
+            Check(Near(MaskRender.PinPoint(new MaskSpec { Kind = MaskRender.Radial, P = new[] { 0.2, 0.7, 0.1, 0.1, 0.5 } }), 0.2, 0.7), "mask marker: radial at its centre");
+            Check(Near(MaskRender.PinPoint(new MaskSpec { Kind = MaskRender.Linear, P = new[] { 0.1, 0.2, 0.5, 0.6 } }), 0.3, 0.4), "mask marker: linear in the middle of the gradient");
+            var brush = new MaskSpec
+            {
+                Kind = MaskRender.Brush,
+                Strokes = new List<double[]>
+                {
+                    new[] { 1.0, 0.03, 0.1, 0.1, 0.2, 0.1, 0.3, 0.1 },
+                    new[] { 0.0, 0.05, 0.9, 0.9 }, // erase strokes do not count
+                    new[] { 1.0, 0.03, 0.3, 0.4 }
+                }
+            };
+            Check(Near(MaskRender.PinPoint(brush), 0.2, 0.1), "mask marker: brush on the painted point nearest the middle of the paint");
+            Check(MaskRender.PinPoint(MaskRender.DefaultFor(MaskRender.Brush)) is null, "mask marker: none for a brush without paint");
+            Check(MaskRender.PinPoint(MaskRender.DefaultFor(MaskRender.Luma)) is null, "mask marker: none for a luminance mask");
+        }
         var radInv = MaskRender.Render(MaskRender.DefaultFor(MaskRender.Radial) with { Invert = true }, pimg, ctx, reg);
         Check(radInv is not null && rad is not null && Math.Abs(radInv[ci] + rad[ci] - 1f) < 1e-4f, "inverted mask = 1 - mask");
         {

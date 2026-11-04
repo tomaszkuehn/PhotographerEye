@@ -90,6 +90,8 @@ public partial class MainWindow
                         OpacityMask = new LinearGradientBrush(Color.FromArgb(0x30, 0, 0, 0), Colors.Black, 0)
                     }.At(0.5, 5), true),
                     Fg(new Path { Data = Geometry.Parse("M5,2.5 V13.5 M11,2.5 V13.5"), StrokeThickness = 1.4 }, false));
+            case MaskRender.Link:
+                return new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13 };
             default:
                 return new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13 };
         }

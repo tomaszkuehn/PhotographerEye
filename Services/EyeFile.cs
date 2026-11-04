@@ -54,14 +54,21 @@ public sealed record EyeState
 /// <summary>Local mask attached to a plugin filter. Coordinates are fractions of the un-rotated, un-cropped photo.</summary>
 public sealed record MaskSpec
 {
-    /// <summary>"linear" (P = x1,y1,x2,y2), "radial" (P = cx,cy,rx,ry,feather[,rotation degrees]), "brush" (Strokes), "luma" (P = lo,hi,feather) or "plugin:&lt;pluginId:maskId&gt;".</summary>
+    /// <summary>"linear" (P = x1,y1,x2,y2), "radial" (P = cx,cy,rx,ry,feather[,rotation degrees]), "brush" (Strokes), "luma" (P = lo,hi,feather), "plugin:&lt;pluginId:maskId&gt;" or "link" (the mask of <see cref="Ref"/>).</summary>
     public string Kind { get; init; } = "";
+    /// <summary>For a "link" mask: the key of the mask it uses (a filter FullId or "core:adjustments"); Invert is relative to it.</summary>
+    public string? Ref { get; init; }
     public double[]? P { get; init; }
     public bool Invert { get; init; }
     /// <summary>Brush strokes: [mode (1 paint, 0 erase), radius (fraction of width), x1, y1, x2, y2, ...].</summary>
     public List<double[]>? Strokes { get; init; }
     public Dictionary<string, double>? Values { get; init; }
     public Dictionary<string, string>? Text { get; init; }
+    /// <summary>
+    /// Adjustments mask only: the panel slider values of the mask (CoreParam keys, slider units, defaults left out).
+    /// They add to the whole-photo values inside the mask; outside it only the whole-photo values apply.
+    /// </summary>
+    public Dictionary<string, double>? Adjust { get; init; }
 }
 
 public static class EyeFile

@@ -31,6 +31,11 @@ public sealed class PluginRenderJob
     /// stage runs, so masks (given in source fractions) are mapped through crop and rotation.
     /// </summary>
     public (GeoState Geo, double SrcW, double SrcH)? OutputGeo { get; set; }
+    /// <summary>
+    /// Panel values inside the Adjustments mask (whole-photo values plus the mask's own), null when the panel has no
+    /// mask or the mask has no values of its own; the render blends them over the whole-photo render by the mask.
+    /// </summary>
+    public PhotoAdjustments? AdjustMaskExtra { get; init; }
 
     public bool Has(FilterStage stage) => State.HasEffect(Registry, stage);
 }

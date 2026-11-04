@@ -809,14 +809,18 @@ public partial class MainWindow
         }
 
         public MaskInfo GetMask(string filterId) =>
-            ToMaskInfo(_w._pluginState.Masks.TryGetValue(MaskId(filterId), out var m) ? m : null)!;
+            ToMaskInfo(_w._pluginState.Masks.TryGetValue(MaskId(filterId), out var m) ? _w._pluginState.Resolve(m) : null)!;
 
         public void SetMask(string filterId, MaskInfo mask)
         {
             var id = MaskId(filterId);
             var spec = ToMaskSpec(mask);
+            if (spec is null) _w._pluginState.DetachLinksTo(id);
             if (spec is null) _w._pluginState.Masks.Remove(id);
-            else _w._pluginState.Masks[id] = spec;
+            else _w._pluginState.Masks[id] = spec with
+            {
+                Adjust = _w._pluginState.Masks.TryGetValue(id, out var was) ? PluginEditState.CopyAdjust(was.Adjust) : null // shape only
+            };
             _w.SyncMaskOverlaySpec();
             Dirty = true;
         }

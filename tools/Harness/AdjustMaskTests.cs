@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ImgViewer;
@@ -52,5 +54,61 @@ internal static partial class Program
         // Whole-photo (empty kind) is not a mask.
         state.Masks[AdjustMask.Key] = new MaskSpec { Kind = "" };
         Check(AdjustMask.For(state) is null, "adjust mask: empty kind means whole photo");
+
+        // Linked masks: a filter uses the Adjustments radial; edits of the source follow, invert is relative, removal detaches.
+        const string fk = "sample.grade:grade";
+        var ls = new PluginEditState();
+        ls.Masks[AdjustMask.Key] = new MaskSpec { Kind = MaskRender.Radial, P = new[] { 0.3, 0.4, 0.1, 0.1, 0.5 } };
+        ls.Masks[fk] = new MaskSpec { Kind = MaskRender.Link, Ref = AdjustMask.Key };
+        var r1 = ls.Resolve(ls.Masks[fk]);
+        Check(r1 is { Kind: MaskRender.Radial } && r1.P![0] == 0.3 && !r1.Invert, "linked mask: resolves to the Adjustments radial");
+        ls.Masks[AdjustMask.Key] = ls.Masks[AdjustMask.Key] with { P = new[] { 0.6, 0.4, 0.1, 0.1, 0.5 } };
+        Check(ls.Resolve(ls.Masks[fk])?.P?[0] == 0.6, "linked mask: follows edits of the source");
+        ls.Masks[fk] = ls.Masks[fk] with { Invert = true };
+        Check(ls.Resolve(ls.Masks[fk])?.Invert == true, "linked mask: invert of the link");
+        ls.Masks[AdjustMask.Key] = ls.Masks[AdjustMask.Key] with { Invert = true };
+        Check(ls.Resolve(ls.Masks[fk])?.Invert == false && AdjustMask.For(ls)?.Invert == true, "linked mask: invert is relative to the source");
+        Check(ls.LinksTo(AdjustMask.Key).SequenceEqual(new[] { fk }), "linked mask: LinksTo lists the users");
+        ls.Masks[AdjustMask.Key] = new MaskSpec { Kind = MaskRender.Link, Ref = fk };
+        Check(AdjustMask.For(ls) is null && ls.Resolve(ls.Masks[fk]) is null, "linked mask: a link to a link is not used (no chains)");
+        ls.Masks[AdjustMask.Key] = new MaskSpec { Kind = MaskRender.Brush, Strokes = new List<double[]> { new[] { 1, 0.05, 0.2, 0.2, 0.3, 0.3 } } };
+        ls.DetachLinksTo(AdjustMask.Key);
+        ls.Masks.Remove(AdjustMask.Key);
+        var own = ls.Masks.TryGetValue(fk, out var om) ? om : null;
+        Check(own is { Kind: MaskRender.Brush, Ref: null, Invert: true } && own.Strokes!.Count == 1, "linked mask: removing the source leaves an own copy");
+        ls.Masks[fk] = new MaskSpec { Kind = MaskRender.Link, Ref = AdjustMask.Key };
+        Check(ls.Resolve(ls.Masks[fk]) is null, "linked mask: a missing source means whole photo");
+        var cl = new PluginEditState();
+        cl.CopyFrom(ls);
+        Check(cl.Masks[fk].Ref == AdjustMask.Key, "linked mask: copies keep the link");
+
+        // Two sets of values: the mask's own add to the whole-photo values, clamped to the slider range.
+        var exp = CoreParams.Find("Exposure")!;
+        var vs = new PluginEditState();
+        vs.Masks[AdjustMask.Key] = new MaskSpec { Kind = MaskRender.Radial, P = new[] { 0.5, 0.5, 0.2, 0.2, 0.5 } };
+        Check(AdjustMask.Values(vs) is null, "mask values: a new mask has none (the photo does not change)");
+        Check(AdjustMask.Combine(exp, 0.7, null) == 0.7, "mask values: none keeps the whole-photo value");
+        vs.Masks[AdjustMask.Key] = vs.Masks[AdjustMask.Key] with { Adjust = new Dictionary<string, double> { ["Exposure"] = 0.5 } };
+        var vals = AdjustMask.Values(vs);
+        Check(vals is not null && Math.Abs(AdjustMask.Combine(exp, 0.7, vals) - 1.2) < 1e-9, "mask values: added to the whole-photo value");
+        Check(AdjustMask.Combine(exp, 4.8, vals) == exp.Max, "mask values: sum clamped to the slider range");
+        Check(AdjustMask.Combine(CoreParams.Find("Contrast")!, 12, vals) == 12, "mask values: other sliders keep the whole-photo value");
+        var vc = PluginEditState.CloneMask(vs.Masks[AdjustMask.Key]);
+        vc.Adjust!["Exposure"] = 2;
+        Check(vs.Masks[AdjustMask.Key].Adjust!["Exposure"] == 0.5, "mask values: a cloned mask has its own copy");
+        var vs2 = new PluginEditState();
+        vs2.CopyFrom(vs);
+        Check(vs2.ContentEquals(vs), "mask values: copies are equal");
+        vs2.Masks[AdjustMask.Key] = vs2.Masks[AdjustMask.Key] with { Adjust = new Dictionary<string, double> { ["Exposure"] = 0.6 } };
+        Check(!vs2.ContentEquals(vs), "mask values: a change is seen by undo/history");
+        // the Adjustments mask linked to a filter's mask keeps its values when the source goes away
+        var lv = new PluginEditState();
+        lv.Masks[fk] = new MaskSpec { Kind = MaskRender.Radial, P = new[] { 0.3, 0.3, 0.1, 0.1, 0.5 } };
+        lv.Masks[AdjustMask.Key] = new MaskSpec { Kind = MaskRender.Link, Ref = fk, Adjust = new Dictionary<string, double> { ["Exposure"] = -1 } };
+        Check(AdjustMask.Values(lv)?["Exposure"] == -1 && AdjustMask.For(lv)?.Kind == MaskRender.Radial, "mask values: a linked Adjustments mask keeps its values");
+        lv.DetachLinksTo(fk);
+        Check(lv.Masks[AdjustMask.Key] is { Kind: MaskRender.Radial, Ref: null } dm && dm.Adjust?["Exposure"] == -1, "mask values: kept when the link becomes an own copy");
+        var eyeJson = System.Text.Json.JsonSerializer.Serialize(new MaskSpec { Kind = MaskRender.Radial, Adjust = new Dictionary<string, double> { ["Tint"] = 5 } });
+        Check(System.Text.Json.JsonSerializer.Deserialize<MaskSpec>(eyeJson)?.Adjust?["Tint"] == 5, "mask values: stored in the .eye JSON");
     }
 }

@@ -18,6 +18,8 @@ public static class MaskRender
     public const string Brush = "brush";
     public const string Luma = "luma";
     public const string PluginPrefix = "plugin:";
+    /// <summary>A mask that uses the mask of another tool or filter (<see cref="MaskSpec.Ref"/>), so both follow one shape.</summary>
+    public const string Link = "link";
 
     /// <summary>Diameter of a new radial mask (its outer, fully feathered edge) as a fraction of the image height.</summary>
     public const double RadialDefaultDiameter = 0.15;
@@ -96,6 +98,48 @@ public static class MaskRender
     }
 
     public static bool IsGeometric(string kind) => kind is Linear or Radial or Brush;
+
+    /// <summary>
+    /// Where the on-photo marker of a mask goes (source fractions): the centre of a radial, the middle of a linear
+    /// gradient, the painted point nearest to the middle of the brush paint strokes (so it sits on the paint).
+    /// Null for masks without a place on the photo (luminance, plugin masks, a brush with no paint).
+    /// </summary>
+    public static (double X, double Y)? PinPoint(MaskSpec? s)
+    {
+        if (s is null) return null;
+        static double At(double[]? p, int i, double def) => p is not null && p.Length > i && double.IsFinite(p[i]) ? p[i] : def;
+        switch (s.Kind)
+        {
+            case Radial:
+                return (At(s.P, 0, 0.5), At(s.P, 1, 0.5));
+            case Linear:
+                return ((At(s.P, 0, 0.5) + At(s.P, 2, 0.5)) / 2, (At(s.P, 1, 0.25) + At(s.P, 3, 0.6)) / 2);
+            case Brush:
+            {
+                double sx = 0, sy = 0;
+                int n = 0;
+                foreach (var st in s.Strokes ?? new List<double[]>())
+                {
+                    if (st is null || st.Length < 4 || st[0] < 0.5) continue;
+                    for (int i = 2; i + 1 < st.Length; i += 2) { sx += st[i]; sy += st[i + 1]; n++; }
+                }
+                if (n == 0) return null;
+                double cx = sx / n, cy = sy / n, best = double.MaxValue, bx = cx, by = cy;
+                foreach (var st in s.Strokes!)
+                {
+                    if (st is null || st.Length < 4 || st[0] < 0.5) continue;
+                    for (int i = 2; i + 1 < st.Length; i += 2)
+                    {
+                        double d = (st[i] - cx) * (st[i] - cx) + (st[i + 1] - cy) * (st[i + 1] - cy);
+                        if (d < best) { best = d; bx = st[i]; by = st[i + 1]; }
+                    }
+                }
+                return (bx, by);
+            }
+            default:
+                return null;
+        }
+    }
 
     /// <summary>
     /// Geometric mask (source fractions) for an image after crop and rotation (<paramref name="w"/> x <paramref name="h"/>):

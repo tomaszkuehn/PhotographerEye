@@ -63,6 +63,8 @@ public partial class MainWindow
         PointMarkers.MarkerMoved += OnPointMarkerMoved;
         PointMarkers.MarkerGrabbed += OnPointMarkerGrabbed;
         MaskOverlay.SpecChanged += OnMaskSpecChanged;
+        MaskOverlay.PinClicked += OnMaskPinClicked;
+        RightPanel.IsVisibleChanged += (_, _) => Dispatcher.BeginInvoke(RefreshMaskPins, System.Windows.Threading.DispatcherPriority.Background);
         PluginManager.Instance.Changed += OnPluginsChanged;
         PluginManager.Instance.PluginFaulted += OnPluginFaulted;
         try
@@ -153,7 +155,8 @@ public partial class MainWindow
         Meta = CurrentMeta(),
         IsPreview = preview,
         Scale = Math.Clamp(scale, 1e-4, 1.0),
-        Cancel = ct
+        Cancel = ct,
+        AdjustMaskExtra = MaskExtras()
     };
 
     private GeoState CurrentDisplayGeo() =>
@@ -200,8 +203,9 @@ public partial class MainWindow
         _monoMode, _monoSeed, CurrentCurve(), CurrentBaseEv(), _geo, PluginJob(false, 1.0, CancellationToken.None));
 
     /// <summary>
-    /// Exposure/white balance gain, SceneLinear plugins and the Adjust16 tone pass. With an Adjustments mask the
-    /// panel values are blended in by the mask (<paramref name="blended"/>; the histogram is then not computed).
+    /// Exposure/white balance gain, SceneLinear plugins and the Adjust16 tone pass with the whole-photo values. With an
+    /// Adjustments mask that has values of its own (<see cref="PluginRenderJob.AdjustMaskExtra"/>) the render with the
+    /// combined values is blended in by the mask (<paramref name="blended"/>; the histogram is then not computed).
     /// </summary>
     private static Raw16Image Correct16(Raw16Image raw16, double baseEv, PhotoAdjustments? extra, double s, double g, ManualStretchMap? manual,
         MonoMode mono, int seed, CameraToneCurve? curve, PluginRenderJob job, int fullW, int fullH, CancellationToken ct,
@@ -215,25 +219,28 @@ public partial class MainWindow
         var corrected = Adjust16.TryApplyGpu(rendered, s, g, manual, out hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: curve)
             ?? Adjust16.Apply(rendered, s, g, manual, out hist, mono: mono, grainSeed: seed, extra: extra2, ct: ct, cameraTone: curve);
         blended = false;
-        var amask = AdjustMask.For(job.State);
-        if (amask is null || extra is null || ct.IsCancellationRequested) return corrected;
+        var mx = job.AdjustMaskExtra;
+        var amask = mx is null ? null : AdjustMask.For(job.State);
+        if (amask is null || mx is null || ct.IsCancellationRequested) return corrected;
 
-        var neutralIn = rendered;
-        if (Math.Abs(extra.Exposure) > 1e-9 || Math.Abs(extra.Temperature) > 1e-9 || Math.Abs(extra.Tint) > 1e-9)
+        var maskedIn = rendered;
+        if (Math.Abs(mx.Exposure - (extra?.Exposure ?? 0.0)) > 1e-9 || Math.Abs(mx.Temperature - (extra?.Temperature ?? 0.0)) > 1e-9
+            || Math.Abs(mx.Tint - (extra?.Tint ?? 0.0)) > 1e-9)
         {
-            neutralIn = StageCache.LinearUncached(raw16, baseEv, 0.0, 0.0, 0.0, job, fullW, fullH, ct);
+            maskedIn = StageCache.LinearUncached(raw16, baseEv, mx.Exposure, mx.Temperature, mx.Tint, job, fullW, fullH, ct);
         }
-        var neutral = Adjust16.TryApplyGpu(neutralIn, s, g, manual, out _, mono: mono, grainSeed: seed, extra: null, ct: ct, cameraTone: curve)
-            ?? Adjust16.Apply(neutralIn, s, g, manual, out _, mono: mono, grainSeed: seed, extra: null, ct: ct, cameraTone: curve);
+        var mx2 = StripExposureTemp(mx);
+        var masked = Adjust16.TryApplyGpu(maskedIn, s, g, manual, out _, mono: mono, grainSeed: seed, extra: mx2, ct: ct, cameraTone: curve)
+            ?? Adjust16.Apply(maskedIn, s, g, manual, out _, mono: mono, grainSeed: seed, extra: mx2, ct: ct, cameraTone: curve);
         ct.ThrowIfCancellationRequested();
         hist = null;
         blended = true;
-        return AdjustMask.Blend16(corrected, neutral, amask, job, fullW, fullH);
+        return AdjustMask.Blend16(masked, corrected, amask, job, fullW, fullH);
     }
 
-    /// <summary>The live preview may run on the GPU end to end: no Base/SceneLinear/Display plugin and no Adjustments mask.</summary>
+    /// <summary>The live preview may run on the GPU end to end: no Base/SceneLinear/Display plugin and no Adjustments mask with values.</summary>
     private static bool GpuDisplayAllowed(PluginRenderJob job) =>
-        AdjustMask.For(job.State) is null && !job.Has(FilterStage.Base) && !job.Has(FilterStage.SceneLinear) && !job.Has(FilterStage.Display);
+        job.AdjustMaskExtra is null && !job.Has(FilterStage.Base) && !job.Has(FilterStage.SceneLinear) && !job.Has(FilterStage.Display);
 
     /// <summary>8-bit counterpart of <see cref="Correct16"/>; <paramref name="src"/> already went through SceneLinear.</summary>
     private static BitmapSource? Correct8(BitmapSource src, PhotoAdjustments? extra, double s, double g, ManualStretchMap? manual,
@@ -241,12 +248,14 @@ public partial class MainWindow
     {
         var processed = AdjustmentsProcessor.Apply(src, s, g, manual, out hist, mono: mono, grainSeed: seed, extra: extra);
         blended = false;
-        var amask = AdjustMask.For(job.State);
-        if (processed is null || amask is null || extra is null || job.Cancel.IsCancellationRequested) return processed;
-        BitmapSource neutral = AdjustmentsProcessor.Apply(src, s, g, manual, out _, mono: mono, grainSeed: seed, extra: null) ?? src;
+        var mx = job.AdjustMaskExtra;
+        var amask = mx is null ? null : AdjustMask.For(job.State);
+        if (processed is null || amask is null || mx is null || job.Cancel.IsCancellationRequested) return processed;
+        var masked = AdjustmentsProcessor.Apply(src, s, g, manual, out _, mono: mono, grainSeed: seed, extra: mx);
+        if (masked is null) return processed;
         hist = null;
         blended = true;
-        return AdjustMask.Blend8(processed, neutral, amask, job, fullW, fullH);
+        return AdjustMask.Blend8(masked, processed, amask, job, fullW, fullH);
     }
 
     private static (Raw16Image? R16, BitmapSource? Bmp) RenderFull(FullSnapshot sn)
@@ -822,9 +831,7 @@ public partial class MainWindow
 
     private void ResetFilterKeepMask(Registered<FilterDescriptor> f)
     {
-        var mask = _pluginState.Masks.TryGetValue(f.FullId, out var m) ? m : null;
-        _pluginState.ResetFilter(f);
-        if (mask is not null) _pluginState.Masks[f.FullId] = mask;
+        _pluginState.ResetFilter(f, keepMask: true);
     }
 
     /// <summary>Enable checkbox (parameterless panel filters) and reset; the run order is set in PLUGINS ▸ Order….</summary>
@@ -1409,6 +1416,7 @@ public partial class MainWindow
     private void RefreshPointMarkers()
     {
         RefreshPluginOverlays();
+        RefreshMaskPins();
         if (PointMarkers is null) return;
         if (_cropMode || _baseInfo is not ImageInfo bi || _lastDisplayed is null && _baseBitmap is null)
         {
@@ -1525,7 +1533,7 @@ public partial class MainWindow
         var mask = _pluginState.Masks.TryGetValue(key, out var mm) ? mm : null;
         bool adjust = key == AdjustMask.Key;
         string scope = adjust
-            ? "the STANDARD and DETAIL sliders and the R/G/B curves (toolbar shadows/gamma, histogram levels and B&W stay global)"
+            ? "the STANDARD and DETAIL sliders (toolbar shadows/gamma, R/G/B curves, histogram levels and B&W stay whole-photo)"
             : $"the {label} sliders (the main Adjustments sliders have their own mask at the top of the panel)";
         var items = new List<(string Kind, string Label, bool Plugin)>
         {
@@ -1537,7 +1545,7 @@ public partial class MainWindow
         };
         items.AddRange(_pluginReg.Masks.Select(m => (MaskRender.PluginPrefix + m.FullId, $"{m.D.Label} ({m.PluginName})", true)));
         string current = mask?.Kind ?? "";
-        if (!items.Any(i => i.Kind == current)) items.Add((current, $"{current} (missing)", true));
+        if (current != MaskRender.Link && !items.Any(i => i.Kind == current)) items.Add((current, $"{current} (missing)", true));
 
         // Mask scope as a row of icons (the histogram toggle leads the row at the top of the Adjustments panel).
         var icons = new WrapPanel { Margin = new Thickness(0, 0, 0, -3) };
@@ -1545,22 +1553,28 @@ public partial class MainWindow
         if (adjust)
         {
             icons.Children.Add(BuildHistogramToggle());
+            icons.Children.Add(BuildMaskMarkersToggle());
             icons.Children.Add(new Border { Width = 1, Height = 16, Margin = new Thickness(2, 0, 5, 3), Background = muted, Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center });
         }
         foreach (var (kind, itemLabel, plugin) in items)
         {
             string tip = kind.Length == 0
-                ? $"Whole photo — {scope} apply everywhere"
+                ? adjust ? $"Whole photo — no mask: {scope} apply everywhere" : $"Whole photo — {scope} apply everywhere"
+                : adjust ? $"Mask: {itemLabel} — {scope} get values of their own in part of the photo (the red area), added to the whole-photo values"
                 : $"Mask: {itemLabel} — limits {scope} to part of the photo (the red area)";
             var b = IconToggle(MaskIcon(plugin ? null : kind), tip, "PluginMask_" + key + "_" + (kind.Length == 0 ? "whole" : kind), kind == current);
             b.Click += (_, _) =>
             {
                 b.IsChecked = true; // a scope stays selected; choose another icon to change it
                 if (kind == current) return;
+                _pluginState.DetachLinksTo(key); // masks linked to this one keep their shape as own copies
                 if (kind.Length == 0)
                 {
+                    bool hadValues = adjust && MaskValuesSummary() is not null;
+                    if (adjust) ShowAdjSet(false);
                     _pluginState.Masks.Remove(key);
                     if (_maskEditFilter == key) EndMaskEdit();
+                    if (hadValues) SetStatus("Mask removed — its own slider values are gone, the whole-photo values stay (Ctrl+Z brings it back)", error: false);
                 }
                 else
                 {
@@ -1573,7 +1587,14 @@ public partial class MainWindow
                         var c = MaskOverlay.VisibleCenterSrc();
                         rp[0] = c.X; rp[1] = c.Y;
                     }
+                    if (adjust && _pluginState.Masks.TryGetValue(key, out var was)) spec = spec with { Adjust = PluginEditState.CopyAdjust(was.Adjust) };
                     _pluginState.Masks[key] = spec;
+                    if (adjust && current.Length == 0)
+                    {
+                        // a new mask starts with no values of its own (the photo does not change); the sliders now set them
+                        ShowAdjSet(true);
+                        SetStatus("Sliders now set the values inside the mask — they add to the whole-photo values; Whole photo under the icons goes back", error: false);
+                    }
                     BeginMaskEdit(key);
                 }
                 DeferRebuild();
@@ -1581,6 +1602,7 @@ public partial class MainWindow
             };
             icons.Children.Add(b);
         }
+        if (BuildMaskLinkToggle(key, label, current) is { } linkBtn) icons.Children.Add(linkBtn);
         if (adjust) sp.Children.Add(icons);
         else
         {
@@ -1591,6 +1613,12 @@ public partial class MainWindow
             sp.Children.Add(row);
         }
         if (mask is null) return sp;
+        if (adjust) sp.Children.Add(BuildAdjSetToggle(muted));
+        if (mask.Kind == MaskRender.Link)
+        {
+            sp.Children.Add(BuildMaskLinkOptions(key, mask, muted));
+            return sp;
+        }
 
         var opts = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
         var inv = new CheckBox { Content = "Invert", IsChecked = mask.Invert, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -1600,6 +1628,7 @@ public partial class MainWindow
             SyncMaskOverlaySpec();
             OnPluginUiChanged();
         };
+        inv.SetResourceReference(ForegroundProperty, "ForegroundBrush"); // readable on the panel background
         opts.Children.Add(inv);
         var edit = new ToggleButton
         {
@@ -1633,6 +1662,7 @@ public partial class MainWindow
             sp.Children.Add(size);
             var brow = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
             var erase = new CheckBox { Content = "Erase (or hold Alt)", IsChecked = MaskOverlay.BrushErase, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+            erase.SetResourceReference(ForegroundProperty, "ForegroundBrush"); // readable on the panel background
             erase.Click += (_, _) => MaskOverlay.BrushErase = erase.IsChecked == true;
             var clear = new Button { Content = "Clear strokes", Padding = new Thickness(8, 1, 8, 1) };
             clear.SetResourceReference(StyleProperty, "ToolButton");
@@ -1747,6 +1777,17 @@ public partial class MainWindow
     private void BeginMaskEdit(string key)
     {
         if (!_pluginState.Masks.TryGetValue(key, out var spec)) return;
+        if (spec.Kind == MaskRender.Link)
+        {
+            // a linked mask is edited through the mask it uses
+            if (spec.Ref is { } r && r != key && _pluginState.Masks.TryGetValue(r, out var src) && src.Kind != MaskRender.Link)
+            {
+                BeginMaskEdit(r);
+                _maskEditVia = key;
+                UpdateMaskBar();
+            }
+            return;
+        }
         if (_cropMode) SetCropMode(false);
         _maskEditFilter = key;
         MaskOverlay.SetSpec(spec, IsInteractiveMask(spec.Kind));
@@ -1760,10 +1801,12 @@ public partial class MainWindow
     private void EndMaskEdit()
     {
         _maskEditFilter = null;
+        _maskEditVia = null;
         Interlocked.Increment(ref _maskPreviewSeq);
         MaskOverlay.Clear();
         MaskOverlay.Visibility = Visibility.Collapsed;
         MaskBar.Visibility = Visibility.Collapsed;
+        RefreshMaskPins();
     }
 
     /// <summary>Ends mask editing from the on-photo bar, Esc or Enter; the mask itself stays.</summary>
@@ -1801,6 +1844,7 @@ public partial class MainWindow
                 ? $"Only the {t.Label} settings act inside the red area"
                 : $"No effect yet: set the {t.Label} sliders (the main Adjustments have their own mask)";
         MaskBarHint.SetResourceReference(TextBlock.ForegroundProperty, active ? "MutedBrush" : "ErrorBrush");
+        UpdateMaskBarShared(t.Key);
         MaskBar.Visibility = Visibility.Visible;
     }
 
@@ -1821,6 +1865,7 @@ public partial class MainWindow
     private void OnMaskSpecChanged(MaskSpec spec, bool final)
     {
         if (_maskEditFilter is null) return;
+        if (_pluginState.Masks.TryGetValue(_maskEditFilter, out var was)) spec = spec with { Adjust = was.Adjust }; // the overlay edits the shape only
         _pluginState.Masks[_maskEditFilter] = spec;
         OnPluginUiChanged();
         if (final && spec.Kind == MaskRender.Radial) DeferRebuild(); // rotation slider follows the handle
@@ -1830,13 +1875,14 @@ public partial class MainWindow
     {
         if (_maskEditFilter is null || _cropMode || _baseInfo is not ImageInfo bi)
         {
-            if (MaskOverlay.Visibility == Visibility.Visible) MaskOverlay.Visibility = Visibility.Collapsed;
             MaskBar.Visibility = Visibility.Collapsed;
+            RefreshMaskPins();
             return;
         }
         MaskOverlay.Visibility = Visibility.Visible;
         UpdateMaskBar();
         MaskOverlay.SetMapping(CurrentDisplayGeo(), bi.Width, bi.Height);
+        RefreshMaskPins();
         UpdateMaskPreview();
     }
 
@@ -1983,7 +2029,7 @@ public partial class MainWindow
         var name = PromptText("Save preset", "Preset name:", "My preset");
         if (name is null) return;
         var p = new UserPreset { Name = name };
-        foreach (var c in CoreUi()) p.Values["core." + c.P.Key] = c.Slider.Value;
+        foreach (var c in CoreUi()) p.Values["core." + c.P.Key] = GlobalCore(c); // a preset keeps the whole-photo values
         p.Values["core.Mono"] = (int)_monoMode;
         foreach (var kv in _pluginState.Values) p.Values[kv.Key] = kv.Value;
         foreach (var kv in _pluginState.Text) p.Text[kv.Key] = kv.Value;
@@ -2001,6 +2047,7 @@ public partial class MainWindow
 
     private void ApplyPreset(UserPreset p)
     {
+        ShowAdjSet(false); // a preset sets the whole-photo values
         foreach (var c in CoreUi())
         {
             // "core.ShadowLift" (the field name) is accepted for "core.Shadows".

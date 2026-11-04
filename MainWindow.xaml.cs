@@ -551,10 +551,10 @@ public partial class MainWindow : Window
 
         bool baseMatchesFile = Math.Abs(_eyeBaseEv - _baseEv) < 1e-9 && !_eyeCurveSet;
         bool neutralRaw = baseMatchesFile && raw16 is not null && Math.Abs(s) <= 0.0001 && Math.Abs(g - 1.0) < 0.0005 &&
-            !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null && !geoAngle && !PluginHasEffect();
+            !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null && MaskExtras() is null && !geoAngle && !PluginHasEffect();
         if (raw16 is not null
                 ? neutralRaw
-                : !geoAngle && AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null && !PluginHasEffect())
+                : !geoAngle && AdjustmentsProcessor.IsNeutral(s, g) && !manual.HasEffect && _monoMode == MonoMode.None && PanelExtras() is null && MaskExtras() is null && !PluginHasEffect())
         {
             _applyCts?.Cancel();
             StoreUnGeo(raw, box);
@@ -1008,6 +1008,11 @@ public partial class MainWindow : Window
         }
 
         var (exp, hl, sh, wh, bl) = PhotoOps.KnotsToSliders(manual.Knots);
+        if (AdjEditMask)
+        {
+            ShowAdjSet(false); // the histogram stretch is a whole-photo setting
+            DeferRebuild();
+        }
 
         _suppressSliderSync = true;
         try
@@ -1260,6 +1265,7 @@ public partial class MainWindow : Window
         }
         RenderLiveGeoPreview();
         ReapplyAdjustments();
+        RefreshMaskPins();
     }
 
     private void OnRotateLeftClick(object sender, RoutedEventArgs e) => RotateQuarter(-1);
@@ -1541,6 +1547,7 @@ public partial class MainWindow : Window
                         HistogramPanel.HasManualEffect ||
                         _monoMode != MonoMode.None ||
                         PanelExtras() is not null ||
+                        MaskExtras() is not null ||
                         PluginHasEffect() ||
                         !_geo.IsDefault;
         BtnSave.IsEnabled = modified && _currentPath is not null;
@@ -1880,26 +1887,8 @@ public partial class MainWindow : Window
         SetStatus(open ? "Adjustments panel — open (E)" : "Adjustments panel — closed", error: false);
     }
 
-    private PhotoAdjustments? PanelExtras()
-    {
-        if (ExpSlider is null) return null;
-        var a = PhotoAdjustments.FromUi(
-            ExpSlider.Value,
-            ContrastSlider.Value,
-            TempSlider.Value,
-            SatSlider.Value,
-            ClaritySlider.Value,
-            SharpenSlider.Value,
-            HighlightsSlider.Value,
-            WhitesSlider.Value,
-            BlacksSlider.Value,
-            DehazeSlider.Value,
-            DenoiseSlider.Value,
-            ColorNoiseSlider.Value);
-        a.Tint = TintSlider.Value / 100.0;
-        a.Curves = HistogramPanel.CurvesSnapshot();
-        return a.IsDefault ? null : a;
-    }
+    /// <summary>Whole-photo panel values (also while the sliders show the mask's set); null when neutral.</summary>
+    private PhotoAdjustments? PanelExtras() => ExpSlider is null ? null : BuildExtras(GlobalCore, force: false);
 
     private static PhotoAdjustments? StripExposureTemp(PhotoAdjustments? a)
     {
@@ -1980,6 +1969,14 @@ public partial class MainWindow : Window
             return;
         }
         bool inRange = PhotoOps.WbFromLinearSample(lr, lg, lb, out double temp, out double tint);
+        if (AdjEditMask)
+        {
+            // inside the mask the slider value adds to the whole-photo one
+            TempSlider.Value = Math.Clamp(Math.Round(temp * 100.0) - GlobalCore(CoreCtl("Temperature")), TempSlider.Minimum, TempSlider.Maximum);
+            TintSlider.Value = Math.Clamp(Math.Round(tint * 100.0) - GlobalCore(CoreCtl("Tint")), TintSlider.Minimum, TintSlider.Maximum);
+            SetStatus($"White balance inside the mask from white point — mask values: temperature {TempSlider.Value:+0;-0;0}, tint {TintSlider.Value:+0;-0;0}", error: false);
+            return;
+        }
         TempSlider.Value = Math.Clamp(Math.Round(temp * 100.0), TempSlider.Minimum, TempSlider.Maximum);
         TintSlider.Value = Math.Clamp(Math.Round(tint * 100.0), TintSlider.Minimum, TintSlider.Maximum);
         SetStatus(inRange
@@ -2046,6 +2043,8 @@ public partial class MainWindow : Window
                 _syncingShadow = false;
             }
         }
+        if (_adjSwitching) return;
+        StoreMaskSliders();
         _showHistogram = true;
         HistHost.Visibility = RightPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Hidden;
         UpdatePanelLabels();
@@ -2094,6 +2093,7 @@ public partial class MainWindow : Window
 
     private void ResetAdjustments(bool silent = false)
     {
+        _adjGlobal = null;
         _eyeBaseEv = double.NaN;
         _eyeCurveSet = false;
         _eyeCurve = null;
@@ -2166,7 +2166,7 @@ public partial class MainWindow : Window
             PluginOrder = ps.Order,
             PluginMasks = ps.Masks
         };
-        foreach (var c in CoreUi()) st = c.P.Set(st, c.Slider.Value);
+        foreach (var c in CoreUi()) st = c.P.Set(st, GlobalCore(c));
         return st;
     }
 
@@ -2191,6 +2191,8 @@ public partial class MainWindow : Window
 
     private void ApplyEyeState(EyeState st)
     {
+        bool wasMaskSet = AdjEditMask; // the sliders get the whole-photo values first, the mask's set again below
+        _adjGlobal = null;
         _eyeBaseEv = st.BaseEv;
         _eyeCurveSet = true;
         _eyeCurve = st.ToneCurve is { Length: >= 2 } ? ParseCurve(st.ToneCurve) : null;
@@ -2233,6 +2235,7 @@ public partial class MainWindow : Window
             Aspect = string.IsNullOrWhiteSpace(st.CropAspect) ? "original" : st.CropAspect
         };
         _pluginState.Load(st, _pluginReg);
+        if (wasMaskSet) ShowAdjSet(true);
         SyncMaskOverlaySpec();
         RebuildPluginUi();
         if (_cropMode)

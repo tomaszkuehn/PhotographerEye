@@ -55,6 +55,7 @@ public partial class MainWindow
         // PE_OPEN_SETTINGS=<tile name> (e.g. TileBackground) opens that tile's menu,
         // "none" leaves the window as it is, "panel" opens the adjustments panel, "present" / "slideshow" enters presentation mode,
         // "order" opens the plugin filter order window, "section:<plugin id>" renders that plugin's panel section.
+        // "maskedit:<filter key>" opens the panel and edits that mask.
         var hook = Environment.GetEnvironmentVariable("PE_OPEN_SETTINGS");
         if (!string.IsNullOrEmpty(hook))
         {
@@ -101,6 +102,13 @@ public partial class MainWindow
                         }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
                     }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
                     return;
+                }
+                else if (hook.StartsWith("maskedit:", StringComparison.Ordinal))
+                {
+                    // Edits the mask of a filter key (a linked key edits the mask it uses, as from "Edit that mask").
+                    TogglePanel();
+                    BeginMaskEdit(hook.Substring(9));
+                    RebuildPluginUi();
                 }
                 else if (hook != "1" && FindName(hook) is Button tile) { OpenTileMenu(tile); menu = tile.ContextMenu; }
                 else OpenSettingsFlyout();
