@@ -192,6 +192,25 @@ internal static partial class Program
         bool Range01(float[]? m) => m is not null && m.Length == W * H && m.All(v => v >= 0f && v <= 1f) && m.Min() < 0.05f && m.Max() > 0.95f;
         Check(Range01(lin) && Range01(rad) && Range01(luma), "linear / radial / luma masks span 0..1");
         Check(rad is not null && rad[ci] > 0.95f && rad[0] < 0.05f, "radial mask: center in, corner out");
+        {
+            // New radial mask: a centred circle whose outer edge is 15 % of the image height across, on any aspect.
+            foreach (var (iw, ih) in new[] { (600, 400), (400, 600), (500, 500) })
+            {
+                var im = new PluginImage(iw, ih);
+                var rc = new RenderContext { Stage = FilterStage.Display, Space = PluginColorSpace.Srgb, FullWidth = iw, FullHeight = ih };
+                var m = MaskRender.Render(MaskRender.DefaultFor(MaskRender.Radial, iw / (double)ih), im, rc, reg)!;
+                double rOut = 0.15 * ih / 2;
+                int cx = iw / 2, cy = ih / 2;
+                float At(double dx, double dy) => m[(int)(cy + dy) * iw + (int)(cx + dx)];
+                bool ok = At(0, 0) > 0.99f
+                          && At(rOut * 0.4, 0) > 0.95f && At(0, rOut * 0.4) > 0.95f
+                          && At(rOut + 2, 0) < 0.01f && At(0, rOut + 2) < 0.01f && At(-rOut - 2, 0) < 0.01f && At(0, -rOut - 2) < 0.01f
+                          && At(rOut - 3, 0) > 0.003f && At(0, rOut - 3) > 0.003f;
+                Check(ok, $"radial mask default: circle 15% of the height across on {iw}x{ih} (edge {rOut:0.#} px)");
+            }
+            var sq = MaskRender.DefaultFor(MaskRender.Radial);
+            Check(sq.P is { Length: 5 } && Math.Abs(sq.P[2] - 0.075) < 1e-12 && Math.Abs(sq.P[3] - 0.075) < 1e-12, "radial mask default without aspect: 0.075 radius");
+        }
         var radInv = MaskRender.Render(MaskRender.DefaultFor(MaskRender.Radial) with { Invert = true }, pimg, ctx, reg);
         Check(radInv is not null && rad is not null && Math.Abs(radInv[ci] + rad[ci] - 1f) < 1e-4f, "inverted mask = 1 - mask");
         {

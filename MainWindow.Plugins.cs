@@ -1504,6 +1504,19 @@ public partial class MainWindow
         AdjMaskHost.Children.Add(ui);
     }
 
+    /// <summary>Sets one parameter of the radial mask of <paramref name="key"/> (cx, cy, rx, ry, feather, angle), filling the rest with defaults.</summary>
+    private void SetRadialParam(string key, int index, double value)
+    {
+        if (!_pluginState.Masks.TryGetValue(key, out var m)) return;
+        double[] defs = { 0.5, 0.5, 0.3, 0.3, 0.5, 0 };
+        var p = new double[6];
+        for (int k = 0; k < 6; k++) p[k] = m.P is not null && m.P.Length > k ? m.P[k] : defs[k];
+        p[index] = value;
+        _pluginState.Masks[key] = m with { P = p };
+        SyncMaskOverlaySpec();
+        OnPluginUiChanged();
+    }
+
     private static bool IsInteractiveMask(string kind) => kind is MaskRender.Linear or MaskRender.Radial or MaskRender.Brush;
 
     private FrameworkElement BuildMaskControls(string key, string label, Brush muted)
@@ -1551,7 +1564,16 @@ public partial class MainWindow
                 }
                 else
                 {
-                    _pluginState.Masks[key] = MaskRender.DefaultFor(kind);
+                    double aspect = _baseInfo is ImageInfo info && info.Height > 0 ? info.Width / (double)info.Height : 1.0;
+                    var spec = MaskRender.DefaultFor(kind, aspect);
+                    if (kind == MaskRender.Radial && _baseInfo is ImageInfo vi && spec.P is { Length: >= 2 } rp)
+                    {
+                        // a new circle goes in the middle of the part of the photo on screen, not off-screen when zoomed in
+                        MaskOverlay.SetMapping(CurrentDisplayGeo(), vi.Width, vi.Height);
+                        var c = MaskOverlay.VisibleCenterSrc();
+                        rp[0] = c.X; rp[1] = c.Y;
+                    }
+                    _pluginState.Masks[key] = spec;
                     BeginMaskEdit(key);
                 }
                 DeferRebuild();
@@ -1636,16 +1658,24 @@ public partial class MainWindow
             rot.ValueChanged += (_, e) =>
             {
                 rv.Text = $"{e.NewValue:0.#}°";
-                if (!_pluginState.Masks.TryGetValue(key, out var m)) return;
-                var p = new double[6];
-                double[] defs = { 0.5, 0.5, 0.3, 0.3, 0.5, 0 };
-                for (int k = 0; k < 6; k++) p[k] = m.P is not null && m.P.Length > k ? m.P[k] : defs[k];
-                p[5] = Math.Round(e.NewValue, 2);
-                _pluginState.Masks[key] = m with { P = p };
-                SyncMaskOverlaySpec();
-                OnPluginUiChanged();
+                SetRadialParam(key, 5, Math.Round(e.NewValue, 2));
             };
             sp.Children.Add(rot);
+
+            sp.Children.Add(LabelRow("Feather", out var fv, muted));
+            double feather0 = mask.P is not null && mask.P.Length > 4 ? Math.Clamp(mask.P[4], 0, 1) : 0.5;
+            var fea = new Slider { Minimum = 0, Maximum = 100, Value = Math.Round(feather0 * 100), SmallChange = 1, LargeChange = 10 };
+            fea.ToolTip = "How softly the effect fades out towards the edge of the ellipse: 0 = hard edge, 100 = fades all the way from the centre. Double-click resets to 50.";
+            AutomationProperties.SetAutomationId(fea, "PluginMaskFeather_" + key);
+            PhotoshopSlider.SetEnable(fea, true);
+            fv.Text = $"{fea.Value:0}";
+            fea.MouseDoubleClick += (_, _) => fea.Value = 50;
+            fea.ValueChanged += (_, e) =>
+            {
+                fv.Text = $"{e.NewValue:0}";
+                SetRadialParam(key, 4, Math.Round(e.NewValue) / 100.0);
+            };
+            sp.Children.Add(fea);
         }
         else if (mask.Kind == MaskRender.Luma)
         {

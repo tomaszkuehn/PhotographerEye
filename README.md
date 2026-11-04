@@ -104,7 +104,7 @@ PhotographerEye loads .NET plugins that target `netstandard2.0` and reference `I
 - **IDs are namespaced**: `pluginId:filterId`, and parameter values are stored as `pluginId:filterId/paramId`. Values that belong to plugins which are not installed are kept untouched in `.eye`, so a photo survives a round-trip through a machine without the plugin.
 - **Masks**: any filter with `SupportsMask` (in every stage; masks of Output filters are mapped through crop and rotation) can be limited by one of:
   - a linear gradient
-  - a radial gradient (an ellipse that can be rotated: orange handle on the photo or the Rotation slider; `P[5]` in degrees)
+  - a radial gradient (an ellipse that can be rotated: orange handle on the photo or the Rotation slider; `P[5]` in degrees). A new one is a circle in the middle of the part of the photo visible in the viewer (the photo centre when it fits; `MaskOverlay.VisibleCenterSrc`), 15% of the image height across whatever the aspect ratio (`MaskRender.RadialDefaultDiameter`, rx corrected by the aspect). The **Feather** slider (0–100, double-click resets to 50) sets `P[4]`, the soft fade from (1 − feather)·radius to the edge; the dashed inner ring on the photo follows it
   - a brush
   - a luminance range
   - a plugin mask provider (`plugin:<pluginId:maskId>`)

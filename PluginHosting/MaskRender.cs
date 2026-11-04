@@ -19,10 +19,21 @@ public static class MaskRender
     public const string Luma = "luma";
     public const string PluginPrefix = "plugin:";
 
-    public static MaskSpec DefaultFor(string kind) => kind switch
+    /// <summary>Diameter of a new radial mask (its outer, fully feathered edge) as a fraction of the image height.</summary>
+    public const double RadialDefaultDiameter = 0.15;
+
+    /// <summary>
+    /// A new mask of <paramref name="kind"/>. <paramref name="aspect"/> = image width / height: a new radial mask is a
+    /// circle in the middle with a diameter of <see cref="RadialDefaultDiameter"/> of the image height.
+    /// </summary>
+    public static MaskSpec DefaultFor(string kind, double aspect = 1.0) => kind switch
     {
         Linear => new MaskSpec { Kind = Linear, P = new[] { 0.5, 0.25, 0.5, 0.6 } },
-        Radial => new MaskSpec { Kind = Radial, P = new[] { 0.5, 0.5, 0.3, 0.3, 0.5 } },
+        Radial => new MaskSpec
+        {
+            Kind = Radial,
+            P = new[] { 0.5, 0.5, RadialDefaultDiameter / 2 / (aspect > 0 && double.IsFinite(aspect) ? aspect : 1.0), RadialDefaultDiameter / 2, 0.5 }
+        },
         Brush => new MaskSpec { Kind = Brush, Strokes = new List<double[]>() },
         Luma => new MaskSpec { Kind = Luma, P = new[] { 0.6, 1.0, 0.15 } },
         _ => new MaskSpec { Kind = kind }

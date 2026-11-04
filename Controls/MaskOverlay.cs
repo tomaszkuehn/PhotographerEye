@@ -111,6 +111,20 @@ public sealed class MaskOverlay : Canvas
 
     private Rect Frame => _viewer?.ImageRect ?? Rect.Empty;
 
+    /// <summary>
+    /// Centre of the part of the photo visible in the viewer, as source fractions (0..1); the photo centre when
+    /// the whole photo is visible or the view is not laid out yet. Call <see cref="SetMapping"/> first.
+    /// </summary>
+    public Point VisibleCenterSrc()
+    {
+        var f = Frame;
+        if (_viewer is null || f.Width < 1 || f.Height < 1) return new Point(0.5, 0.5);
+        var vis = Rect.Intersect(f, new Rect(0, 0, _viewer.ActualWidth, _viewer.ActualHeight));
+        if (vis.IsEmpty || vis.Width < 1 || vis.Height < 1) return new Point(0.5, 0.5);
+        var c = ToSrc(new Point(vis.X + vis.Width / 2, vis.Y + vis.Height / 2));
+        return new Point(Math.Clamp(c.X, 0, 1), Math.Clamp(c.Y, 0, 1));
+    }
+
     private Point ToView(double u, double v)
     {
         var f = Frame;
