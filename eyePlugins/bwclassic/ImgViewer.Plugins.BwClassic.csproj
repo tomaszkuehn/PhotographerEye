@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Shared settings and packaging: ..\Directory.Build.props / .targets. The B&W engine is shared with bwprofiles. -->
+  <ItemGroup>
+    <Compile Include="..\bwprofiles\BwEngine.cs" Link="BwEngine.cs" />
+  </ItemGroup>
+</Project>

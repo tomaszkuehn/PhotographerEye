@@ -61,7 +61,7 @@ internal static partial class Program
 
         var profileDef = f.D.Params.First(p => p.Id == "profile");
         var ids = profileDef.Choices.Select(c => c.Id).ToList();
-        Check(ids.Count >= 12 && new[] { "neutral", "red", "orange", "green", "blue", "infrared", "highkey", "lowkey", "selenium", "sepia" }.All(ids.Contains),
+        Check(ids.Count >= 13 && ids[0] == "none" && profileDef.DefaultText == "none" && new[] { "neutral", "red", "orange", "green", "blue", "infrared", "highkey", "lowkey", "selenium", "sepia" }.All(ids.Contains),
             $"bw profiles: built-in fine-art profiles listed ({ids.Count})");
 
         // Patches: saturated red, green, blue, yellow, mid grey, light grey.
@@ -98,6 +98,13 @@ internal static partial class Program
             return Math.Sqrt(s / (PW * H));
         }
 
+        {
+            var st = new PluginEditState();
+            st.SetText(f, profileDef, "neutral");
+            bool on = st.IsFilterActive(f);
+            st.SetText(f, profileDef, "none");
+            Check(on && !st.IsFilterActive(f), "bw profiles: picking Neutral (first profile) turns the conversion on, \"choose a profile\" leaves the photo alone");
+        }
         var neutral = Run(P("neutral"));
         double maxChroma = 0;
         for (int i = 0; i < W * H; i++) maxChroma = Math.Max(maxChroma, Math.Max(Math.Abs(neutral.R[i] - neutral.G[i]), Math.Abs(neutral.B[i] - neutral.G[i])));
@@ -216,5 +223,66 @@ internal static partial class Program
             "bw profiles: delete removes the profile from the file and the choice");
         Check(diff < 1e-4, $"bw profiles: deleting the photo's profile keeps its look as fine-tuning (max diff {diff:0.######})");
         try { Directory.Delete(tmpDir, true); } catch (IOException) { }
+    }
+
+    /// <summary>B&W classic: one choice of 6 looks and nothing else; every look is monochrome and the looks differ.</summary>
+    private static void TestBwClassic()
+    {
+        var path = FindPluginDll("bwclassic", "ImgViewer.Plugins.BwClassic.dll");
+        if (path is null) { Check(false, "bw classic dll present (build eyePlugins/bwclassic first)"); return; }
+        var entry = PluginManager.LoadFromFile(path);
+        Check(entry.Error is null && entry.Plugins.Count == 1 && entry.Plugins[0].Error is null, $"bw classic: loads ({entry.Error})");
+        var reg = new PluginRegistry(entry.Plugins);
+        var f = reg.FindFilter("photographereye.bwclassic:bwclassic");
+        Check(f is not null && f.D.Stage == FilterStage.Display && !f.D.SupportsMask, "bw classic: display-stage filter without a mask");
+        if (f is null) return;
+        var choice = f.D.Params.Count == 1 ? f.D.Params[0] : null;
+        Check(choice is not null && choice.Kind == ParamKind.Choice && choice.Choices.Count == 7 && choice.DefaultText == "none" && choice.Choices[0].Id == "none" && choice.Choices[1].Id == "classic",
+            "bw classic: a single choice of 6 looks after \"choose a look\" (the default, so picking any look switches the filter on), no other settings");
+        if (choice is null) return;
+        FilterParams Look(string id) => new FilterParams(f.D.Params, new Dictionary<string, double>(), new Dictionary<string, string> { ["profile"] = id });
+        Check(f.D.IsIdentity(Look("none")) && !f.D.IsIdentity(Look("classic")) && !f.D.IsIdentity(Look("highkey")), "bw classic: only \"choose a look\" is identity");
+        // Picking the first look in the panel switches the filter on (the host turns a panel filter on when a value differs from its default).
+        var st = new PluginEditState();
+        st.SetText(f, choice, "classic");
+        bool onFirst = st.IsFilterActive(f);
+        st.SetText(f, choice, "none");
+        Check(onFirst && !st.IsFilterActive(f), "bw classic: picking the first look turns the conversion on, \"choose a look\" turns it off");
+        Check(reg.Commands.Count == 0, "bw classic: no commands");
+        const int W = 96, H = 48;
+        var src = new PluginImage(W, H);
+        for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+        {
+            int i = y * W + x;
+            double hue = x / (double)W, lum = y / (double)(H - 1);
+            src.R[i] = (float)(lum * (0.5 + 0.5 * Math.Cos(2 * Math.PI * hue)));
+            src.G[i] = (float)(lum * (0.5 + 0.5 * Math.Cos(2 * Math.PI * (hue - 1 / 3.0))));
+            src.B[i] = (float)(lum * (0.5 + 0.5 * Math.Cos(2 * Math.PI * (hue - 2 / 3.0))));
+        }
+        var outs = new List<float[]>();
+        bool mono = true;
+        foreach (var c in choice.Choices.Skip(1))
+        {
+            var im = new PluginImage(W, H, (float[])src.R.Clone(), (float[])src.G.Clone(), (float[])src.B.Clone());
+            var p = new FilterParams(f.D.Params, new Dictionary<string, double>(), new Dictionary<string, string> { ["profile"] = c.Id });
+            f.D.Render(im, p, new RenderContext { Stage = FilterStage.Display, Space = PluginColorSpace.Srgb, FullWidth = W, FullHeight = H, Cancel = CancellationToken.None });
+            for (int i = 0; i < W * H; i++)
+            {
+                if (Math.Abs(im.R[i] - im.G[i]) > 1e-5 || Math.Abs(im.B[i] - im.G[i]) > 1e-5) mono = false;
+                if (float.IsNaN(im.G[i]) || im.G[i] < 0 || im.G[i] > 1) mono = false;
+            }
+            outs.Add(im.G);
+        }
+        Check(mono, "bw classic: every look is monochrome and in range");
+        double minDiff = double.MaxValue;
+        for (int a = 0; a < outs.Count; a++)
+        for (int b = a + 1; b < outs.Count; b++)
+        {
+            double d = 0;
+            for (int i = 0; i < W * H; i++) d += Math.Abs(outs[a][i] - outs[b][i]);
+            minDiff = Math.Min(minDiff, d / (W * H));
+        }
+        Check(minDiff > 0.01, $"bw classic: the 6 looks are clearly different (min mean diff {minDiff:0.###})");
     }
 }

@@ -133,6 +133,7 @@ internal static partial class Program
         if (args.Length > 0 && args[0] == "--bwprofiles")
         {
             TestBwProfiles();
+            TestBwClassic();
             Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
             return;
         }
@@ -344,6 +345,7 @@ internal static partial class Program
         TestHeal();
         TestTransNoise();
         TestBwProfiles();
+        TestBwClassic();
         TestEyeAutoSave();
         TestHistoryPlugin();
         TestPluginApi();

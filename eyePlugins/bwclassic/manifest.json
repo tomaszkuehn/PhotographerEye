@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.bwclassic",
+  "name": "B&W classic",
+  "version": "1.0",
+  "author": "PhotographerEye",
+  "description": "Simple black & white conversion: pick one of 6 classic looks of award-winning B&W photography, no other settings.",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.BwClassic.dll",
+  "permissions": []
+}
