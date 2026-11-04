@@ -3,7 +3,7 @@
   "name": "Auto enhance",
   "version": "1.0",
   "author": "PhotographerEye",
-  "description": "One-click automatic processing: noise reduction from the measured noise, white balance, histogram balance, contrast, color and horizon straightening; can also set the regular sliders from its measurement."
+  "description": "One-click automatic processing: noise reduction from the measured noise, white balance, histogram balance, contrast, color and horizon straightening; can also set the regular sliders from its measurement.",
   "api": 2,
   "entry": "ImgViewer.Plugins.AutoEnhance.dll",
   "permissions": []

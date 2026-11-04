@@ -202,6 +202,7 @@ dotnet run --project tools\Harness\tools.csproj -c Release -- image1.jpg image2.
 
 Plugin API (`TestPluginApi`: EditChanged keys, core/curve/mask helpers, Output-stage masks, overlays): `--pluginapi`.
 Plugins using the command API (`TestPluginUpgrades`: Auto → sliders and straighten, exposure clipping map and ETTR, vignette mask, event log): `--upgrades`.
+Bundled plugin manifests (`TestManifests`: strict JSON, read by the host, entry and api match, unique ids, entry assembly loads): `--manifests`.
 
 E2E UIA (requires a running app): `scripts\uia-e2e.ps1 <pid>`
 
