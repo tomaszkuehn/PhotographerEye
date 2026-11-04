@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.bwprofiles",
+  "name": "B&W profiles",
+  "version": "1.0",
+  "author": "PhotographerEye",
+  "description": "Black & white profiles for fine-art photography (colour filters, infrared, high/low key, film grain, toning) plus up to 10 of your own.",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.BwProfiles.dll",
+  "permissions": []
+}

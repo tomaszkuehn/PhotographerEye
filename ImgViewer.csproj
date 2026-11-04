@@ -47,7 +47,8 @@
   -->
   <ItemGroup>
     <BundledPluginProject Include="eyePlugins\*\*.csproj" />
-    <ProjectReference Include="@(BundledPluginProject)" ReferenceOutputAssembly="false" Private="false" />
+    <!-- OutDir is not passed on: the plugins build into their own bin (collected below), also with -p:OutDir=... -->
+    <ProjectReference Include="@(BundledPluginProject)" ReferenceOutputAssembly="false" Private="false" UndefineProperties="OutDir" />
   </ItemGroup>
 
   <Target Name="CollectBundledPluginFiles">

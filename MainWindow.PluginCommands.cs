@@ -551,6 +551,14 @@ public partial class MainWindow
             Dirty = true;
         }
 
+        public string GetText(string filterId, string paramId)
+        {
+            var f = F(filterId);
+            var d = P(f, paramId);
+            if (!d.IsText) throw new ArgumentException($"parameter '{paramId}' is numeric; use GetValue");
+            return _w._pluginState.GetText(f, d);
+        }
+
         public bool IsActive(string filterId) => _w._pluginState.IsFilterOn(F(filterId));
 
         public void SetActive(string filterId, bool active)

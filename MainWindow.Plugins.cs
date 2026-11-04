@@ -905,9 +905,39 @@ public partial class MainWindow
                 Debug.Log($"PLUGINS: param {f.FullId}/{d.Id} UI failed: {ex.Message}");
             }
         }
+        if (BuildSectionCommands(f) is { } cmds) body.Children.Add(cmds);
         if (f.D.SupportsMask)
             body.Children.Add(BuildMaskControls(f.FullId, f.D.Label, muted));
         return body;
+    }
+
+    /// <summary>Buttons of the plugin's commands placed in this filter's section (<see cref="CommandPlacement.Section"/>).</summary>
+    private FrameworkElement? BuildSectionCommands(Registered<FilterDescriptor> f)
+    {
+        var cmds = _pluginReg.Commands.Where(c => c.PluginId == f.PluginId && c.D.Placement.HasFlag(CommandPlacement.Section)
+            && (c.D.SectionFilter == f.LocalId || c.D.SectionFilter == f.FullId)).ToList();
+        if (cmds.Count == 0) return null;
+        var wrap = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
+        foreach (var c in cmds)
+        {
+            var b = new Button
+            {
+                Content = string.IsNullOrWhiteSpace(c.D.ToolbarText) ? c.D.Label : c.D.ToolbarText,
+                Padding = new Thickness(8, 2, 8, 2),
+                Margin = new Thickness(0, 0, 6, 4),
+                ToolTip = c.D.Label + (string.IsNullOrWhiteSpace(c.D.Shortcut) ? "" : $" ({c.D.Shortcut})")
+            };
+            b.SetResourceReference(StyleProperty, "ToolButton");
+            AutomationProperties.SetAutomationId(b, "PluginCmdSection_" + c.FullId);
+            var cc = c;
+            b.Click += (_, _) =>
+            {
+                RunCommand(cc);
+                DeferRebuild();
+            };
+            wrap.Children.Add(b);
+        }
+        return wrap;
     }
 
     private void DeferRebuild() => Dispatcher.BeginInvoke(RebuildPluginUi, System.Windows.Threading.DispatcherPriority.Background);
@@ -1532,10 +1562,10 @@ public partial class MainWindow
         if (adjust) sp.Children.Add(icons);
         else
         {
-            var row = new DockPanel();
-            DockPanel.SetDock(icons, Dock.Right);
+            // Label and icons side by side; in a narrow panel the icons move under the label instead of covering it.
+            var row = new WrapPanel();
+            row.Children.Add(new TextBlock { Text = "Mask", Foreground = muted, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
             row.Children.Add(icons);
-            row.Children.Add(new TextBlock { Text = "Mask", Foreground = muted, VerticalAlignment = VerticalAlignment.Center });
             sp.Children.Add(row);
         }
         if (mask is null) return sp;

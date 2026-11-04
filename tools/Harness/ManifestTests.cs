@@ -28,7 +28,7 @@ internal static partial class Program
         if (root is null) { Check(false, "manifest: repository root found"); return; }
         var csproj = File.ReadAllText(Path.Combine(root, "ImgViewer.csproj"));
         Check(csproj.Contains(@"<BundledPluginProject Include=""eyePlugins\*\*.csproj"""), @"manifest: ImgViewer.csproj bundles eyePlugins\*\*.csproj");
-        var folders = Directory.GetDirectories(Path.Combine(root, "eyePlugins")).OrderBy(d => d, StringComparer.Ordinal).ToList();
+        var folders = Directory.GetDirectories(Path.Combine(root, "eyePlugins")).Where(d => !Path.GetFileName(d).StartsWith(".")).OrderBy(d => d, StringComparer.Ordinal).ToList();
         var bundled = new System.Collections.Generic.List<(string Folder, string Asm)>();
         foreach (var d in folders)
         {

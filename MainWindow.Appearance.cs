@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -53,7 +54,7 @@ public partial class MainWindow
         // Test hook (screenshots without mouse tests): PE_OPEN_SETTINGS=1 opens the flyout,
         // PE_OPEN_SETTINGS=<tile name> (e.g. TileBackground) opens that tile's menu,
         // "none" leaves the window as it is, "panel" opens the adjustments panel, "present" / "slideshow" enters presentation mode,
-        // "order" opens the plugin filter order window.
+        // "order" opens the plugin filter order window, "section:<plugin id>" renders that plugin's panel section.
         var hook = Environment.GetEnvironmentVariable("PE_OPEN_SETTINGS");
         if (!string.IsNullOrEmpty(hook))
         {
@@ -71,6 +72,34 @@ public partial class MainWindow
                     // Plugin filter order window; it snapshots itself (PE_SNAPSHOT) once rendered.
                     TogglePanel();
                     ShowFilterOrderWindow();
+                    return;
+                }
+                else if (hook.StartsWith("section:", StringComparison.Ordinal))
+                {
+                    // One plugin's panel section: the panel scrolled to its top (<snap>), then one screen further (<snap>_b).
+                    TogglePanel();
+                    var shot = Environment.GetEnvironmentVariable("PE_SNAPSHOT");
+                    string sid = "PluginGroup_" + hook.Substring(8);
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        var el = PluginPanelHost.Children.OfType<FrameworkElement>()
+                            .FirstOrDefault(c => System.Windows.Automation.AutomationProperties.GetAutomationId(c) == sid);
+                        DependencyObject? up = PluginPanelHost;
+                        while (up is not null and not ScrollViewer) up = VisualTreeHelper.GetParent(up);
+                        if (el is null || up is not ScrollViewer sv || string.IsNullOrEmpty(shot)) { Application.Current.Shutdown(); return; }
+                        double top = el.TransformToAncestor((Visual)sv.Content).Transform(new Point(0, 0)).Y;
+                        sv.ScrollToVerticalOffset(top);
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            SnapshotTo((FrameworkElement)Content, shot);
+                            sv.ScrollToVerticalOffset(top + sv.ViewportHeight - 40);
+                            Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                SnapshotTo((FrameworkElement)Content, Path.ChangeExtension(shot, null) + "_b.png");
+                                Application.Current.Shutdown();
+                            }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                        }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                    }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
                     return;
                 }
                 else if (hook != "1" && FindName(hook) is Button tile) { OpenTileMenu(tile); menu = tile.ContextMenu; }

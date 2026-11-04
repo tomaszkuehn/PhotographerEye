@@ -663,7 +663,9 @@ public sealed class MetadataProviderDescriptor
 public enum CommandPlacement
 {
     Menu = 1,
-    Toolbar = 2
+    Toolbar = 2,
+    /// <summary>A button at the bottom of the panel section of <see cref="CommandDescriptor.SectionFilter"/>.</summary>
+    Section = 4
 }
 
 public interface ICommandContext
@@ -677,6 +679,8 @@ public interface ICommandContext
     double GetValue(string filterId, string paramId);
     void SetValue(string filterId, string paramId, double value);
     void SetText(string filterId, string paramId, string value);
+    /// <summary>Current value of a text parameter (choice id, colour, curve, point, file).</summary>
+    string GetText(string filterId, string paramId);
     bool IsActive(string filterId);
     void SetActive(string filterId, bool active);
     /// <summary>Apply a preset of this plugin by id.</summary>
@@ -777,6 +781,12 @@ public sealed class CommandDescriptor
     public CommandPlacement Placement { get; set; } = CommandPlacement.Menu;
     /// <summary>Short toolbar caption or a Segoe MDL2 Assets glyph.</summary>
     public string ToolbarText { get; set; }
+    /// <summary>
+    /// With <see cref="CommandPlacement.Section"/>: id of a filter of this plugin; the command is shown as a button
+    /// (caption <see cref="ToolbarText"/>, else <see cref="Label"/>) at the bottom of that filter's panel section, and
+    /// the panel is rebuilt after it ran (e.g. to show changed <see cref="ParamDef.Choices"/>).
+    /// </summary>
+    public string SectionFilter { get; set; }
     public Action<ICommandContext> Execute { get; set; }
 }
 

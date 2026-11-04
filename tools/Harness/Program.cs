@@ -130,6 +130,12 @@ internal static partial class Program
             Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
             return;
         }
+        if (args.Length > 0 && args[0] == "--bwprofiles")
+        {
+            TestBwProfiles();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--transnoise")
         {
             TestTransNoise();
@@ -337,6 +343,7 @@ internal static partial class Program
         TestColorBalance();
         TestHeal();
         TestTransNoise();
+        TestBwProfiles();
         TestEyeAutoSave();
         TestHistoryPlugin();
         TestPluginApi();
