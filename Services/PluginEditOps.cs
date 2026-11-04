@@ -12,11 +12,8 @@ public static class PluginEditOps
 {
     /// <summary>Highest "Mono" value (0 colour, 1 documentary, 2 Tri-X).</summary>
     public const int MonoMax = (int)MonoMode.TriX;
-    public static readonly string[] CoreKeyNames =
-    {
-        "Exposure", "Contrast", "Temperature", "Tint", "Saturation", "Highlights", "Shadows", "Whites", "Blacks",
-        "Clarity", "Dehaze", "Sharpen", "Denoise", "ColorNoise", "Gamma", "Mono"
-    };
+    /// <summary>Plugin keys of the basic settings, in panel order (<see cref="CoreParams"/>).</summary>
+    public static IReadOnlyList<string> CoreKeyNames => CoreParams.Keys;
 
     public static readonly string[] CropAspects = { "original", "3:2", "4:3", "16:9", "16:10" };
 
@@ -82,35 +79,14 @@ public static class PluginEditOps
     }
 
     /// <summary>Canonical core key ("Exposure", ...) for "exposure", "core.Exposure", "ShadowLift", ...; null when unknown.</summary>
-    public static string? CoreKey(string? key)
-    {
-        if (string.IsNullOrWhiteSpace(key)) return null;
-        var k = key.Trim();
-        if (k.StartsWith("core.", StringComparison.OrdinalIgnoreCase)) k = k[5..];
-        if (k.Equals("ShadowLift", StringComparison.OrdinalIgnoreCase)) return "Shadows";
-        return CoreKeyNames.FirstOrDefault(n => n.Equals(k, StringComparison.OrdinalIgnoreCase));
-    }
+    public static string? CoreKey(string? key) => CoreParams.Find(key)?.Key;
 
-    public static double CoreGet(EyeState s, string k) => k switch
-    {
-        "Exposure" => s.Exposure, "Contrast" => s.Contrast, "Temperature" => s.Temperature, "Tint" => s.Tint,
-        "Saturation" => s.Saturation, "Highlights" => s.Highlights, "Shadows" => s.ShadowLift, "Whites" => s.Whites,
-        "Blacks" => s.Blacks, "Clarity" => s.Clarity, "Dehaze" => s.Dehaze, "Sharpen" => s.Sharpen,
-        "Denoise" => s.Denoise, "ColorNoise" => s.ColorNoise, "Gamma" => s.Gamma, "Mono" => s.Mono,
-        _ => throw new ArgumentException($"unknown core setting '{k}'")
-    };
+    public static double CoreGet(EyeState s, string k) => Param(k).Get(s);
 
-    public static EyeState CoreSet(EyeState s, string k, double v) => k switch
-    {
-        "Exposure" => s with { Exposure = v }, "Contrast" => s with { Contrast = v },
-        "Temperature" => s with { Temperature = v }, "Tint" => s with { Tint = v },
-        "Saturation" => s with { Saturation = v }, "Highlights" => s with { Highlights = v },
-        "Shadows" => s with { ShadowLift = v }, "Whites" => s with { Whites = v }, "Blacks" => s with { Blacks = v },
-        "Clarity" => s with { Clarity = v }, "Dehaze" => s with { Dehaze = v }, "Sharpen" => s with { Sharpen = v },
-        "Denoise" => s with { Denoise = v }, "ColorNoise" => s with { ColorNoise = v }, "Gamma" => s with { Gamma = v },
-        "Mono" => s with { Mono = (int)Math.Round(v) },
-        _ => throw new ArgumentException($"unknown core setting '{k}'")
-    };
+    public static EyeState CoreSet(EyeState s, string k, double v) => Param(k).Set(s, v);
+
+    private static CoreParam Param(string k) =>
+        CoreParams.Find(k) is { } p && p.Key.Equals(k, StringComparison.OrdinalIgnoreCase) ? p : throw new ArgumentException($"unknown core setting '{k}'");
 
     /// <summary>Validated, sorted copy of curve points; clamps to [lo, hi]. Null or empty → null.</summary>
     public static double[][]? CleanCurve(double[][]? pts, double lo, double hi)

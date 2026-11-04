@@ -38,60 +38,40 @@
 
   <ItemGroup>
     <ProjectReference Include="PluginSdk\ImgViewer.Plugin.Abstractions.csproj" />
-    <!-- Bundled plugins: built together with the app so they are never stale; not referenced by the app code. -->
-    <ProjectReference Include="eyePlugins\auto\ImgViewer.Plugins.AutoEnhance.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\colorbalance\ImgViewer.Plugins.ColorBalance.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\heal\ImgViewer.Plugins.Heal.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\history\ImgViewer.Plugins.History.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\negative\ImgViewer.Plugins.Negative.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\bwred\ImgViewer.Plugins.BwRed.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\splittone\ImgViewer.Plugins.SplitTone.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\vignette\ImgViewer.Plugins.Vignette.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\netpbm\ImgViewer.Plugins.Netpbm.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\webexport\ImgViewer.Plugins.WebExport.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\exposure\ImgViewer.Plugins.ExposureInfo.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\sky\ImgViewer.Plugins.SkyMask.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="eyePlugins\eventlog\ImgViewer.Plugins.EventLog.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
-  <!-- Each bundled plugin ships as plugins\<Folder>\{manifest.json, <Asm>.dll}. -->
+  <!--
+    Bundled plugins: every eyePlugins\<folder>\<Assembly>.csproj is built together with the app (so it is never stale,
+    not referenced by the app code) and ships as plugins\<folder>\{manifest.json, <Assembly>.dll}.
+    Adding a plugin needs no change here: create the folder with its project and manifest.json.
+  -->
   <ItemGroup>
-    <BundledPlugin Include="autoenhance" Src="eyePlugins\auto" Asm="ImgViewer.Plugins.AutoEnhance" />
-    <BundledPlugin Include="colorbalance" Src="eyePlugins\colorbalance" Asm="ImgViewer.Plugins.ColorBalance" />
-    <BundledPlugin Include="heal" Src="eyePlugins\heal" Asm="ImgViewer.Plugins.Heal" />
-    <BundledPlugin Include="history" Src="eyePlugins\history" Asm="ImgViewer.Plugins.History" />
-    <BundledPlugin Include="negative" Src="eyePlugins\negative" Asm="ImgViewer.Plugins.Negative" />
-    <BundledPlugin Include="bwred" Src="eyePlugins\bwred" Asm="ImgViewer.Plugins.BwRed" />
-    <BundledPlugin Include="splittone" Src="eyePlugins\splittone" Asm="ImgViewer.Plugins.SplitTone" />
-    <BundledPlugin Include="vignette" Src="eyePlugins\vignette" Asm="ImgViewer.Plugins.Vignette" />
-    <BundledPlugin Include="netpbm" Src="eyePlugins\netpbm" Asm="ImgViewer.Plugins.Netpbm" />
-    <BundledPlugin Include="webexport" Src="eyePlugins\webexport" Asm="ImgViewer.Plugins.WebExport" />
-    <BundledPlugin Include="exposure" Src="eyePlugins\exposure" Asm="ImgViewer.Plugins.ExposureInfo" />
-    <BundledPlugin Include="sky" Src="eyePlugins\sky" Asm="ImgViewer.Plugins.SkyMask" />
-    <BundledPlugin Include="eventlog" Src="eyePlugins\eventlog" Asm="ImgViewer.Plugins.EventLog" />
+    <BundledPluginProject Include="eyePlugins\*\*.csproj" />
+    <ProjectReference Include="@(BundledPluginProject)" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
+
+  <Target Name="CollectBundledPluginFiles">
+    <ItemGroup>
+      <_BundledPluginFile Remove="@(_BundledPluginFile)" />
+      <_BundledPluginFile Include="%(BundledPluginProject.RootDir)%(BundledPluginProject.Directory)bin\$(Configuration)\netstandard2.0\%(BundledPluginProject.Filename).dll;%(BundledPluginProject.RootDir)%(BundledPluginProject.Directory)manifest.json"
+                          Folder="$([System.IO.Path]::GetFileName($([System.String]::Copy('%(BundledPluginProject.RootDir)%(BundledPluginProject.Directory)').TrimEnd('\'))))" />
+      <_BundledPluginFile Remove="@(_BundledPluginFile)" Condition="!Exists('%(FullPath)')" />
+    </ItemGroup>
+  </Target>
 
   <Target Name="CopyLibRaw22ToPublish" AfterTargets="Publish">
     <Copy SourceFiles="thirdparty\libraw22\dcraw_emu.exe;thirdparty\libraw22\libraw.dll" DestinationFolder="$(PublishDir)thirdparty\libraw22" SkipUnchangedFiles="true" />
     <Copy SourceFiles="thirdparty\librawhe\dcraw_emu.exe" DestinationFolder="$(PublishDir)thirdparty\librawhe" SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="CopyBundledPluginsToPublish" AfterTargets="Publish">
-    <ItemGroup>
-      <_BundledPluginFile Include="%(BundledPlugin.Src)\bin\$(Configuration)\netstandard2.0\%(BundledPlugin.Asm).dll;%(BundledPlugin.Src)\manifest.json" Folder="%(BundledPlugin.Identity)" />
-      <_BundledPluginFile Remove="@(_BundledPluginFile)" Condition="!Exists('%(FullPath)')" />
-    </ItemGroup>
+  <Target Name="CopyBundledPluginsToPublish" AfterTargets="Publish" DependsOnTargets="CollectBundledPluginFiles">
     <Copy SourceFiles="@(_BundledPluginFile)" DestinationFiles="@(_BundledPluginFile->'$(PublishDir)plugins\%(Folder)\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <!-- Older layouts: all samples in plugins\samples, plugin dlls loose in plugins\. -->
     <RemoveDir Directories="$(PublishDir)plugins\samples" ContinueOnError="true" />
     <Delete Files="$(PublishDir)plugins\ImgViewer.Plugins.Samples.dll;$(PublishDir)plugins\ImgViewer.Plugins.AutoEnhance.dll" ContinueOnError="true" />
   </Target>
 
-  <Target Name="CopyBundledPluginsToOutput" AfterTargets="Build">
-    <ItemGroup>
-      <_BundledPluginFile Include="%(BundledPlugin.Src)\bin\$(Configuration)\netstandard2.0\%(BundledPlugin.Asm).dll;%(BundledPlugin.Src)\manifest.json" Folder="%(BundledPlugin.Identity)" />
-      <_BundledPluginFile Remove="@(_BundledPluginFile)" Condition="!Exists('%(FullPath)')" />
-    </ItemGroup>
+  <Target Name="CopyBundledPluginsToOutput" AfterTargets="Build" DependsOnTargets="CollectBundledPluginFiles">
     <Copy SourceFiles="@(_BundledPluginFile)" DestinationFiles="@(_BundledPluginFile->'$(OutDir)plugins\%(Folder)\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <RemoveDir Directories="$(OutDir)plugins\samples" ContinueOnError="true" />
     <Delete Files="$(OutDir)plugins\ImgViewer.Plugins.Samples.dll;$(OutDir)plugins\ImgViewer.Plugins.AutoEnhance.dll" ContinueOnError="true" />

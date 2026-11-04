@@ -17,7 +17,7 @@ internal static partial class Program
         for (int i = 0; i < 6 && dir is not null; i++, dir = dir.Parent)
         {
             var found = new[] { "Release", "Debug" }
-                .Select(cfg => Path.Combine(dir.FullName, "eyePlugins", "auto", "bin", cfg, "netstandard2.0", "ImgViewer.Plugins.AutoEnhance.dll"))
+                .Select(cfg => Path.Combine(dir.FullName, "eyePlugins", "autoenhance", "bin", cfg, "netstandard2.0", "ImgViewer.Plugins.AutoEnhance.dll"))
                 .Where(File.Exists)
                 .OrderByDescending(File.GetLastWriteTimeUtc)
                 .FirstOrDefault();
@@ -29,7 +29,7 @@ internal static partial class Program
     private static void TestAutoEnhance()
     {
         var path = FindAutoEnhanceDll();
-        if (path is null) { Check(false, "auto enhance dll present (build eyePlugins/auto first)"); return; }
+        if (path is null) { Check(false, "auto enhance dll present (build eyePlugins/autoenhance first)"); return; }
         var entry = PluginManager.LoadFromFile(path);
         Check(entry.Error is null && entry.Plugins.Count == 1 && entry.Plugins[0].Error is null, $"auto enhance loads ({entry.Error})");
         var reg = new PluginRegistry(entry.Plugins);

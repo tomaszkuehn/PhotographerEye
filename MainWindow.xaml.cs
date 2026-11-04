@@ -119,29 +119,21 @@ public partial class MainWindow : Window
         Viewer.ZoomChanged += OnViewerZoomChanged;
         CropOverlay.Attach(Viewer);
         ZoomSlider.ValueChanged += OnZoomSliderValueChanged;
-        ShadowSlider.ValueChanged += OnAdjustmentChanged;
-        GammaSlider.ValueChanged += OnAdjustmentChanged;
         HistogramPanel.StretchEdited += OnManualStretchChanged;
         HistogramPanel.CurvesEdited += OnHistCurvesChanged;
-        ShadowSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
-        GammaSlider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
-        ExpSlider.ValueChanged += OnPanelSliderChanged;
-        ContrastSlider.ValueChanged += OnPanelSliderChanged;
-        TempSlider.ValueChanged += OnPanelSliderChanged;
-        TintSlider.ValueChanged += OnPanelSliderChanged;
-        SatSlider.ValueChanged += OnPanelSliderChanged;
-        ClaritySlider.ValueChanged += OnPanelSliderChanged;
-        SharpenSlider.ValueChanged += OnPanelSliderChanged;
-        HighlightsSlider.ValueChanged += OnPanelSliderChanged;
-        WhitesSlider.ValueChanged += OnPanelSliderChanged;
-        BlacksSlider.ValueChanged += OnPanelSliderChanged;
-        PanelShadowSlider.ValueChanged += OnPanelSliderChanged;
-        DehazeSlider.ValueChanged += OnPanelSliderChanged;
-        DenoiseSlider.ValueChanged += OnPanelSliderChanged;
-        ColorNoiseSlider.ValueChanged += OnPanelSliderChanged;
-        foreach (var s in new[] { ExpSlider, ContrastSlider, TempSlider, TintSlider, SatSlider, ClaritySlider, SharpenSlider, HighlightsSlider, WhitesSlider, BlacksSlider, PanelShadowSlider, DehazeSlider, DenoiseSlider, ColorNoiseSlider })
+        // Basic adjustment sliders (CoreParams): toolbar sliders re-render directly, panel sliders also update labels.
+        foreach (var c in CoreUi())
         {
-            s.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
+            if (c.Panel is { } panel)
+            {
+                panel.ValueChanged += OnPanelSliderChanged;
+                panel.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
+            }
+            if (!ReferenceEquals(c.Panel, c.Slider))
+            {
+                c.Slider.ValueChanged += OnAdjustmentChanged;
+                c.Slider.PreviewMouseLeftButtonDown += OnAdjustSliderDown;
+            }
         }
         ShadowSlider.ValueChanged += OnToolbarShadowSynced;
         Viewer.PreviewMouseLeftButtonDown += OnViewerPickClick;
@@ -907,13 +899,7 @@ public partial class MainWindow : Window
     {
         if (a.Version != b.Version || a.Mono != b.Mono || Math.Abs(a.BaseEv - b.BaseEv) > 1e-9) return false;
         if (!KnotsEqual(a.ToneCurve, b.ToneCurve)) return false;
-        if (Math.Abs(a.ShadowLift - b.ShadowLift) > 1e-9 || Math.Abs(a.Gamma - b.Gamma) > 1e-9 ||
-            Math.Abs(a.Exposure - b.Exposure) > 1e-9 || Math.Abs(a.Contrast - b.Contrast) > 1e-9 ||
-            Math.Abs(a.Temperature - b.Temperature) > 1e-9 || Math.Abs(a.Tint - b.Tint) > 1e-9 || Math.Abs(a.Saturation - b.Saturation) > 1e-9 ||
-            Math.Abs(a.Highlights - b.Highlights) > 1e-9 || Math.Abs(a.Whites - b.Whites) > 1e-9 ||
-            Math.Abs(a.Blacks - b.Blacks) > 1e-9 || Math.Abs(a.Clarity - b.Clarity) > 1e-9 ||
-            Math.Abs(a.Sharpen - b.Sharpen) > 1e-9 || Math.Abs(a.Dehaze - b.Dehaze) > 1e-9 ||
-            Math.Abs(a.Denoise - b.Denoise) > 1e-9 || Math.Abs(a.ColorNoise - b.ColorNoise) > 1e-9) return false;
+        if (!CoreParams.ValuesEqual(a, b)) return false;
         if (a.Rot90 != b.Rot90 || a.CropAspect != b.CropAspect || Math.Abs(a.Angle - b.Angle) > 1e-6) return false;
         if (Math.Abs(a.CropX - b.CropX) > 1e-9 || Math.Abs(a.CropY - b.CropY) > 1e-9 ||
             Math.Abs(a.CropW - b.CropW) > 1e-9 || Math.Abs(a.CropH - b.CropH) > 1e-9) return false;
@@ -2066,21 +2052,9 @@ public partial class MainWindow : Window
 
     private void UpdatePanelLabels()
     {
-        if (ExpValue is null) return;
-        ExpValue.Text = (ExpSlider.Value > 0 ? "+" : "") + ExpSlider.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
-        ContrastValue.Text = ((int)ContrastSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        TempValue.Text = ((int)TempSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        TintValue.Text = ((int)TintSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        SatValue.Text = ((int)SatSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        PanelShadowValue.Text = Math.Round(PanelShadowSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        HighlightsValue.Text = ((int)HighlightsSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        WhitesValue.Text = ((int)WhitesSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        BlacksValue.Text = ((int)BlacksSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        ClarityValue.Text = ((int)ClaritySlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        SharpenValue.Text = ((int)SharpenSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        DehazeValue.Text = ((int)DehazeSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        DenoiseValue.Text = ((int)DenoiseSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        ColorNoiseValue.Text = ((int)ColorNoiseSlider.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (!IsInitialized) return;
+        foreach (var c in CoreUi())
+            if (c.Text is not null && c.Panel is not null) c.Text.Text = c.P.Format(c.Panel.Value);
     }
 
     private void OnResetClick(object sender, RoutedEventArgs e) => ResetAdjustments();
@@ -2130,26 +2104,12 @@ public partial class MainWindow : Window
         }
         HistogramPanel.ClearManualStretch();
         HistogramPanel.ClearCurves();
-        ShadowSlider.Value = 0;
-        GammaSlider.Value = 1.0;
-        if (ExpSlider is not null)
+        foreach (var c in CoreUi())
         {
-            ExpSlider.Value = 0;
-            ContrastSlider.Value = 0;
-            TempSlider.Value = 0;
-            TintSlider.Value = 0;
-            SatSlider.Value = 0;
-            PanelShadowSlider.Value = 0;
-            HighlightsSlider.Value = 0;
-            WhitesSlider.Value = 0;
-            BlacksSlider.Value = 0;
-            ClaritySlider.Value = 0;
-            SharpenSlider.Value = 0;
-            DehazeSlider.Value = 0;
-            DenoiseSlider.Value = 0;
-            ColorNoiseSlider.Value = 0;
-            UpdatePanelLabels();
+            c.Slider.Value = c.P.Default;
+            if (c.Panel is not null) c.Panel.Value = c.P.Default;
         }
+        UpdatePanelLabels();
         _monoMode = MonoMode.None;
         UpdateMonoButton();
         _pluginState.Clear();
@@ -2176,12 +2136,10 @@ public partial class MainWindow : Window
             stretch[i] = new[] { PhotoOps.EvToDisplayFraction(knots[i].In, gamma), PhotoOps.EvToDisplayFraction(knots[i].Out, gamma) };
         }
         var ps = _pluginState.Save();
-        return new EyeState
+        var st = new EyeState
         {
             BaseEv = double.IsNaN(_eyeBaseEv) ? _baseEv : _eyeBaseEv,
             ToneCurve = CurrentCurve()?.KnotPairs(),
-            ShadowLift = ShadowSlider.Value,
-            Gamma = gamma,
             Stretch = stretch,
             StretchEv = stretchEv,
             CurveR = NullIfEmpty(HistogramPanel.CurvePairs(HistChannel.R)),
@@ -2191,19 +2149,6 @@ public partial class MainWindow : Window
             LevelG = NullIfEmpty(HistogramPanel.LevelPairs(HistChannel.G)),
             LevelB = NullIfEmpty(HistogramPanel.LevelPairs(HistChannel.B)),
             Mono = (int)_monoMode,
-            Exposure = ExpSlider.Value,
-            Contrast = ContrastSlider.Value,
-            Temperature = TempSlider.Value,
-            Tint = TintSlider.Value,
-            Saturation = SatSlider.Value,
-            Highlights = HighlightsSlider.Value,
-            Whites = WhitesSlider.Value,
-            Blacks = BlacksSlider.Value,
-            Clarity = ClaritySlider.Value,
-            Sharpen = SharpenSlider.Value,
-            Dehaze = DehazeSlider.Value,
-            Denoise = DenoiseSlider.Value,
-            ColorNoise = ColorNoiseSlider.Value,
             Rot90 = _geo.Rot90,
             Angle = _geo.Angle,
             CropX = _geo.CropX,
@@ -2217,6 +2162,8 @@ public partial class MainWindow : Window
             PluginOrder = ps.Order,
             PluginMasks = ps.Masks
         };
+        foreach (var c in CoreUi()) st = c.P.Set(st, c.Slider.Value);
+        return st;
     }
 
     private void ApplyEyeFile(string path)
@@ -2243,9 +2190,9 @@ public partial class MainWindow : Window
         _eyeBaseEv = st.BaseEv;
         _eyeCurveSet = true;
         _eyeCurve = st.ToneCurve is { Length: >= 2 } ? ParseCurve(st.ToneCurve) : null;
-        ShadowSlider.Value = Math.Clamp(st.ShadowLift, ShadowSlider.Minimum, ShadowSlider.Maximum);
-        PanelShadowSlider.Value = Math.Clamp(st.ShadowLift, PanelShadowSlider.Minimum, PanelShadowSlider.Maximum);
-        GammaSlider.Value = Math.Clamp(st.Gamma, GammaSlider.Minimum, GammaSlider.Maximum);
+        // Version 1 files stored saturation as 0..200 with 100 neutral.
+        var core = st.Version == 1 ? st with { Saturation = st.Saturation - 100.0 } : st;
+        SetCoreSliders(core, toolbar: true);
         _monoMode = (MonoMode)Math.Clamp(st.Mono, 0, (int)MonoMode.TriX);
         UpdateMonoButton();
         if (st.StretchEv is { Length: > 0 })
@@ -2270,20 +2217,7 @@ public partial class MainWindow : Window
             HistogramPanel.RestoreManualStretch(new List<StretchKnot>());
         }
         HistogramPanel.RestoreCurves(st.CurveR, st.CurveG, st.CurveB, st.LevelR, st.LevelG, st.LevelB);
-        ExpSlider.Value = Math.Clamp(st.Exposure, ExpSlider.Minimum, ExpSlider.Maximum);
-        ContrastSlider.Value = Math.Clamp(st.Contrast, ContrastSlider.Minimum, ContrastSlider.Maximum);
-        TempSlider.Value = Math.Clamp(st.Temperature, TempSlider.Minimum, TempSlider.Maximum);
-        TintSlider.Value = Math.Clamp(st.Tint, TintSlider.Minimum, TintSlider.Maximum);
-        double legacySatShift = st.Version == 1 ? 100.0 : 0.0;
-        SatSlider.Value = Math.Clamp(st.Saturation - legacySatShift, SatSlider.Minimum, SatSlider.Maximum);
-        HighlightsSlider.Value = Math.Clamp(st.Highlights, HighlightsSlider.Minimum, HighlightsSlider.Maximum);
-        WhitesSlider.Value = Math.Clamp(st.Whites, WhitesSlider.Minimum, WhitesSlider.Maximum);
-        BlacksSlider.Value = Math.Clamp(st.Blacks, BlacksSlider.Minimum, BlacksSlider.Maximum);
-        ClaritySlider.Value = Math.Clamp(st.Clarity, ClaritySlider.Minimum, ClaritySlider.Maximum);
-        SharpenSlider.Value = Math.Clamp(st.Sharpen, SharpenSlider.Minimum, SharpenSlider.Maximum);
-        DehazeSlider.Value = Math.Clamp(st.Dehaze, DehazeSlider.Minimum, DehazeSlider.Maximum);
-        DenoiseSlider.Value = Math.Clamp(st.Denoise, DenoiseSlider.Minimum, DenoiseSlider.Maximum);
-        ColorNoiseSlider.Value = Math.Clamp(st.ColorNoise, ColorNoiseSlider.Minimum, ColorNoiseSlider.Maximum);
+        SetCoreSliders(core, toolbar: false);
         _geo = new GeoState
         {
             Rot90 = Math.Clamp(st.Rot90, 0, 3),
@@ -2312,24 +2246,45 @@ public partial class MainWindow : Window
 
     private void OnAdjustSliderDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount != 2) return;
-        if (ReferenceEquals(sender, ShadowSlider)) ShadowSlider.Value = 0;
-        else if (ReferenceEquals(sender, GammaSlider)) GammaSlider.Value = 1.0;
-        else if (ReferenceEquals(sender, ExpSlider)) ExpSlider.Value = 0;
-        else if (ReferenceEquals(sender, ContrastSlider)) ContrastSlider.Value = 0;
-        else if (ReferenceEquals(sender, TempSlider)) TempSlider.Value = 0;
-        else if (ReferenceEquals(sender, TintSlider)) TintSlider.Value = 0;
-        else if (ReferenceEquals(sender, SatSlider)) SatSlider.Value = 0;
-        else if (ReferenceEquals(sender, PanelShadowSlider)) PanelShadowSlider.Value = 0;
-        else if (ReferenceEquals(sender, HighlightsSlider)) HighlightsSlider.Value = 0;
-        else if (ReferenceEquals(sender, WhitesSlider)) WhitesSlider.Value = 0;
-        else if (ReferenceEquals(sender, BlacksSlider)) BlacksSlider.Value = 0;
-        else if (ReferenceEquals(sender, ClaritySlider)) ClaritySlider.Value = 0;
-        else if (ReferenceEquals(sender, SharpenSlider)) SharpenSlider.Value = 0;
-        else if (ReferenceEquals(sender, DehazeSlider)) DehazeSlider.Value = 0;
-        else if (ReferenceEquals(sender, DenoiseSlider)) DenoiseSlider.Value = 0;
-        else if (ReferenceEquals(sender, ColorNoiseSlider)) ColorNoiseSlider.Value = 0;
-        e.Handled = true;
+        if (e.ClickCount != 2 || sender is not Slider s) return;
+        foreach (var c in CoreUi())
+        {
+            if (!ReferenceEquals(s, c.Slider) && !ReferenceEquals(s, c.Panel)) continue;
+            s.Value = c.P.Default;
+            e.Handled = true;
+            return;
+        }
+    }
+
+    /// <summary>A basic adjustment's controls in this window (<see cref="CoreParams"/>).</summary>
+    private sealed record CoreControl(CoreParam P, Slider Slider, Slider? Panel, TextBlock? Text);
+
+    private CoreControl[]? _coreUi;
+
+    /// <summary>
+    /// The sliders of the basic adjustments, found by the names in <see cref="CoreParams"/>. Slider holds the value;
+    /// Panel is the adjustments-panel slider (the same slider, a mirror of a toolbar slider, or null for toolbar only).
+    /// </summary>
+    private CoreControl[] CoreUi() => _coreUi ??= CoreParams.All.Where(p => p.Slider is not null).Select(p =>
+    {
+        var slider = Named<Slider>(p.Slider!);
+        Slider? panel = p.PanelSlider is { } pn ? Named<Slider>(pn) : p.ValueText is not null ? slider : null;
+        return new CoreControl(p, slider, panel, p.ValueText is { } t ? Named<TextBlock>(t) : null);
+    }).ToArray();
+
+    private T Named<T>(string name) where T : class =>
+        FindName(name) as T ?? throw new InvalidOperationException($"MainWindow.xaml has no {typeof(T).Name} '{name}' (CoreParams)");
+
+    /// <summary>Sets the sliders from <paramref name="st"/>: the toolbar ones or the panel-only ones.</summary>
+    private void SetCoreSliders(EyeState st, bool toolbar)
+    {
+        foreach (var c in CoreUi())
+        {
+            if (ReferenceEquals(c.Panel, c.Slider) == toolbar) continue;
+            double v = c.P.Get(st);
+            c.Slider.Value = Math.Clamp(v, c.Slider.Minimum, c.Slider.Maximum);
+            if (c.Panel is not null && !ReferenceEquals(c.Panel, c.Slider)) c.Panel.Value = Math.Clamp(v, c.Panel.Minimum, c.Panel.Maximum);
+        }
     }
 
     private void OnPreviewDragOver(object sender, DragEventArgs e)

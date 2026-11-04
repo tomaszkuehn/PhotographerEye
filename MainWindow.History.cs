@@ -131,6 +131,7 @@ public partial class MainWindow
     private void RaiseImageClosed()
     {
         if (_currentPath is null) return;
+        DeactivateTool();
         try
         {
             PluginManager.Instance.RaiseImageClosed(_currentPath, CurrentMeta());

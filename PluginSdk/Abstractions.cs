@@ -156,6 +156,11 @@ public interface IPluginHost
     IPluginSetting AddSetting(SettingDescriptor setting);
     /// <summary>Drawing over the photo (shapes and an RGBA map), switched on and off in the viewer's menu. Call inside Initialize.</summary>
     IOverlay AddOverlay(OverlayDescriptor overlay);
+    /// <summary>
+    /// Tool working with the mouse on the photo (brush, stamp, picker, ...), switched on from the Tools menu or its
+    /// shortcut. While it is active the left button goes to the tool instead of panning. Call inside Initialize.
+    /// </summary>
+    ITool AddTool(ToolDescriptor tool);
 }
 
 // ---------------------------------------------------------------------
@@ -778,7 +783,7 @@ public sealed class CommandDescriptor
 /// <summary>
 /// Named set of values. Keys: "core.Exposure", "core.Contrast", "core.Temperature", "core.Tint", "core.Saturation",
 /// "core.Highlights", "core.Shadows", "core.Whites", "core.Blacks", "core.Clarity", "core.Dehaze",
-/// "core.Sharpen", "core.Denoise", "core.ColorNoise", "core.Gamma", "core.ShadowLift" (toolbar), "core.Mono" and
+/// "core.Sharpen", "core.Denoise", "core.ColorNoise", "core.Gamma", "core.Mono" ("core.ShadowLift" = "core.Shadows") and
 /// "filterId/paramId" (this plugin) or "pluginId:filterId/paramId" (any plugin).
 /// </summary>
 public sealed class PresetDescriptor
@@ -971,6 +976,85 @@ public interface IOverlay
 {
     bool Visible { get; set; }
     /// <summary>Ask for <see cref="OverlayDescriptor.Draw"/> again (any thread).</summary>
+    void Refresh();
+}
+
+// ---------------------------------------------------------------------
+//  Pointer tools (mouse on the photo)
+// ---------------------------------------------------------------------
+
+public enum PointerPhase
+{
+    /// <summary>A button was pressed over the photo; the tool owns the mouse until Up or Cancel.</summary>
+    Down = 0,
+    /// <summary>The mouse moved with the button held.</summary>
+    Move = 1,
+    /// <summary>The button was released: the press ends, its changes are one undo step.</summary>
+    Up = 2,
+    /// <summary>The press was cancelled (Esc, tool switched off, photo changed); the changes made so far are kept as one step.</summary>
+    Cancel = 3,
+    /// <summary>The mouse moved without a button (only when <see cref="ToolDescriptor.Hover"/> is set).</summary>
+    Hover = 4
+}
+
+public enum PointerButton
+{
+    None = 0,
+    Left = 1,
+    Right = 2,
+    Middle = 3
+}
+
+public sealed class PointerEvent
+{
+    public PointerPhase Phase { get; set; }
+    /// <summary>The button of the press (None for Hover).</summary>
+    public PointerButton Button { get; set; }
+    /// <summary>Position in fractions of the image in <see cref="ToolDescriptor.Space"/> (may be outside 0..1 while dragging).</summary>
+    public double X { get; set; }
+    public double Y { get; set; }
+    /// <summary>The position is over the photo.</summary>
+    public bool Inside { get; set; }
+    public bool Shift { get; set; }
+    public bool Ctrl { get; set; }
+    public bool Alt { get; set; }
+    /// <summary>2 for a double click (Down only).</summary>
+    public int ClickCount { get; set; } = 1;
+    /// <summary>One screen pixel as a fraction of the image width (for hit tolerances and brush sizes in screen units).</summary>
+    public double ScreenPixel { get; set; }
+}
+
+public sealed class ToolDescriptor
+{
+    public string Id { get; set; } = "";
+    /// <summary>Name in the Tools menu, the status bar and the undo step of a press.</summary>
+    public string Label { get; set; } = "";
+    /// <summary>Optional key gesture that switches the tool on and off, e.g. "Shift+H".</summary>
+    public string Shortcut { get; set; }
+    /// <summary>Cursor over the photo while active: "Cross" (default), "Hand", "Pen", "Arrow", "SizeAll", "None".</summary>
+    public string Cursor { get; set; } = "Cross";
+    /// <summary>Coordinate space of <see cref="PointerEvent"/> positions (default: the un-cropped, un-rotated photo).</summary>
+    public OverlaySpace Space { get; set; } = OverlaySpace.Source;
+    /// <summary>Also deliver <see cref="PointerPhase.Hover"/> moves.</summary>
+    public bool Hover { get; set; }
+    /// <summary>
+    /// Mouse input on the photo. Changes made through the context during one press (Down .. Up) are previewed as they
+    /// happen and recorded as one undo step labelled <see cref="Label"/> (or <see cref="ICommandContext.StepLabel"/>).
+    /// </summary>
+    public Action<PointerEvent, ICommandContext> Pointer { get; set; }
+    /// <summary>Optional: called when the tool is switched on.</summary>
+    public Action<ICommandContext> Activated { get; set; }
+    /// <summary>Optional: called when the tool is switched off (another tool, Esc, photo closed, plugin reload).</summary>
+    public Action<ICommandContext> Deactivated { get; set; }
+    /// <summary>Optional drawing while the tool is active (brush outline, guides), like an overlay; ask again with <see cref="ITool.Refresh"/>.</summary>
+    public Func<OverlayRequest, OverlayContent> Draw { get; set; }
+}
+
+public interface ITool
+{
+    /// <summary>Switch the tool on or off (any thread; at most one tool is active).</summary>
+    bool Active { get; set; }
+    /// <summary>Ask for <see cref="ToolDescriptor.Draw"/> again (any thread).</summary>
     void Refresh();
 }
 

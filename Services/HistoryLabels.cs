@@ -9,33 +9,6 @@ public static class HistoryLabels
 {
     public const string Opened = "Opened";
 
-    private static readonly Dictionary<string, string> Core = new(StringComparer.Ordinal)
-    {
-        ["BaseEv"] = "Base exposure",
-        ["ToneCurve"] = "Tone curve",
-        ["ShadowLift"] = "Shadow lift",
-        ["Gamma"] = "Gamma",
-        ["Stretch"] = "Histogram",
-        ["StretchEv"] = "Histogram",
-        ["CurveR"] = "Red curve",
-        ["CurveG"] = "Green curve",
-        ["CurveB"] = "Blue curve",
-        ["LevelR"] = "Red levels",
-        ["LevelG"] = "Green levels",
-        ["LevelB"] = "Blue levels",
-        ["Mono"] = "Black & white",
-        ["ColorNoise"] = "Color noise",
-        ["Rot90"] = "Rotate",
-        ["Angle"] = "Straighten",
-        ["CropX"] = "Crop",
-        ["CropY"] = "Crop",
-        ["CropW"] = "Crop",
-        ["CropH"] = "Crop",
-        ["CropAspect"] = "Crop",
-        ["PluginActive"] = "Filter on/off",
-        ["PluginOrder"] = "Filter order",
-    };
-
     /// <summary>
     /// Label of the step from <paramref name="prev"/> to <paramref name="cur"/>. <paramref name="filterName"/> maps
     /// "pluginId:filterId" and an optional parameter id to a display name (null: use the ids).
@@ -59,7 +32,7 @@ public static class HistoryLabels
     private static string Part(string k, Func<string, string?, string?>? filterName)
     {
         int br = k.IndexOf('[');
-        if (br < 0) return Core.TryGetValue(k, out var c) ? c : k;
+        if (br < 0) return CoreParams.FieldLabel(k);
 
         string prop = k[..br];
         int end = k.IndexOf(']', br);

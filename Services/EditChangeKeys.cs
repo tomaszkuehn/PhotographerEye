@@ -32,14 +32,7 @@ public static class EditChangeKeys
             if (Inner(k, nameof(EyeState.PluginValues)) is { } v) { keys.Add(v); continue; }
             if (Inner(k, nameof(EyeState.PluginText)) is { } t) { keys.Add(t); continue; }
             if (Inner(k, nameof(EyeState.PluginMasks)) is { } m) { keys.Add(m + "#mask"); continue; }
-            keys.Add("core." + k switch
-            {
-                nameof(EyeState.CropX) or nameof(EyeState.CropY) or nameof(EyeState.CropW) or nameof(EyeState.CropH)
-                    or nameof(EyeState.CropAspect) => "Crop",
-                nameof(EyeState.Stretch) or nameof(EyeState.StretchEv) => "Stretch",
-                nameof(EyeState.ShadowLift) => "Shadows",
-                _ => k
-            });
+            keys.Add("core." + CoreParams.ChangeKey(k));
         }
         return keys.Distinct(StringComparer.Ordinal).ToList();
     }

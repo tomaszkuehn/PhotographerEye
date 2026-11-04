@@ -166,17 +166,7 @@ public sealed class PluginsWindow : Window
                 });
                 if (!string.IsNullOrWhiteSpace(plug.Description))
                     info.Children.Add(new TextBlock { Text = plug.Description, Foreground = muted, TextWrapping = TextWrapping.Wrap });
-                var parts = new System.Collections.Generic.List<string>();
-                if (plug.Filters.Count > 0) parts.Add($"{plug.Filters.Count} filter(s)");
-                if (plug.Masks.Count > 0) parts.Add($"{plug.Masks.Count} mask(s)");
-                if (plug.Importers.Count > 0) parts.Add("import " + string.Join(" ", plug.Importers.SelectMany(x => x.D.Extensions)));
-                if (plug.Exporters.Count > 0) parts.Add($"{plug.Exporters.Count} exporter(s)");
-                if (plug.Commands.Count > 0) parts.Add($"{plug.Commands.Count} command(s)");
-                if (plug.MetaProviders.Count > 0) parts.Add("metadata");
-                if (plug.Presets.Count > 0) parts.Add($"{plug.Presets.Count} preset(s)");
-                if (plug.ListPanels.Count > 0) parts.Add($"{plug.ListPanels.Count} panel(s)");
-                if (plug.Settings.Count > 0) parts.Add($"{plug.Settings.Count} setting(s)");
-                if (plug.Overlays.Count > 0) parts.Add($"{plug.Overlays.Count} overlay(s)");
+                var parts = plug.Registrations.Summary().ToList();
                 if (parts.Count > 0)
                     info.Children.Add(new TextBlock { Text = string.Join("  \u00B7  ", parts), Foreground = muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
                 var api = plug.IsV1 ? "API v1 (legacy adapter)" : $"API v{plug.Api}";

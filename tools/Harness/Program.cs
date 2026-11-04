@@ -82,6 +82,24 @@ internal static partial class Program
             Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
             return;
         }
+        if (args.Length > 0 && args[0] == "--coreparams")
+        {
+            TestCoreParams();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--tools")
+        {
+            TestPointerTools();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--registrations")
+        {
+            TestRegistrations();
+            Console.WriteLine(_fails == 0 ? "ALL OK" : $"FAILURES: {_fails}");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--manifests")
         {
             TestManifests();
@@ -317,6 +335,9 @@ internal static partial class Program
         TestPluginApi();
         TestPluginUpgrades();
         TestManifests();
+        TestRegistrations();
+        TestPointerTools();
+        TestCoreParams();
         TestPointMarkers();
         TestChannelCurves();
         TestShadowColor();

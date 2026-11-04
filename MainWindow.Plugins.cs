@@ -59,6 +59,7 @@ public partial class MainWindow
         MaskOverlay.Attach(Viewer);
         PointMarkers.Attach(Viewer);
         PluginOverlays.Attach(Viewer);
+        InitTools();
         PointMarkers.MarkerMoved += OnPointMarkerMoved;
         PointMarkers.MarkerGrabbed += OnPointMarkerGrabbed;
         MaskOverlay.SpecChanged += OnMaskSpecChanged;
@@ -1873,22 +1874,12 @@ public partial class MainWindow
         return $"{core} basic settings, {plug} plugin settings" + (p.Active.Count > 0 ? $", {p.Active.Count} filters on" : "");
     }
 
-    private (string Key, Slider Slider)[] CoreSliders() => new[]
-    {
-        ("core.Exposure", ExpSlider), ("core.Contrast", ContrastSlider), ("core.Temperature", TempSlider), ("core.Tint", TintSlider),
-        ("core.Saturation", SatSlider), ("core.Highlights", HighlightsSlider), ("core.Shadows", PanelShadowSlider),
-        ("core.ShadowLift", ShadowSlider),
-        ("core.Whites", WhitesSlider), ("core.Blacks", BlacksSlider), ("core.Clarity", ClaritySlider),
-        ("core.Dehaze", DehazeSlider), ("core.Sharpen", SharpenSlider), ("core.Denoise", DenoiseSlider),
-        ("core.ColorNoise", ColorNoiseSlider), ("core.Gamma", GammaSlider)
-    };
-
     private void SaveCurrentAsPreset()
     {
         var name = PromptText("Save preset", "Preset name:", "My preset");
         if (name is null) return;
         var p = new UserPreset { Name = name };
-        foreach (var (key, s) in CoreSliders()) p.Values[key] = s.Value;
+        foreach (var c in CoreUi()) p.Values["core." + c.P.Key] = c.Slider.Value;
         p.Values["core.Mono"] = (int)_monoMode;
         foreach (var kv in _pluginState.Values) p.Values[kv.Key] = kv.Value;
         foreach (var kv in _pluginState.Text) p.Text[kv.Key] = kv.Value;
@@ -1906,8 +1897,13 @@ public partial class MainWindow
 
     private void ApplyPreset(UserPreset p)
     {
-        foreach (var (key, s) in CoreSliders())
-            if (p.Values.TryGetValue(key, out var v)) s.Value = Math.Clamp(v, s.Minimum, s.Maximum);
+        foreach (var c in CoreUi())
+        {
+            // "core.ShadowLift" (the field name) is accepted for "core.Shadows".
+            if (!p.Values.TryGetValue("core." + c.P.Key, out var v) && !p.Values.TryGetValue("core." + c.P.Field, out v)) continue;
+            c.Slider.Value = Math.Clamp(v, c.Slider.Minimum, c.Slider.Maximum);
+            if (c.Panel is not null) c.Panel.Value = Math.Clamp(v, c.Panel.Minimum, c.Panel.Maximum);
+        }
         if (p.Values.TryGetValue("core.Mono", out var mono))
         {
             _monoMode = (MonoMode)Math.Clamp((int)Math.Round(mono), 0, (int)MonoMode.TriX);
@@ -2017,6 +2013,7 @@ public partial class MainWindow
         MnuCommands.Visibility = MnuCommands.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         BuildOverlayMenu();
+        BuildToolMenu();
         if (MnuPluginSettings is null) return;
         MnuPluginSettings.Items.Clear();
         foreach (var st in _pluginReg.Settings)
@@ -2086,11 +2083,13 @@ public partial class MainWindow
                 Debug.Log($"PLUGINS: bad shortcut '{c.D.Shortcut}' of {c.FullId}: {ex.Message}");
             }
         }
+        BuildToolShortcuts();
     }
 
     /// <summary>Esc for point picking and plugin command shortcuts. Returns true when handled.</summary>
     private bool HandlePluginKey(KeyEventArgs e)
     {
+        if (Tools.Pressed && e.Key == Key.Escape) return HandleToolKey(e, escOnly: true);
         if (e.Key == Key.Escape && _pointPick is null && _maskEditFilter is null && CancelBackgroundTasks())
         {
             e.Handled = true;
@@ -2109,6 +2108,7 @@ public partial class MainWindow
             e.Handled = true;
             return true;
         }
+        if (_pointPick is null && _maskEditFilter is null && HandleToolKey(e, escOnly: false)) return true;
         if (_pluginShortcuts.Count == 0 || Keyboard.FocusedElement is TextBoxBase) return false;
         foreach (var (g, c) in _pluginShortcuts)
         {

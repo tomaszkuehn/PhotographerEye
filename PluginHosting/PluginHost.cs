@@ -61,6 +61,14 @@ internal sealed class PluginHostImpl : IPluginHost
         return id;
     }
 
+    /// <summary>Validated, unique id for a new registration of descriptor type <typeparamref name="T"/>.</summary>
+    private string NewId<T>(string? id, string label) =>
+        CheckId(id, label, _p.Registrations.Of<T>().Select(r => r.LocalId));
+
+    /// <summary>Stores a registration; <paramref name="label"/> names the kind in the Plugins window.</summary>
+    private void Store<T>(string label, string id, T d, Func<T, IEnumerable<string>>? details = null) =>
+        _p.Registrations.Add(label, Wrap(id, d, _p.Registrations.Of<T>().Count), details);
+
     private Registered<T> Wrap<T>(string id, T d, int index) => new()
     {
         PluginId = _p.Id,
@@ -75,7 +83,7 @@ internal sealed class PluginHostImpl : IPluginHost
     public void AddFilter(FilterDescriptor filter)
     {
         if (filter is null) throw new ArgumentNullException(nameof(filter));
-        var id = CheckId(filter.Id, "filter", _p.Filters.Select(f => f.LocalId));
+        var id = NewId<FilterDescriptor>(filter.Id, "filter");
         if (filter.Render is null) throw new ArgumentException($"filter '{id}' has no Render");
         filter.Id = id;
         filter.Params ??= Array.Empty<ParamDef>();
@@ -85,21 +93,21 @@ internal sealed class PluginHostImpl : IPluginHost
                 throw new ArgumentException($"filter '{id}': invalid or duplicate parameter id");
         if (string.IsNullOrWhiteSpace(filter.Group)) filter.Group = "Plugins";
         if (string.IsNullOrWhiteSpace(filter.Label)) filter.Label = id;
-        _p.Filters.Add(Wrap(id, filter, _p.Filters.Count));
+        Store("filter", id, filter);
     }
 
     public void AddMaskProvider(MaskProviderDescriptor provider)
     {
-        var id = CheckId(provider?.Id, "mask", _p.Masks.Select(f => f.LocalId));
+        var id = NewId<MaskProviderDescriptor>(provider?.Id, "mask");
         if (provider!.CreateMask is null) throw new ArgumentException($"mask '{id}' has no CreateMask");
         provider.Id = id;
         provider.Params ??= Array.Empty<ParamDef>();
-        _p.Masks.Add(Wrap(id, provider, _p.Masks.Count));
+        Store("mask", id, provider);
     }
 
     public void AddImporter(ImporterDescriptor importer)
     {
-        var id = CheckId(importer?.Id, "importer", _p.Importers.Select(f => f.LocalId));
+        var id = NewId<ImporterDescriptor>(importer?.Id, "importer");
         if (importer!.Load is null) throw new ArgumentException($"importer '{id}' has no Load");
         importer.Id = id;
         importer.Extensions = (importer.Extensions ?? Array.Empty<string>())
@@ -107,61 +115,61 @@ internal sealed class PluginHostImpl : IPluginHost
             .Select(e => (e.StartsWith(".") ? e : "." + e).ToLowerInvariant())
             .ToArray();
         if (importer.Extensions.Count == 0) throw new ArgumentException($"importer '{id}' has no extensions");
-        _p.Importers.Add(Wrap(id, importer, _p.Importers.Count));
+        Store("importer", id, importer, d => d.Extensions);
     }
 
     public void AddExporter(ExporterDescriptor exporter)
     {
-        var id = CheckId(exporter?.Id, "exporter", _p.Exporters.Select(f => f.LocalId));
+        var id = NewId<ExporterDescriptor>(exporter?.Id, "exporter");
         if (exporter!.Export is null) throw new ArgumentException($"exporter '{id}' has no Export");
         exporter.Id = id;
         exporter.Options ??= Array.Empty<ParamDef>();
-        _p.Exporters.Add(Wrap(id, exporter, _p.Exporters.Count));
+        Store("exporter", id, exporter);
     }
 
     public void AddMetadataProvider(MetadataProviderDescriptor provider)
     {
-        var id = CheckId(provider?.Id, "metadata provider", _p.MetaProviders.Select(f => f.LocalId));
+        var id = NewId<MetadataProviderDescriptor>(provider?.Id, "metadata provider");
         if (provider!.Provide is null) throw new ArgumentException($"metadata provider '{id}' has no Provide");
         provider.Id = id;
-        _p.MetaProviders.Add(Wrap(id, provider, _p.MetaProviders.Count));
+        Store("metadata provider", id, provider);
     }
 
     public void AddCommand(CommandDescriptor command)
     {
-        var id = CheckId(command?.Id, "command", _p.Commands.Select(f => f.LocalId));
+        var id = NewId<CommandDescriptor>(command?.Id, "command");
         if (command!.Execute is null) throw new ArgumentException($"command '{id}' has no Execute");
         command.Id = id;
         if (string.IsNullOrWhiteSpace(command.Label)) command.Label = id;
-        _p.Commands.Add(Wrap(id, command, _p.Commands.Count));
+        Store("command", id, command);
     }
 
     public void AddPreset(PresetDescriptor preset)
     {
-        var id = CheckId(preset?.Id, "preset", _p.Presets.Select(f => f.LocalId));
+        var id = NewId<PresetDescriptor>(preset?.Id, "preset");
         preset!.Id = id;
         if (string.IsNullOrWhiteSpace(preset.Name)) preset.Name = id;
         preset.Values ??= new Dictionary<string, double>();
         preset.Text ??= new Dictionary<string, string>();
         preset.Active ??= new List<string>();
-        _p.Presets.Add(Wrap(id, preset, _p.Presets.Count));
+        Store("preset", id, preset);
     }
 
     public IListPanel AddListPanel(ListPanelDescriptor panel)
     {
-        var id = CheckId(panel?.Id, "list panel", _p.ListPanels.Select(f => f.LocalId));
+        var id = NewId<ListPanelHandle>(panel?.Id, "list panel");
         if (panel!.Items is null) throw new ArgumentException($"list panel '{id}' has no Items");
         panel.Id = id;
         if (string.IsNullOrWhiteSpace(panel.Label)) panel.Label = id;
         panel.VisibleRows = Math.Clamp(panel.VisibleRows, 3, 40);
         var handle = new ListPanelHandle(panel);
-        _p.ListPanels.Add(Wrap(id, handle, _p.ListPanels.Count));
+        Store("list panel", id, handle);
         return handle;
     }
 
     public IPluginSetting AddSetting(SettingDescriptor setting)
     {
-        var id = CheckId(setting?.Id, "setting", _p.Settings.Select(f => f.LocalId));
+        var id = NewId<PluginSettingHandle>(setting?.Id, "setting");
         var choices = (setting!.Choices ?? Array.Empty<ParamChoice>()).Where(c => c is not null && !string.IsNullOrWhiteSpace(c.Id)).ToList();
         if (choices.Count == 0) throw new ArgumentException($"setting '{id}' has no choices");
         if (choices.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count() != choices.Count)
@@ -172,19 +180,70 @@ internal sealed class PluginHostImpl : IPluginHost
         if (setting.DefaultId is null || !choices.Any(c => c.Id == setting.DefaultId)) setting.DefaultId = choices[0].Id;
         var safe = string.Concat(_p.Id.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
         var handle = new PluginSettingHandle(setting, Path.Combine(PluginManager.PluginDataRoot, safe, PluginSettingHandle.FileName));
-        _p.Settings.Add(Wrap(id, handle, _p.Settings.Count));
+        Store("setting", id, handle);
         return handle;
     }
 
     public IOverlay AddOverlay(OverlayDescriptor overlay)
     {
-        var id = CheckId(overlay?.Id, "overlay", _p.Overlays.Select(f => f.LocalId));
+        var id = NewId<OverlayHandle>(overlay?.Id, "overlay");
         if (overlay!.Draw is null) throw new ArgumentException($"overlay '{id}' has no Draw");
         overlay.Id = id;
         if (string.IsNullOrWhiteSpace(overlay.Label)) overlay.Label = id;
         var handle = new OverlayHandle(overlay);
-        _p.Overlays.Add(Wrap(id, handle, _p.Overlays.Count));
+        Store("overlay", id, handle);
         return handle;
+    }
+
+    public ITool AddTool(ToolDescriptor tool)
+    {
+        var id = NewId<ToolHandle>(tool?.Id, "tool");
+        if (tool!.Pointer is null) throw new ArgumentException($"tool '{id}' has no Pointer");
+        tool.Id = id;
+        if (string.IsNullOrWhiteSpace(tool.Label)) tool.Label = id;
+        var handle = new ToolHandle(tool);
+        Store("tool", id, handle);
+        return handle;
+    }
+}
+
+/// <summary>
+/// Registered pointer tool. The main window owns the active state: <see cref="OnActiveRequested"/> switches it,
+/// <see cref="SetActiveState"/> reports it back, <see cref="OnRefresh"/> redraws the tool's drawing.
+/// </summary>
+public sealed class ToolHandle : ITool
+{
+    private volatile bool _active;
+    public ToolDescriptor D { get; }
+    public Action<ToolHandle, bool>? OnActiveRequested { get; set; }
+    public Action? OnRefresh { get; set; }
+
+    public ToolHandle(ToolDescriptor d) => D = d;
+
+    public bool Active
+    {
+        get => _active;
+        set
+        {
+            var h = OnActiveRequested;
+            if (h is null) return;
+            OnUi(() => h(this, value));
+        }
+    }
+
+    /// <summary>Host side: the tool was switched on or off.</summary>
+    public void SetActiveState(bool on) => _active = on;
+
+    public void Refresh()
+    {
+        if (OnRefresh is { } h) OnUi(h);
+    }
+
+    private static void OnUi(Action a)
+    {
+        var disp = Application.Current?.Dispatcher;
+        if (disp is null || disp.CheckAccess()) a();
+        else disp.BeginInvoke(a);
     }
 }
 

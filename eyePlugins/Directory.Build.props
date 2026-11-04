@@ -1,0 +1,16 @@
+<Project>
+  <!--
+    Shared settings of every plugin project under eyePlugins\<folder>\. A plugin project only needs
+    <Project Sdk="Microsoft.NET.Sdk" /> named after its assembly, plus manifest.json next to it.
+    The app builds and bundles every eyePlugins\*\*.csproj as plugins\<folder>\ (see ImgViewer.csproj).
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\PluginSdk\ImgViewer.Plugin.Abstractions.csproj" Private="false" />
+  </ItemGroup>
+</Project>

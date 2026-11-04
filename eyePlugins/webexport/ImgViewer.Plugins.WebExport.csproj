@@ -1,26 +1,3 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
-  <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
-    <RootNamespace>ImgViewer.Plugins.WebExport</RootNamespace>
-    <AssemblyName>ImgViewer.Plugins.WebExport</AssemblyName>
-    <Nullable>disable</Nullable>
-    <LangVersion>latest</LangVersion>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\PluginSdk\ImgViewer.Plugin.Abstractions.csproj" Private="false" />
-  </ItemGroup>
-
-  <!-- Distributable package: bin\<cfg>\ImgViewer.Plugins.WebExport.pepkg (zip with manifest.json + the assembly). -->
-  <Target Name="PackPepkg" AfterTargets="Build">
-    <PropertyGroup>
-      <PepkgStage>$(BaseIntermediateOutputPath)pepkg\</PepkgStage>
-      <PepkgFile>$(OutDir)..\ImgViewer.Plugins.WebExport.pepkg</PepkgFile>
-    </PropertyGroup>
-    <RemoveDir Directories="$(PepkgStage)" />
-    <Copy SourceFiles="$(TargetPath);manifest.json" DestinationFolder="$(PepkgStage)" />
-    <ZipDirectory SourceDirectory="$(PepkgStage)" DestinationFile="$(PepkgFile)" Overwrite="true" />
-  </Target>
-
+  <!-- Shared settings and packaging: ..\Directory.Build.props / .targets. -->
 </Project>

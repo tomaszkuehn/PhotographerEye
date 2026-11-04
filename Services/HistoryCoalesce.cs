@@ -53,14 +53,9 @@ public static class HistoryCoalesce
         return string.Join(",", keys);
     }
 
-    private static readonly HashSet<string> CropFields = new(StringComparer.Ordinal)
-    {
-        nameof(EyeState.CropX), nameof(EyeState.CropY), nameof(EyeState.CropW), nameof(EyeState.CropH), nameof(EyeState.CropAspect)
-    };
-
     /// <summary>
     /// Key used to decide whether two consecutive edits are the same control: <see cref="ChangeKey"/> with the crop
-    /// fields folded into one "Crop" entry.
+    /// fields folded into one "Crop" entry (<see cref="CoreParams.Group"/>).
     /// </summary>
     public static string GroupKey(string changeKey)
     {
@@ -68,7 +63,7 @@ public static class HistoryCoalesce
         var parts = new List<string>();
         foreach (var k in changeKey.Split(','))
         {
-            var g = CropFields.Contains(k) ? "Crop" : k;
+            var g = CoreParams.Group(k);
             if (!parts.Contains(g)) parts.Add(g);
         }
         return string.Join(",", parts);

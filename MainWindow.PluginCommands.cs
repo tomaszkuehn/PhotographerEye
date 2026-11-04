@@ -267,7 +267,11 @@ public partial class MainWindow
     {
         _overlayRefreshQueued = false;
         if (PluginOverlays is null) return;
-        var visible = _pluginReg.Overlays.Where(o => o.D.Visible && o.Owner is not { Faulted: true }).ToList();
+        var visible = _pluginReg.Overlays.Where(o => o.D.Visible && o.Owner is not { Faulted: true })
+            .Select(o => (Draw: o.D.D.Draw, o.Owner, What: "overlay " + o.LocalId)).ToList();
+        // The active pointer tool draws on top (brush outline, guides).
+        if (ActiveToolReg() is { Owner: not { Faulted: true } } tool && tool.D.D.Draw is { } td && !ToolInputBlocked)
+            visible.Add((td, tool.Owner, "tool " + tool.LocalId));
         if (visible.Count == 0 || _currentPath is null || _cropMode || _baseInfo is not ImageInfo bi || (_lastDisplayed ?? _baseBitmap) is null)
         {
             PluginOverlays.SetLayers(Array.Empty<OverlayContent>());
@@ -295,11 +299,11 @@ public partial class MainWindow
         {
             try
             {
-                if (o.D.D.Draw?.Invoke(req) is { } c) layers.Add(c);
+                if (o.Draw?.Invoke(req) is { } c) layers.Add(c);
             }
             catch (Exception ex)
             {
-                PluginManager.Instance.ReportFailure(o.Owner, "overlay " + o.LocalId, ex);
+                PluginManager.Instance.ReportFailure(o.Owner, o.What, ex);
             }
         }
         PluginOverlays.SetMapping(CurrentDisplayGeo(), bi.Width, bi.Height);
@@ -461,6 +465,11 @@ public partial class MainWindow
         }
 
         public string StepLabel { get; set; }
+        /// <summary>Context of a pointer tool press (one undo step for the whole press).</summary>
+        public bool IsPress { get; init; }
+        public LoadedPlugin? Owner => _owner;
+        /// <summary>Changes are waiting to be applied.</summary>
+        public bool Changed => _stDirty || Dirty;
         public string CurrentPath => _w._currentPath!;
         public ImageMeta Meta => _w.CurrentMeta();
         public void SetStatus(string text) => _w.SetStatus(text ?? "", error: false);
@@ -473,6 +482,18 @@ public partial class MainWindow
             else if (Dirty) _w.RebuildPluginUi();
             if (Dirty) _w.OnPluginUiChanged();
             _w.CommitStep(StepLabel);
+            _w.RefreshPluginOverlays();
+        }
+
+        /// <summary>Applies the changes collected so far for preview, without recording a step (pointer tool presses).</summary>
+        public void Apply()
+        {
+            if (!Changed) return;
+            if (_stDirty && _st is not null) Flush();
+            else if (Dirty) _w.RebuildPluginUi();
+            if (Dirty) _w.OnPluginUiChanged();
+            Dirty = false;
+            _w._histCommitTimer?.Stop();
             _w.RefreshPluginOverlays();
         }
 
@@ -582,10 +603,8 @@ public partial class MainWindow
 
         public CoreRange GetCoreRange(string key)
         {
-            var k = K(key);
-            if (k == "Mono") return new CoreRange { Min = 0, Max = PluginEditOps.MonoMax, Default = 0 };
-            var slider = _w.CoreSliders().First(s => s.Key == "core." + k).Slider;
-            return new CoreRange { Min = slider.Minimum, Max = slider.Maximum, Default = k == "Gamma" ? 1.0 : 0.0 };
+            var p = CoreParams.Find(K(key))!;
+            return new CoreRange { Min = p.Min, Max = p.Max, Default = p.Default };
         }
 
         // ---- geometry ----

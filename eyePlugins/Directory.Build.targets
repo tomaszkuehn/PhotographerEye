@@ -1,0 +1,12 @@
+<Project>
+  <!-- Distributable package: bin\<cfg>\<AssemblyName>.pepkg (zip with manifest.json + the assembly). -->
+  <Target Name="PackPepkg" AfterTargets="Build" Condition="Exists('$(MSBuildProjectDirectory)\manifest.json')">
+    <PropertyGroup>
+      <PepkgStage>$(BaseIntermediateOutputPath)pepkg\</PepkgStage>
+      <PepkgFile>$(OutDir)..\$(AssemblyName).pepkg</PepkgFile>
+    </PropertyGroup>
+    <RemoveDir Directories="$(PepkgStage)" />
+    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)\manifest.json" DestinationFolder="$(PepkgStage)" />
+    <ZipDirectory SourceDirectory="$(PepkgStage)" DestinationFile="$(PepkgFile)" Overwrite="true" />
+  </Target>
+</Project>

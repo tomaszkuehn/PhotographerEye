@@ -56,16 +56,88 @@ public sealed class LoadedPlugin
     internal PluginHostImpl? Host { get; set; }
     internal IEyePlugin? Instance { get; set; }
 
-    public List<Registered<FilterDescriptor>> Filters { get; } = new();
-    public List<Registered<MaskProviderDescriptor>> Masks { get; } = new();
-    public List<Registered<ImporterDescriptor>> Importers { get; } = new();
-    public List<Registered<ExporterDescriptor>> Exporters { get; } = new();
-    public List<Registered<MetadataProviderDescriptor>> MetaProviders { get; } = new();
-    public List<Registered<CommandDescriptor>> Commands { get; } = new();
-    public List<Registered<PresetDescriptor>> Presets { get; } = new();
-    public List<Registered<ListPanelHandle>> ListPanels { get; } = new();
-    public List<Registered<PluginSettingHandle>> Settings { get; } = new();
-    public List<Registered<OverlayHandle>> Overlays { get; } = new();
+    /// <summary>
+    /// Everything the plugin registered, one list per descriptor type. A new kind of registration needs no change
+    /// here, in <see cref="PluginRegistry"/> or in the Plugins window: <c>Registrations.Of&lt;T&gt;()</c>.
+    /// The typed properties below are shortcuts.
+    /// </summary>
+    public RegistrationStore Registrations { get; } = new();
+
+    public List<Registered<FilterDescriptor>> Filters => Registrations.Of<FilterDescriptor>();
+    public List<Registered<MaskProviderDescriptor>> Masks => Registrations.Of<MaskProviderDescriptor>();
+    public List<Registered<ImporterDescriptor>> Importers => Registrations.Of<ImporterDescriptor>();
+    public List<Registered<ExporterDescriptor>> Exporters => Registrations.Of<ExporterDescriptor>();
+    public List<Registered<MetadataProviderDescriptor>> MetaProviders => Registrations.Of<MetadataProviderDescriptor>();
+    public List<Registered<CommandDescriptor>> Commands => Registrations.Of<CommandDescriptor>();
+    public List<Registered<PresetDescriptor>> Presets => Registrations.Of<PresetDescriptor>();
+    public List<Registered<ListPanelHandle>> ListPanels => Registrations.Of<ListPanelHandle>();
+    public List<Registered<PluginSettingHandle>> Settings => Registrations.Of<PluginSettingHandle>();
+    public List<Registered<OverlayHandle>> Overlays => Registrations.Of<OverlayHandle>();
+    public List<Registered<ToolHandle>> Tools => Registrations.Of<ToolHandle>();
+}
+
+/// <summary>
+/// Registrations of one plugin keyed by descriptor type, plus a readable label per kind ("filter", "overlay", ...)
+/// and optional details (importer extensions) for the Plugins window summary.
+/// </summary>
+public sealed class RegistrationStore
+{
+    private readonly Dictionary<Type, System.Collections.IList> _lists = new();
+    private readonly List<Type> _order = new();
+    private readonly Dictionary<Type, string> _labels = new();
+    private readonly Dictionary<Type, Func<System.Collections.IList, IEnumerable<string>>> _details = new();
+
+    public List<Registered<T>> Of<T>()
+    {
+        if (!_lists.TryGetValue(typeof(T), out var l))
+        {
+            _lists[typeof(T)] = l = new List<Registered<T>>();
+            _order.Add(typeof(T));
+        }
+        return (List<Registered<T>>)l;
+    }
+
+    /// <summary>Adds <paramref name="r"/>; <paramref name="label"/> names the kind, <paramref name="details"/> adds summary words.</summary>
+    public void Add<T>(string label, Registered<T> r, Func<T, IEnumerable<string>>? details = null)
+    {
+        Of<T>().Add(r);
+        _labels[typeof(T)] = label;
+        if (details is not null) _details[typeof(T)] = l => ((List<Registered<T>>)l).SelectMany(x => details(x.D));
+    }
+
+    public int Count => _lists.Values.Sum(l => l.Count);
+
+    public void Clear()
+    {
+        foreach (var l in _lists.Values) l.Clear();
+    }
+
+    /// <summary>"2 filter(s)", "1 importer(s): .pgm .ppm", ... for every kind with registrations, in first-use order.</summary>
+    public IEnumerable<string> Summary()
+    {
+        foreach (var t in _order)
+        {
+            var l = _lists[t];
+            if (l.Count == 0) continue;
+            var text = $"{l.Count} {Label(t)}(s)";
+            if (_details.TryGetValue(t, out var det))
+            {
+                var words = det(l).Distinct().ToList();
+                if (words.Count > 0) text += ": " + string.Join(" ", words);
+            }
+            yield return text;
+        }
+    }
+
+    /// <summary>Kind label: the one given to <see cref="Add{T}"/>, else the type name without Descriptor/Handle, in words.</summary>
+    public string Label(Type t)
+    {
+        if (_labels.TryGetValue(t, out var l)) return l;
+        var n = t.Name;
+        foreach (var suffix in new[] { "Descriptor", "Handle" })
+            if (n.EndsWith(suffix, StringComparison.Ordinal)) n = n[..^suffix.Length];
+        return System.Text.RegularExpressions.Regex.Replace(n, "(?<=[a-z])(?=[A-Z])", " ").ToLowerInvariant();
+    }
 }
 
 public sealed class Registered<T>
@@ -101,6 +173,15 @@ public sealed class PluginRegistry
     public IReadOnlyList<Registered<OverlayHandle>> Overlays { get; }
     public IReadOnlyList<LoadedPlugin> Plugins { get; }
     private readonly Dictionary<string, Registered<FilterDescriptor>> _filterById;
+    private readonly Dictionary<Type, object> _all = new();
+
+    /// <summary>All registrations of descriptor type <typeparamref name="T"/> from the enabled plugins, in load order.</summary>
+    public IReadOnlyList<Registered<T>> All<T>()
+    {
+        if (!_all.TryGetValue(typeof(T), out var l))
+            _all[typeof(T)] = l = Plugins.SelectMany(p => p.Registrations.Of<T>()).ToList();
+        return (IReadOnlyList<Registered<T>>)l;
+    }
 
     public PluginRegistry(IEnumerable<LoadedPlugin> plugins, bool includeCore = true)
     {
@@ -110,15 +191,15 @@ public sealed class PluginRegistry
         if (includeCore) filters.AddRange(BuiltInFilters.Create());
         filters.AddRange(active.SelectMany(p => p.Filters));
         Filters = filters;
-        Masks = active.SelectMany(p => p.Masks).ToList();
-        Importers = active.SelectMany(p => p.Importers).ToList();
-        Exporters = active.SelectMany(p => p.Exporters).ToList();
-        MetaProviders = active.SelectMany(p => p.MetaProviders).ToList();
-        Commands = active.SelectMany(p => p.Commands).ToList();
-        Presets = active.SelectMany(p => p.Presets).ToList();
-        ListPanels = active.SelectMany(p => p.ListPanels).ToList();
-        Settings = active.SelectMany(p => p.Settings).ToList();
-        Overlays = active.SelectMany(p => p.Overlays).ToList();
+        Masks = All<MaskProviderDescriptor>();
+        Importers = All<ImporterDescriptor>();
+        Exporters = All<ExporterDescriptor>();
+        MetaProviders = All<MetadataProviderDescriptor>();
+        Commands = All<CommandDescriptor>();
+        Presets = All<PresetDescriptor>();
+        ListPanels = All<ListPanelHandle>();
+        Settings = All<PluginSettingHandle>();
+        Overlays = All<OverlayHandle>();
         _filterById = new Dictionary<string, Registered<FilterDescriptor>>(StringComparer.Ordinal);
         foreach (var f in filters) _filterById.TryAdd(f.FullId, f);
     }
@@ -415,16 +496,7 @@ public sealed class PluginManager
             {
                 lp.Error = "Initialize failed: " + Unwrap(ex).Message;
                 lp.Enabled = false;
-                lp.Filters.Clear();
-                lp.Masks.Clear();
-                lp.Importers.Clear();
-                lp.Exporters.Clear();
-                lp.MetaProviders.Clear();
-                lp.Commands.Clear();
-                lp.Presets.Clear();
-                lp.ListPanels.Clear();
-                lp.Settings.Clear();
-                lp.Overlays.Clear();
+                lp.Registrations.Clear();
             }
         }
         entry.Plugins.Add(lp);

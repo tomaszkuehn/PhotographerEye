@@ -72,6 +72,7 @@
                             <MenuItem Header="Plugins…" Click="OnPluginsClick" />
                             <MenuItem x:Name="MnuExport" Header="Export" />
                             <MenuItem x:Name="MnuCommands" Header="Plugin commands" />
+                            <MenuItem x:Name="MnuPluginTools" Header="Plugin tools" ToolTip="Mouse tools on the photo from plugins (Esc switches the tool off)" />
                             <MenuItem x:Name="MnuPluginSettings" Header="Plugin settings" />
                             <MenuItem x:Name="MnuPluginOverlays" Header="Plugin overlays" ToolTip="Information drawn over the photo by plugins" />
                             <MenuItem Header="Preview quality" ToolTip="Resolution of the live preview while editing RAW photos. Export always uses the full image.">
