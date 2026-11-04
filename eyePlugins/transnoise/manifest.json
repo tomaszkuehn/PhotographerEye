@@ -1,0 +1,10 @@
+{
+  "id": "photographereye.transnoise",
+  "name": "Experimental trans-noise",
+  "version": "1.0",
+  "author": "PhotographerEye",
+  "description": "Turns coarse, irregular noise into fine, even grain that is pleasant to the eye instead of removing it (experimental).",
+  "api": 2,
+  "entry": "ImgViewer.Plugins.TransNoise.dll",
+  "permissions": []
+}

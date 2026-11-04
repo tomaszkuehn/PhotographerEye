@@ -241,7 +241,18 @@ public static class PluginPipeline
         }
 
         var work = img.Clone();
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(job.Cancel);
+        // The caller may cancel and dispose the job's token source while this render still runs (a newer preview
+        // replaces it). Everything here waits on the local linked source, which lives until the render returns.
+        CancellationTokenSource cts;
+        try
+        {
+            cts = CancellationTokenSource.CreateLinkedTokenSource(job.Cancel);
+        }
+        catch (ObjectDisposedException)
+        {
+            throw new OperationCanceledException(job.Cancel);
+        }
+        using var _ = cts;
         ctx.Cancel = cts.Token;
         try
         {
@@ -250,7 +261,7 @@ public static class PluginPipeline
                 var task = Task.Run(() => f.D.Render(work, p, ctx), CancellationToken.None);
                 // Wait on handles, not task.Wait: Wait may inline a not-yet-started task on this thread,
                 // which would run the plugin synchronously and defeat the timeout.
-                int signaled = WaitHandle.WaitAny(new[] { ((IAsyncResult)task).AsyncWaitHandle, job.Cancel.WaitHandle }, PluginManager.PreviewTimeoutMs);
+                int signaled = WaitHandle.WaitAny(new[] { ((IAsyncResult)task).AsyncWaitHandle, cts.Token.WaitHandle }, PluginManager.PreviewTimeoutMs);
                 if (signaled == 1 && !task.IsCompleted)
                 {
                     cts.Cancel();
@@ -274,7 +285,10 @@ public static class PluginPipeline
         catch (Exception ex)
         {
             var inner = ex is AggregateException ae && ae.InnerExceptions.Count == 1 ? ae.InnerException! : ex;
-            if (inner is OperationCanceledException && job.Cancel.IsCancellationRequested) throw new OperationCanceledException(job.Cancel);
+            // A superseded render is not the plugin's fault, whatever it threw on the way out (cancellation, or a
+            // disposed token source of the cancelled job).
+            if (job.Cancel.IsCancellationRequested && inner is OperationCanceledException or ObjectDisposedException)
+                throw new OperationCanceledException(job.Cancel);
             PluginManager.Instance.ReportFailure(f.Owner, $"{f.FullId} render", inner);
             job.Report.Errors.Add($"{f.D.Label}: {inner.Message}");
             return false;

@@ -326,6 +326,56 @@ internal static partial class Program
         Check(settings.PluginFiles?.TryGetValue(PluginManager.EnabledKey("test.bad"), out var en) == true && !en &&
               settings.PluginDisabledReason?.ContainsKey("test.bad") == true, "auto-disable persisted with reason");
 
+        // ---------------- superseded preview: job token cancelled and disposed mid-render ----------------
+        // The viewer cancels and disposes the previous render's token source when a new preview starts (e.g. while
+        // dragging a heal spot); that must count as a cancellation, not as a plugin failure.
+        var slow = TestPlugin("test.slow", new FilterDescriptor
+        {
+            Id = "slow",
+            Placement = FilterPlacement.Toolbar,
+            Render = (img, p, c) => Thread.Sleep(300)
+        });
+        // The race that disabled heal: the job is cancelled and its source disposed after the stage loop checked
+        // cancellation but before the filter render starts waiting (mask render, image copy). A plugin mask that
+        // does exactly that makes it deterministic.
+        CancellationTokenSource? racing = null;
+        slow.Masks.Add(new Registered<MaskProviderDescriptor>
+        {
+            PluginId = "test.slow", PluginName = "test.slow", FullId = "test.slow:killer", LocalId = "killer", Owner = slow,
+            D = new MaskProviderDescriptor
+            {
+                Id = "killer",
+                CreateMask = (img, p, c) => { racing?.Cancel(); racing?.Dispose(); return Enumerable.Repeat(1f, img.Width * img.Height).ToArray(); }
+            }
+        });
+        var regSlow = new PluginRegistry(new[] { slow });
+        int cancelled = 0;
+        for (int k = 0; k < 4; k++)
+        {
+            var scts = new CancellationTokenSource();
+            var sst = new PluginEditState { Active = { "test.slow:slow" } };
+            if (k % 2 == 0) { racing = scts; sst.Masks["test.slow:slow"] = new MaskSpec { Kind = MaskRender.PluginPrefix + "test.slow:killer" }; }
+            else racing = null;
+            var sj = new PluginRenderJob { Registry = regSlow, State = sst, IsPreview = true, Cancel = scts.Token };
+            var killer = racing is null ? System.Threading.Tasks.Task.Run(() => { Thread.Sleep(60); scts.Cancel(); scts.Dispose(); }) : null;
+            try { PluginPipeline.ApplyRaw16(src, FilterStage.Display, sj, W, H); }
+            catch (OperationCanceledException) { cancelled++; }
+            killer?.Wait();
+        }
+        racing = null;
+        var gone = new CancellationTokenSource();
+        var goneToken = gone.Token;
+        gone.Cancel();
+        gone.Dispose();
+        try
+        {
+            PluginPipeline.ApplyRaw16(src, FilterStage.Display,
+                new PluginRenderJob { Registry = regSlow, State = new PluginEditState { Active = { "test.slow:slow" } }, IsPreview = true, Cancel = goneToken }, W, H);
+        }
+        catch (OperationCanceledException) { cancelled++; }
+        Check(cancelled == 5 && slow.ConsecutiveFailures == 0 && !slow.Faulted,
+              $"preview superseded by a disposed token is a cancellation, not a plugin failure ({cancelled}/5 cancelled, {slow.ConsecutiveFailures} failures)");
+
         // ---------------- preview timeout ----------------
         var hang = TestPlugin("test.hang", new FilterDescriptor
         {

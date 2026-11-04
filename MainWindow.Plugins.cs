@@ -594,6 +594,8 @@ public partial class MainWindow
         var inst = filters.OrderBy(f => f.D.Order).ThenBy(f => f.Index).ToList();
         var first = inst[0];
         string noun = first.D.RepeatGroup;
+        string nounL = noun.ToLowerInvariant();
+        bool points = first.D.Params.Any(d => d.Kind == ParamKind.Point);
         bool faulted = first.Owner is { Faulted: true };
         var used = inst.Where(RepeatUsed).ToList();
         var sel = RepeatSelected(inst);
@@ -604,7 +606,8 @@ public partial class MainWindow
         clear.IsEnabled = used.Count > 0;
         clear.Click += (_, _) =>
         {
-            foreach (var f in inst) ResetFilterKeepMask(f);
+            // A removed item takes its mask with it (a later Add must not inherit a stale mask).
+            foreach (var f in inst) _pluginState.ResetFilter(f);
             _repeatSelected.Remove(RepeatKey(first));
             DeferRebuild();
             OnPluginUiChanged();
@@ -634,7 +637,7 @@ public partial class MainWindow
                 Width = 26, Height = 22, Margin = new Thickness(0, 0, 4, 4),
                 FontWeight = u == sel ? FontWeights.Bold : FontWeights.Normal,
                 BorderThickness = new Thickness(u == sel ? 1 : 0),
-                ToolTip = $"{noun} {n} — click to edit (or grab its circle on the photo)"
+                ToolTip = points ? $"{noun} {n} — click to edit (or grab its circle on the photo)" : $"{noun} {n} — click to edit its settings and mask"
             };
             chip.SetResourceReference(StyleProperty, "ToolToggle");
             if (u == sel) chip.SetResourceReference(BorderBrushProperty, "AccentBrush");
@@ -651,10 +654,11 @@ public partial class MainWindow
         bool full = used.Count >= inst.Count;
         var add = new Button
         {
-            Content = "+ Add " + noun.ToLowerInvariant(), Height = 22, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(0, 0, 4, 4),
+            Content = "+ Add " + nounL, Height = 22, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(0, 0, 4, 4),
             IsEnabled = !full,
             ToolTip = full ? $"Limit reached ({inst.Count} {RepeatPlural(noun, inst.Count)}) — remove one first"
-                           : $"Add a {noun.ToLowerInvariant()}: click it on the photo (Esc cancels). Up to {inst.Count}."
+                           : points ? $"Add a {nounL}: click it on the photo (Esc cancels). Up to {inst.Count}."
+                                    : $"Add a {nounL} with its own settings and mask (starts with the settings of the selected one). Up to {inst.Count}."
         };
         ToolTipService.SetShowOnDisabled(add, true);
         add.SetResourceReference(StyleProperty, "ToolButton");
@@ -667,7 +671,8 @@ public partial class MainWindow
         {
             body.Children.Add(new TextBlock
             {
-                Text = $"No {RepeatPlural(noun, 2)} yet. Click Add {noun.ToLowerInvariant()}, then click the photo.",
+                Text = points ? $"No {RepeatPlural(noun, 2)} yet. Click Add {nounL}, then click the photo."
+                              : $"No {RepeatPlural(noun, 2)} yet. Click Add {nounL}, then set it up and give it a mask (without a mask it covers the whole photo).",
                 Foreground = muted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0)
             });
         }
@@ -679,7 +684,7 @@ public partial class MainWindow
             AutomationProperties.SetAutomationId(remove, "RepeatRemove_" + pluginId);
             remove.Click += (_, _) =>
             {
-                ResetFilterKeepMask(sel);
+                _pluginState.ResetFilter(sel);
                 _repeatSelected.Remove(RepeatKey(sel));
                 DeferRebuild();
                 OnPluginUiChanged();
