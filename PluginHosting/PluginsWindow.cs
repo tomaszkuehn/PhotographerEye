@@ -59,7 +59,6 @@ public sealed class PluginsWindow : Window
             Padding = new Thickness(6, 5, 6, 5)
         };
         System.Windows.Automation.AutomationProperties.SetAutomationId(listBorder, "PluginList");
-        panel.Children.Add(listBorder);
 
         _status = new TextBlock
         {
@@ -67,8 +66,6 @@ public sealed class PluginsWindow : Window
             Margin = new Thickness(0, 8, 0, 0),
             TextWrapping = TextWrapping.Wrap
         };
-        panel.Children.Add(_status);
-        DockPanel.SetDock(_status, Dock.Bottom);
 
         var buttons = new StackPanel
         {
@@ -88,8 +85,13 @@ public sealed class PluginsWindow : Window
         buttons.Children.Add(import);
         buttons.Children.Add(reload);
         buttons.Children.Add(close);
+        // Dock order: buttons at the very bottom, the status line above them, the list fills the rest (last child).
+        // (Without an explicit dock the list used to dock Left and squeeze status and buttons into a sliver on the right.)
         panel.Children.Add(buttons);
         DockPanel.SetDock(buttons, Dock.Bottom);
+        panel.Children.Add(_status);
+        DockPanel.SetDock(_status, Dock.Bottom);
+        panel.Children.Add(listBorder);
 
         Content = panel;
         Debug.Log("PLUGINS-WINDOW: ctor end");
