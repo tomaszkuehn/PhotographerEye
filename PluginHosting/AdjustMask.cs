@@ -70,12 +70,15 @@ public static class AdjustMask
     /// <summary>
     /// onto + mask * (full - neutral), <paramref name="onto"/> = <paramref name="neutral"/> by default; several masks add
     /// their changes onto the result of the previous ones. The mask is computed on <paramref name="neutral"/>.
+    /// <paramref name="neutralImg"/> is <paramref name="neutral"/> converted once for all masks of the photo (the mask
+    /// is computed on it), so a render with several masked areas converts it only once.
     /// </summary>
-    public static Raw16Image Blend16(Raw16Image full, Raw16Image neutral, MaskSpec spec, PluginRenderJob job, int fullW, int fullH, Raw16Image? onto = null)
+    public static Raw16Image Blend16(Raw16Image full, Raw16Image neutral, MaskSpec spec, PluginRenderJob job, int fullW, int fullH,
+        Raw16Image? onto = null, PluginImage? neutralImg = null)
     {
         if (full.W != neutral.W || full.H != neutral.H) return onto ?? full;
         var o = onto is not null && onto.W == neutral.W && onto.H == neutral.H ? onto : neutral;
-        var m = Render(spec, PluginPipeline.FromRaw16(neutral), job, fullW, fullH);
+        var m = Render(spec, neutralImg ?? PluginPipeline.FromRaw16(neutral), job, fullW, fullH);
         if (m is null) return onto ?? full;
         int w = full.W;
         var dst = new Raw16Image(w, full.H);
@@ -92,11 +95,25 @@ public static class AdjustMask
         return dst;
     }
 
-    /// <summary>8-bit variant of <see cref="Blend16"/> (BGRA, alpha from <paramref name="full"/>).</summary>
-    public static BitmapSource Blend8(BitmapSource full, BitmapSource neutral, MaskSpec spec, PluginRenderJob job, int fullW, int fullH, BitmapSource? onto = null)
+    /// <summary>8-bit variant of <see cref="Blend16"/> (BGRA, alpha from <paramref name="full"/>). <paramref name="neutralImg"/>
+    /// with <paramref name="neutralBgra"/>/<paramref name="neutralStride"/> is the neutral converted once for all masks.</summary>
+    public static BitmapSource Blend8(BitmapSource full, BitmapSource neutral, MaskSpec spec, PluginRenderJob job, int fullW, int fullH,
+        BitmapSource? onto = null, PluginImage? neutralImg = null, byte[]? neutralBgra = null, int neutralStride = 0)
     {
         if (full.PixelWidth != neutral.PixelWidth || full.PixelHeight != neutral.PixelHeight) return onto ?? full;
-        var img = PluginPipeline.FromBitmap(neutral, out var nb, out int ns);
+        PluginImage img;
+        byte[] nb;
+        int ns;
+        if (neutralImg is not null && neutralBgra is not null)
+        {
+            img = neutralImg;
+            nb = neutralBgra;
+            ns = neutralStride;
+        }
+        else
+        {
+            img = PluginPipeline.FromBitmap(neutral, out nb, out ns);
+        }
         var m = Render(spec, img, job, fullW, fullH);
         if (m is null) return onto ?? full;
         int w = full.PixelWidth, h = full.PixelHeight, stride = w * 4;

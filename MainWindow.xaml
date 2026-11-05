@@ -365,8 +365,9 @@
             </Grid>
             <!-- Presentation mode: short fading hint (keys, file name, slideshow state). -->
             <Border x:Name="PresentHint" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,28"
+                    MaxWidth="{Binding ActualWidth, ElementName=ViewerHost}"
                     Background="#B0000000" CornerRadius="16" Padding="16,7" IsHitTestVisible="False" Opacity="0" Visibility="Collapsed">
-                <TextBlock x:Name="PresentHintText" Foreground="#E6E6E6" FontSize="13" TextAlignment="Center" />
+                <TextBlock x:Name="PresentHintText" Foreground="#E6E6E6" FontSize="13" TextAlignment="Center" TextWrapping="Wrap" />
             </Border>
             <Border x:Name="CropBar"
                     HorizontalAlignment="Center"
@@ -402,31 +403,49 @@
                     HorizontalAlignment="Center"
                     VerticalAlignment="Bottom"
                     Margin="0,0,0,14"
+                    MaxWidth="{Binding ActualWidth, ElementName=ViewerHost}"
                     Background="#F026272D"
                     BorderBrush="{StaticResource BorderBrushCol}"
                     BorderThickness="1"
                     CornerRadius="8"
                     Padding="10,6"
                     Visibility="Collapsed">
-                <StackPanel Orientation="Horizontal">
-                    <StackPanel VerticalAlignment="Center" Margin="0,0,10,0">
-                        <TextBlock x:Name="MaskBarText" Style="{StaticResource ToolLabel}" />
-                        <TextBlock x:Name="MaskBarHint" Style="{StaticResource ToolLabel}" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,1,0,0" />
-                        <TextBlock x:Name="MaskBarShared" AutomationProperties.AutomationId="MaskBarShared" Style="{StaticResource ToolLabel}" Foreground="{StaticResource AccentBrush}" FontSize="11" Margin="0,1,0,0" Visibility="Collapsed" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
+                        <TextBlock x:Name="MaskBarText" Style="{StaticResource ToolLabel}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="MaskBarHint" Style="{StaticResource ToolLabel}" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,1,0,0" TextWrapping="Wrap" />
+                        <TextBlock x:Name="MaskBarShared" AutomationProperties.AutomationId="MaskBarShared" Style="{StaticResource ToolLabel}" Foreground="{StaticResource AccentBrush}" FontSize="11" Margin="0,1,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
                     </StackPanel>
-                    <Button x:Name="BtnMaskOnlyHere" AutomationProperties.AutomationId="BtnMaskOnlyHere" Style="{StaticResource ToolButton}"
-                            Padding="8,1,8,1" Margin="0,0,6,0" VerticalAlignment="Center" Visibility="Collapsed"
-                            Click="OnMaskOnlyHereClick" />
-                    <ToggleButton x:Name="BtnMaskTint" AutomationProperties.AutomationId="BtnMaskTint" Content="Overlay" IsChecked="True" Style="{StaticResource ToolToggle}" Focusable="False"
-                                  Padding="8,1,8,1" Margin="0,0,6,0" VerticalAlignment="Center"
-                                  Click="OnMaskTintClick"
-                                  ToolTip="Show the red overlay of the selected area (off: see the result while editing) — also O or the button left of the histogram" />
-                    <Button x:Name="BtnMaskDone" AutomationProperties.AutomationId="BtnMaskDone" Content="Done" Style="{StaticResource ToolButton}"
-                            Click="OnMaskDoneClick"
-                            ToolTip="Finish editing the mask (Esc or Enter); the mask stays applied" />
-                </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="BtnMaskOnlyHere" AutomationProperties.AutomationId="BtnMaskOnlyHere" Style="{StaticResource ToolButton}"
+                                Padding="8,1,8,1" Margin="0,0,6,0" VerticalAlignment="Center" Visibility="Collapsed"
+                                Click="OnMaskOnlyHereClick" />
+                        <ToggleButton x:Name="BtnMaskTint" AutomationProperties.AutomationId="BtnMaskTint" Content="Overlay" IsChecked="True" Style="{StaticResource ToolToggle}" Focusable="False"
+                                      Padding="8,1,8,1" Margin="0,0,6,0" VerticalAlignment="Center"
+                                      Click="OnMaskTintClick"
+                                      ToolTip="Show the red overlay of the selected area (off: see the result while editing) — also O or the button left of the histogram" />
+                        <Button x:Name="BtnMaskDone" AutomationProperties.AutomationId="BtnMaskDone" Content="Done" Style="{StaticResource ToolButton}"
+                                Click="OnMaskDoneClick"
+                                ToolTip="Finish editing the mask (Esc or Enter); the mask stays applied" />
+                    </StackPanel>
+                </Grid>
             </Border>
-             </Grid>
+
+            <!-- Waiting symbol for actions that cannot be made fast (over ~2 s expected): a clock with a sweeping hand. -->
+            <Grid x:Name="BusyClock" AutomationProperties.AutomationId="BusyClock"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                  IsHitTestVisible="False" Visibility="Collapsed">
+                <Ellipse Width="46" Height="46" Fill="#F026272D" Stroke="{StaticResource BorderBrushCol}" StrokeThickness="1" />
+                <Canvas x:Name="BusyClockHand" Width="46" Height="46">
+                    <Line X1="23" Y1="23" X2="23" Y2="8" Stroke="#F0EDE8" StrokeThickness="2.5" StrokeStartLineCap="Round" />
+                    <Ellipse Canvas.Left="21.4" Canvas.Top="21.4" Width="3.2" Height="3.2" Fill="#F0EDE8" />
+                </Canvas>
+            </Grid>
+              </Grid>
 
              <Border Grid.Column="1" x:Name="RightPanel"
                      Width="256"

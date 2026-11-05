@@ -597,6 +597,7 @@ public partial class MainWindow : Window
         bool runOutput = !_cropMode;
         int renderSeq = ++_renderSeq;
         _renderBusy = true;
+        BeginBusy(null); // fast renders never show it; the clock appears when one runs past 2 s
         string shape = PluginShapeKey();
 
         _ = Task.Run(() =>
@@ -692,7 +693,11 @@ public partial class MainWindow : Window
             }
             finally
             {
-                Dispatcher.BeginInvoke(() => OnRenderFinished(renderSeq));
+                Dispatcher.BeginInvoke(() =>
+                {
+                    OnRenderFinished(renderSeq); // may start the next render, whose BeginBusy keeps the clock up
+                    EndBusy();
+                });
             }
         });
     }
@@ -1631,6 +1636,7 @@ public partial class MainWindow : Window
         _saving = true;
         BtnSave.IsEnabled = false;
         Mouse.OverrideCursor = Cursors.Wait;
+        BeginBusy(ExpectedFullRenderMs());
 
         _ = Task.Run(() =>
         {
@@ -1639,6 +1645,9 @@ public partial class MainWindow : Window
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var (r16, bmp) = RenderFull(snap);
+                double mp = (r16 is not null ? (double)r16.W * r16.H : (double)bmp!.PixelWidth * bmp.PixelHeight) / 1e6;
+                double fullMs = sw.Elapsed.TotalMilliseconds;
+                Dispatcher.BeginInvoke(() => RecordFullRenderMs(fullMs, mp));
                 if (r16 is not null)
                 {
                     SaveEncoded(r16, dest, tiff);
@@ -1680,7 +1689,7 @@ public partial class MainWindow : Window
                 try { PluginManager.Instance.RaiseAfterSave(path, dest, fmt, saved, export: false); }
                 catch (Exception ex) { Debug.Log($"PLUGINS: AfterSave [{ex.GetType().Name}] {ex.Message}"); }
                 _saving = false;
-                Dispatcher.BeginInvoke(UpdateSaveState);
+                Dispatcher.BeginInvoke(() => { EndBusy(); UpdateSaveState(); });
             }
         });
     }

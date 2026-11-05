@@ -199,6 +199,8 @@ public static class PluginPipeline
     public static int Run(PluginImage img, FilterStage stage, PluginColorSpace space, PluginRenderJob job, int fullW, int fullH)
     {
         int ran = 0;
+        // Masks shared by several filters (links, plugin masks) render once per pass.
+        var maskCache = new Dictionary<MaskSpec, float[]>(MaskSpecRef.Instance);
         var filters = job.State.Ordered(job.Registry, stage);
         foreach (var f in filters)
         {
@@ -214,18 +216,27 @@ public static class PluginPipeline
                 FullHeight = fullH > 0 ? fullH : img.Height,
                 Meta = job.Meta
             };
-            if (RunOne(f, img, ctx, job)) ran++;
+            if (RunOne(f, img, ctx, job, maskCache)) ran++;
         }
         job.Report.Ran += ran;
         return ran;
     }
 
-    private static bool RunOne(Registered<FilterDescriptor> f, PluginImage img, RenderContext ctx, PluginRenderJob job)
+    /// <summary>Reference equality: linked masks resolve to the same MaskSpec record, so a mask shared by several filters renders once.</summary>
+    private sealed class MaskSpecRef : IEqualityComparer<MaskSpec>
+    {
+        public static readonly MaskSpecRef Instance = new();
+        public bool Equals(MaskSpec? a, MaskSpec? b) => ReferenceEquals(a, b);
+        public int GetHashCode(MaskSpec o) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);
+    }
+
+    private static bool RunOne(Registered<FilterDescriptor> f, PluginImage img, RenderContext ctx, PluginRenderJob job,
+        Dictionary<MaskSpec, float[]> maskCache)
     {
         var p = job.State.ParamsFor(f);
         var maskSpec = job.State.MaskFor(f);
         float[]? mask = null;
-        if (maskSpec is not null)
+        if (maskSpec is not null && !maskCache.TryGetValue(maskSpec, out mask))
         {
             try
             {
@@ -244,9 +255,12 @@ public static class PluginPipeline
                 job.Report.Errors.Add($"{f.D.Label}: mask failed ({ex.Message})");
                 return false;
             }
+            if (mask is not null) maskCache[maskSpec] = mask;
         }
 
-        var work = img.Clone();
+        // Without a mask (the common case) the filter renders in place: no clone and no copy back. A mask renders
+        // the effect on a copy and blends only the masked area back into the original.
+        var work = mask is null ? img : img.Clone();
         // The caller may cancel and dispose the job's token source while this render still runs (a newer preview
         // replaces it). Everything here waits on the local linked source, which lives until the render returns.
         CancellationTokenSource cts;
@@ -306,8 +320,11 @@ public static class PluginPipeline
             return false;
         }
         PluginManager.ReportSuccess(f.Owner);
-        if (mask is not null) MaskRender.Blend(img, work, mask);
-        img.CopyFrom(work);
+        if (mask is not null && !ReferenceEquals(work, img))
+        {
+            MaskRender.Blend(img, work, mask);
+            img.CopyFrom(work);
+        }
         return true;
     }
 }
