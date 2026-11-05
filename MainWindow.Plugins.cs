@@ -1991,11 +1991,22 @@ public partial class MainWindow
             return;
         }
         int seq = Interlocked.Increment(ref _maskPreviewSeq);
+        RenderMaskTint(src, spec, t.Stage, 60, 60, 255, 140,
+            () => seq == Volatile.Read(ref _maskPreviewSeq),
+            gb => { if (seq == Volatile.Read(ref _maskPreviewSeq) && _maskEditFilter is not null) MaskOverlay.SetPreview(gb); });
+    }
+
+    /// <summary>
+    /// Renders <paramref name="spec"/> on a small copy of <paramref name="src"/> in the background as a tinted overlay
+    /// (BGRA colour, alpha at full mask) in display geometry and hands it to <paramref name="apply"/> on the UI thread.
+    /// </summary>
+    private void RenderMaskTint(BitmapSource src, MaskSpec spec, FilterStage stage, byte cb, byte cg, byte cr, byte alpha,
+        Func<bool> wanted, Action<BitmapSource> apply)
+    {
         var geo = CurrentDisplayGeo();
         var box = _unGeoBox.Width > 0 ? _unGeoBox : new Size(src.PixelWidth, src.PixelHeight);
         var reg = _pluginReg;
         var specCopy = PluginEditState.CloneMask(spec);
-        var stage = t.Stage;
         var meta = CurrentMeta();
         int fullW = _baseInfo?.Width ?? src.PixelWidth, fullH = _baseInfo?.Height ?? src.PixelHeight;
         Task.Run(() =>
@@ -2025,24 +2036,21 @@ public partial class MainWindow
                     Meta = meta
                 };
                 var m = MaskRender.Render(specCopy, img, ctx, reg);
-                if (seq != Volatile.Read(ref _maskPreviewSeq)) return;
+                if (!wanted()) return;
                 int w = img.Width, h = img.Height;
                 var buf = new byte[w * h * 4];
                 for (int i = 0, o = 0; i < w * h; i++, o += 4)
                 {
                     float a = m is null ? 1f : m[i];
-                    buf[o] = 60;
-                    buf[o + 1] = 60;
-                    buf[o + 2] = 255;
-                    buf[o + 3] = (byte)(Math.Clamp(a, 0f, 1f) * 140f);
+                    buf[o] = cb;
+                    buf[o + 1] = cg;
+                    buf[o + 2] = cr;
+                    buf[o + 3] = (byte)(Math.Clamp(a, 0f, 1f) * alpha);
                 }
                 var bmp = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buf, w * 4);
                 bmp.Freeze();
                 var (gb, _) = PhotoGeo.Apply(bmp, box, geo);
-                Dispatcher.BeginInvoke(() =>
-                {
-                    if (seq == Volatile.Read(ref _maskPreviewSeq) && _maskEditFilter is not null) MaskOverlay.SetPreview(gb);
-                });
+                Dispatcher.BeginInvoke(() => apply(gb));
             }
             catch (Exception ex)
             {

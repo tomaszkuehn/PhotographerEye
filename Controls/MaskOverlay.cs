@@ -26,6 +26,8 @@ public sealed class MaskOverlay : Canvas
     private double _srcW = 1, _srcH = 1;
     private MaskSpec? _spec;
     private BitmapSource? _preview;
+    private MaskSpec? _highlightSpec;
+    private BitmapSource? _highlight;
     private int _drag = -1;
     private Point _dragStartSrc;
     private double[]? _dragStartP;
@@ -161,6 +163,19 @@ public sealed class MaskOverlay : Canvas
         _preview = preview;
         Redraw();
     }
+
+    /// <summary>
+    /// Another mask shown on the photo for a moment (e.g. the mask under the pointer in the link menu): its outline and,
+    /// when given, its tinted area (display geometry, like <see cref="SetPreview"/>). Null spec hides it.
+    /// </summary>
+    public void SetHighlight(MaskSpec? spec, BitmapSource? tint)
+    {
+        _highlightSpec = spec;
+        _highlight = spec is null ? null : tint;
+        Redraw();
+    }
+
+    public bool HasHighlight => _highlightSpec is not null;
 
     public void Clear()
     {
@@ -304,6 +319,14 @@ public sealed class MaskOverlay : Canvas
             SetTop(img, f.Y);
             Children.Add(img);
         }
+        if (_highlight is not null)
+        {
+            var img = new Image { Source = _highlight, Width = f.Width, Height = f.Height, Stretch = Stretch.Fill, IsHitTestVisible = false };
+            SetLeft(img, f.X);
+            SetTop(img, f.Y);
+            Children.Add(img);
+        }
+        if (_highlightSpec is not null) DrawOutline(_highlightSpec);
         _clusters = BuildClusters();
         if (_hoverPin >= _clusters.Count) _hoverPin = -1;
         if (_spec is not null && Editing)

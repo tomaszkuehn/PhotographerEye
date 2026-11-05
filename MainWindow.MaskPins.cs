@@ -8,8 +8,10 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Threading;
 using ImgViewer.Controls;
 using ImgViewer.Imaging;
+using ImgViewer.Plugins;
 using ImgViewer.Services;
 
 namespace ImgViewer;
@@ -137,6 +139,7 @@ public partial class MainWindow
                     var item = new MenuItem { Header = text, IsCheckable = true, IsChecked = linked && cur?.Ref == src, Padding = new Thickness(14, 0, 0, 0) };
                     AutomationProperties.SetAutomationId(item, "PluginMaskLinkTo_" + src);
                     item.Click += (_, _) => LinkMask(key, src);
+                    HighlightOnHover(item, src);
                     menu.Items.Add(item);
                 }
                 menu.Items.Add(new Separator());
@@ -146,9 +149,11 @@ public partial class MainWindow
                     var item = new MenuItem { Header = text, Padding = new Thickness(14, 0, 0, 0) };
                     AutomationProperties.SetAutomationId(item, "PluginMaskCopyFrom_" + src);
                     item.Click += (_, _) => CopyMaskFrom(key, src);
+                    HighlightOnHover(item, src);
                     menu.Items.Add(item);
                 }
             }
+            menu.Closed += (_, _) => HighlightMask(null);
             menu.IsOpen = true;
         };
         return b;
@@ -353,9 +358,49 @@ public partial class MainWindow
         {
             var item = new MenuItem { Header = p.Label };
             item.Click += (_, _) => EditMaskFromPin(p.Key);
+            HighlightOnHover(item, p.Key);
             menu.Items.Add(item);
         }
+        menu.Closed += (_, _) => HighlightMask(null);
         menu.IsOpen = true;
+    }
+
+    private int _maskHighlightSeq;
+
+    /// <summary>While the pointer (or keyboard focus) is on a menu item, the mask it names is shown on the photo.</summary>
+    private void HighlightOnHover(MenuItem item, string key)
+    {
+        item.MouseEnter += (_, _) => HighlightMask(key);
+        item.GotKeyboardFocus += (_, _) => HighlightMask(key);
+    }
+
+    /// <summary>
+    /// Shows the mask of <paramref name="key"/> on the photo (outline and amber area) without editing it, so the link
+    /// and marker menus tell which mask an entry means; null hides it again.
+    /// </summary>
+    private void HighlightMask(string? key)
+    {
+        int seq = Interlocked.Increment(ref _maskHighlightSeq);
+        if (MaskOverlay is null) return;
+        MaskSpec? spec = null;
+        if (key is not null && _pluginState.Masks.TryGetValue(key, out var m)) spec = _pluginState.Resolve(m);
+        if (spec is null || _baseInfo is not ImageInfo bi || _cropMode)
+        {
+            if (!MaskOverlay.HasHighlight) return;
+            MaskOverlay.SetHighlight(null, null);
+            if (_maskEditFilter is null) RefreshMaskPins(); // back to markers only (or hidden)
+            return;
+        }
+        MaskOverlay.SetMapping(CurrentDisplayGeo(), bi.Width, bi.Height);
+        MaskOverlay.Visibility = Visibility.Visible;
+        MaskOverlay.SetHighlight(spec, null);
+        if (_unGeoSrc is { } src)
+        {
+            var stage = MaskTarget(key)?.Stage ?? FilterStage.Display;
+            RenderMaskTint(src, spec, stage, 120, 200, 255, 120,
+                () => seq == Volatile.Read(ref _maskHighlightSeq),
+                tint => { if (seq == Volatile.Read(ref _maskHighlightSeq)) MaskOverlay.SetHighlight(spec, tint); });
+        }
     }
 
     /// <summary>Starts editing the mask of <paramref name="key"/>: opens its section (and repeat area) and scrolls it into view.</summary>
