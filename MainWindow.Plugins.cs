@@ -29,6 +29,7 @@ public partial class MainWindow
     private readonly Dictionary<string, ToggleButton> _pluginToggles = new(StringComparer.Ordinal);
     private readonly List<(KeyGesture Gesture, Registered<CommandDescriptor> Cmd)> _pluginShortcuts = new();
     private readonly Dictionary<string, (Dictionary<string, double> Values, Dictionary<string, string> Text)> _exportOptions = new(StringComparer.Ordinal);
+    /// <summary>The mask being edited on the photo (its bar shows at the bottom); while set, changes in other tools link to this mask (<see cref="AutoScopeToEditedMask"/>).</summary>
     private string? _maskEditFilter;
     private (Registered<FilterDescriptor> F, ParamDef D)? _pointPick;
     /// <summary>Runs after a successful point pick (Add of a repeat-group item).</summary>
@@ -434,7 +435,11 @@ public partial class MainWindow
 
     private void SetFilterActive(Registered<FilterDescriptor> f, bool on)
     {
-        if (on) _pluginState.Active.Add(f.FullId);
+        if (on)
+        {
+            AutoScopeToEditedMask(f);
+            _pluginState.Active.Add(f.FullId);
+        }
         else _pluginState.Active.Remove(f.FullId);
         if (_pluginToggles.TryGetValue(f.FullId, out var btn)) btn.IsChecked = on;
         OnPluginUiChanged();
@@ -992,7 +997,9 @@ public partial class MainWindow
                 AutomationProperties.SetAutomationId(cb, aid);
                 cb.Click += (_, _) =>
                 {
-                    _pluginState.SetValue(f, d, cb.IsChecked == true ? 1.0 : 0.0);
+                    double v = cb.IsChecked == true ? 1.0 : 0.0;
+                    if (Math.Abs(v - d.Default) > 1e-9) AutoScopeToEditedMask(f);
+                    _pluginState.SetValue(f, d, v);
                     OnPluginUiChanged();
                 };
                 return cb;
@@ -1014,6 +1021,7 @@ public partial class MainWindow
                 combo.SelectionChanged += (_, _) =>
                 {
                     if (_pluginUiBuilding || combo.SelectedItem is not ComboBoxItem { Tag: string id }) return;
+                    if (id != d.DefaultText) AutoScopeToEditedMask(f);
                     _pluginState.SetText(f, d, id);
                     if (id == "custom")
                     {
@@ -1046,6 +1054,7 @@ public partial class MainWindow
                 ed.Value = _pluginState.GetText(f, d);
                 ed.CurveChanged += (v, final) =>
                 {
+                    if (!string.IsNullOrEmpty(v) && v != d.DefaultText) AutoScopeToEditedMask(f);
                     _pluginState.SetText(f, d, v);
                     OnPluginUiChanged();
                 };
@@ -1107,6 +1116,7 @@ public partial class MainWindow
                 {
                     var p = BrowseFile(d);
                     if (p is null) return;
+                    AutoScopeToEditedMask(f);
                     _pluginState.SetText(f, d, p);
                     DeferRebuild();
                     OnPluginUiChanged();
@@ -1144,6 +1154,7 @@ public partial class MainWindow
                 {
                     value.Text = FormatParam(e.NewValue, d);
                     if (_pluginUiBuilding) return;
+                    if (Math.Abs(e.NewValue - d.Default) > 1e-9) AutoScopeToEditedMask(f);
                     _pluginState.SetValue(f, d, e.NewValue);
                     OnPluginUiChanged();
                 };
@@ -1250,6 +1261,7 @@ public partial class MainWindow
 
         void Commit(Color c)
         {
+            if (ToHex(c) != (d.DefaultText ?? "")) AutoScopeToEditedMask(f);
             _pluginState.SetText(f, d, ToHex(c));
             swatch.Background = new SolidColorBrush(c);
             hexText.Text = ToHex(c);
@@ -1403,6 +1415,7 @@ public partial class MainWindow
         var src = PhotoGeo.MapFromOutput(CurrentDisplayGeo(), bi.Width, bi.Height, fr);
         var val = f.D.Stage == FilterStage.Output ? PhotoGeo.MapToOutput(_geo, bi.Width, bi.Height, src) : src;
         val = new Point(Math.Clamp(val.X, 0, 1), Math.Clamp(val.Y, 0, 1));
+        AutoScopeToEditedMask(f);
         _pluginState.SetText(f, d, Inv(val.X) + "," + Inv(val.Y));
         if (done is not null)
         {
@@ -1494,6 +1507,7 @@ public partial class MainWindow
         if (d is null) return;
         var val = f.D.Stage == FilterStage.Output ? PhotoGeo.MapToOutput(_geo, bi.Width, bi.Height, src) : src;
         val = new Point(Math.Clamp(val.X, 0, 1), Math.Clamp(val.Y, 0, 1));
+        AutoScopeToEditedMask(f);
         _pluginState.SetText(f, d, Inv(val.X) + "," + Inv(val.Y));
         if (final)
         {
@@ -1578,6 +1592,7 @@ public partial class MainWindow
     private FrameworkElement BuildMaskControls(string key, string label, Brush muted)
     {
         var sp = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+        AutomationProperties.SetAutomationId(sp, "PluginMaskBox_" + key);
         var mask = _pluginState.Masks.TryGetValue(key, out var mm) ? mm : null;
         bool adjust = key == AdjustMask.Key;
         string scope = adjust
@@ -1813,6 +1828,38 @@ public partial class MainWindow
         OnPluginUiChanged();
     }
 
+    /// <summary>
+    /// While a mask is edited (its bar is open at the bottom of the photo): the first change of a setting of another
+    /// tool links that tool to the edited mask, so its whole effect applies only inside the masked area. Tools that
+    /// cannot use a mask (SupportsMask false, Output stage) or already have their own mask are left alone, as is the
+    /// tool that owns the edited mask.
+    /// </summary>
+    private void AutoScopeToEditedMask(Registered<FilterDescriptor> f)
+    {
+        if (_maskEditFilter is not { } src || src == f.FullId) return;
+        if (!f.D.SupportsMask || f.D.Stage == FilterStage.Output) return;
+        if (_pluginState.Masks.ContainsKey(f.FullId)) return;
+        if (!_pluginState.Masks.TryGetValue(src, out var spec) || string.IsNullOrEmpty(spec.Kind) || spec.Kind == MaskRender.Link) return;
+        _pluginState.Masks[f.FullId] = new MaskSpec { Kind = MaskRender.Link, Ref = src };
+        RefreshMaskBox(f.FullId);
+        SetStatus($"{f.D.Label} applies inside the {MaskOwnerLabel(src)} mask now — its Mask row changes or removes that", error: false);
+    }
+
+    /// <summary>
+    /// Replaces the mask row of <paramref name="key"/> in the plugin panel with a freshly built one, so it shows the
+    /// new mask state without a full rebuild (which would break a slider or marker drag in progress).
+    /// </summary>
+    private void RefreshMaskBox(string key)
+    {
+        if (PluginPanelHost is null || key == AdjustMask.Key || _pluginReg.FindFilter(key) is not { } f) return;
+        if (FindByAutomationId(PluginPanelHost, "PluginMaskBox_" + key) is not FrameworkElement box || box.Parent is not Panel parent) return;
+        int i = parent.Children.IndexOf(box);
+        if (i < 0) return;
+        // the Children indexer setter throws when the slot is still occupied, so replace via remove + insert
+        parent.Children.RemoveAt(i);
+        parent.Children.Insert(i, BuildMaskControls(key, f.D.Label, (Brush)FindResource("MutedBrush")));
+    }
+
     private void BeginMaskEdit(string key)
     {
         if (!_pluginState.Masks.TryGetValue(key, out var spec)) return;
@@ -1900,13 +1947,15 @@ public partial class MainWindow
         bool local = AdjEditMask && _adjMaskKey == valuesKey;
         bool active = panel || _pluginReg.FindFilter(t.Key) is { } f && _pluginState.IsFilterActive(f);
         const string inside = "Until Done the STANDARD / DETAIL sliders change only the inside of the mask (its own values, added to the whole-photo values)";
-        MaskBarHint.Text = panel
-            ? inside
-            : local
-                ? (active ? $"The {t.Label} settings and, until Done, the STANDARD / DETAIL sliders act only inside the red area" : inside)
-                : active
-                    ? $"Only the {t.Label} settings act inside the red area"
-                    : $"No effect yet: set the {t.Label} sliders or the STANDARD / DETAIL sliders";
+        const string others = "; while it is open, changes in other tools that can use a mask apply inside it too";
+        MaskBarHint.Text =
+            (panel
+                ? inside
+                : local
+                    ? (active ? $"The {t.Label} settings and, until Done, the STANDARD / DETAIL sliders act only inside the red area" : inside)
+                    : active
+                        ? $"Only the {t.Label} settings act inside the red area"
+                        : $"No effect yet: set the {t.Label} sliders or the STANDARD / DETAIL sliders") + others;
         active |= local || MaskValuesSummary(valuesKey) is not null;
         MaskBarHint.SetResourceReference(TextBlock.ForegroundProperty, active ? "MutedBrush" : "ErrorBrush");
         UpdateMaskBarShared(t.Key);
