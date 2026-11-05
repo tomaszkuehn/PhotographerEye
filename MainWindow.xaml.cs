@@ -1089,7 +1089,12 @@ public partial class MainWindow : Window
             sb.Append(f.FullId).Append('=').Append(_pluginState.MaskFor(f)?.Kind ?? "-").Append(';');
         }
         var am = _pluginState.Masks.TryGetValue(AdjustMask.Key, out var a) ? _pluginState.Resolve(a)?.Kind : null;
-        return sb.Append("adjust=").Append(am ?? "-").ToString();
+        sb.Append("adjust=").Append(am ?? "-").Append(';');
+        // masks with values of their own (any filter's) change the photo too
+        foreach (var kv in _pluginState.Masks.OrderBy(k => k.Key, StringComparer.Ordinal))
+            if (kv.Key != AdjustMask.Key && kv.Value.Adjust is { Count: > 0 })
+                sb.Append("local:").Append(kv.Key).Append('=').Append(_pluginState.Resolve(kv.Value)?.Kind ?? "-").Append(';');
+        return sb.ToString();
     }
 
     /// <summary>
@@ -2128,6 +2133,7 @@ public partial class MainWindow : Window
     private void ResetAdjustments(bool silent = false)
     {
         _adjGlobal = null;
+        _adjMaskKey = null;
         _eyeBaseEv = double.NaN;
         _eyeCurveSet = false;
         _eyeCurve = null;
@@ -2225,8 +2231,9 @@ public partial class MainWindow : Window
 
     private void ApplyEyeState(EyeState st)
     {
-        bool wasMaskSet = AdjEditMask; // the sliders get the whole-photo values first, the mask's set again below
+        string? wasMaskSet = AdjEditMask ? AdjSetKey : null; // the sliders get the whole-photo values first, the mask's set again below
         _adjGlobal = null;
+        _adjMaskKey = null;
         _eyeBaseEv = st.BaseEv;
         _eyeCurveSet = true;
         _eyeCurve = st.ToneCurve is { Length: >= 2 } ? ParseCurve(st.ToneCurve) : null;
@@ -2269,7 +2276,7 @@ public partial class MainWindow : Window
             Aspect = string.IsNullOrWhiteSpace(st.CropAspect) ? "original" : st.CropAspect
         };
         _pluginState.Load(st, _pluginReg);
-        if (wasMaskSet) ShowAdjSet(true);
+        if (wasMaskSet is not null) ShowAdjSet(true, wasMaskSet);
         SyncMaskOverlaySpec();
         RebuildPluginUi();
         if (_cropMode)

@@ -32,10 +32,11 @@ public sealed class PluginRenderJob
     /// </summary>
     public (GeoState Geo, double SrcW, double SrcH)? OutputGeo { get; set; }
     /// <summary>
-    /// Panel values inside the Adjustments mask (whole-photo values plus the mask's own), null when the panel has no
-    /// mask or the mask has no values of its own; the render blends them over the whole-photo render by the mask.
+    /// Panel values inside each mask that has values of its own (whole-photo values plus the mask's own; key of the mask
+    /// in <see cref="PluginEditState.Masks"/>: the Adjustments mask or any filter's), null when no mask has values; the
+    /// render adds each one over the whole-photo render by its mask.
     /// </summary>
-    public PhotoAdjustments? AdjustMaskExtra { get; init; }
+    public IReadOnlyList<(string Key, PhotoAdjustments Values)>? AdjustMaskExtras { get; init; }
 
     public bool Has(FilterStage stage) => State.HasEffect(Registry, stage);
 }

@@ -10,7 +10,8 @@ using ImgViewer.Services;
 namespace ImgViewer;
 
 /// <summary>
-/// Mask for the main Adjustments panel (STANDARD / DETAIL sliders). The panel has two sets of values: the whole-photo
+/// Masks with values of their own for the main Adjustments panel (STANDARD / DETAIL sliders): the Adjustments mask
+/// (<see cref="Key"/>) or the mask of any filter. The panel has two sets of values: the whole-photo
 /// ones (everywhere) and the mask's own (<see cref="MaskSpec.Adjust"/>, added to the whole-photo ones inside the mask).
 /// Stored in <see cref="PluginEditState.Masks"/> under <see cref="Key"/>, so undo, history and .eye files keep it.
 /// The photo is rendered with the whole-photo values and with the combined values, and the two are blended by the
@@ -21,12 +22,18 @@ public static class AdjustMask
     public const string Key = BuiltInFilters.CoreId + ":adjustments";
     public const string Label = "Adjustments";
 
-    public static MaskSpec? For(PluginEditState state) =>
-        state.Masks.TryGetValue(Key, out var m) ? state.Resolve(m) : null;
+    public static MaskSpec? For(PluginEditState state) => For(state, Key);
+
+    /// <summary>The (resolved) mask stored under <paramref name="key"/>: the Adjustments mask or a filter's mask.</summary>
+    public static MaskSpec? For(PluginEditState state, string key) =>
+        state.Masks.TryGetValue(key, out var m) && !string.IsNullOrEmpty(m.Kind) ? state.Resolve(m) : null;
 
     /// <summary>The mask's own slider values (stored on the Adjustments mask itself, also when it is a link), or null.</summary>
-    public static Dictionary<string, double>? Values(PluginEditState state) =>
-        state.Masks.TryGetValue(Key, out var m) && m.Adjust is { Count: > 0 } a ? a : null;
+    public static Dictionary<string, double>? Values(PluginEditState state) => Values(state, Key);
+
+    /// <summary>Own slider values of the mask stored under <paramref name="key"/> (on the mask itself, also when it is a link), or null.</summary>
+    public static Dictionary<string, double>? Values(PluginEditState state, string key) =>
+        state.Masks.TryGetValue(key, out var m) && m.Adjust is { Count: > 0 } a ? a : null;
 
     /// <summary>Whole-photo value plus the mask's value of one slider, clamped to the slider range.</summary>
     public static double Combine(CoreParam p, double global, Dictionary<string, double>? local) =>
@@ -60,12 +67,16 @@ public static class AdjustMask
         }
     }
 
-    /// <summary>neutral + mask * (full - neutral). Returns <paramref name="full"/> when the mask covers everything.</summary>
-    public static Raw16Image Blend16(Raw16Image full, Raw16Image neutral, MaskSpec spec, PluginRenderJob job, int fullW, int fullH)
+    /// <summary>
+    /// onto + mask * (full - neutral), <paramref name="onto"/> = <paramref name="neutral"/> by default; several masks add
+    /// their changes onto the result of the previous ones. The mask is computed on <paramref name="neutral"/>.
+    /// </summary>
+    public static Raw16Image Blend16(Raw16Image full, Raw16Image neutral, MaskSpec spec, PluginRenderJob job, int fullW, int fullH, Raw16Image? onto = null)
     {
-        if (full.W != neutral.W || full.H != neutral.H) return full;
+        if (full.W != neutral.W || full.H != neutral.H) return onto ?? full;
+        var o = onto is not null && onto.W == neutral.W && onto.H == neutral.H ? onto : neutral;
         var m = Render(spec, PluginPipeline.FromRaw16(neutral), job, fullW, fullH);
-        if (m is null) return full;
+        if (m is null) return onto ?? full;
         int w = full.W;
         var dst = new Raw16Image(w, full.H);
         Parallel.For(0, full.H, y =>
@@ -73,23 +84,24 @@ public static class AdjustMask
             for (int i = y * w, e = i + w; i < e; i++)
             {
                 float a = Math.Clamp(m[i], 0f, 1f);
-                dst.R[i] = Mix(neutral.R[i], full.R[i], a);
-                dst.G[i] = Mix(neutral.G[i], full.G[i], a);
-                dst.B[i] = Mix(neutral.B[i], full.B[i], a);
+                dst.R[i] = Mix(o.R[i], neutral.R[i], full.R[i], a);
+                dst.G[i] = Mix(o.G[i], neutral.G[i], full.G[i], a);
+                dst.B[i] = Mix(o.B[i], neutral.B[i], full.B[i], a);
             }
         });
         return dst;
     }
 
     /// <summary>8-bit variant of <see cref="Blend16"/> (BGRA, alpha from <paramref name="full"/>).</summary>
-    public static BitmapSource Blend8(BitmapSource full, BitmapSource neutral, MaskSpec spec, PluginRenderJob job, int fullW, int fullH)
+    public static BitmapSource Blend8(BitmapSource full, BitmapSource neutral, MaskSpec spec, PluginRenderJob job, int fullW, int fullH, BitmapSource? onto = null)
     {
-        if (full.PixelWidth != neutral.PixelWidth || full.PixelHeight != neutral.PixelHeight) return full;
+        if (full.PixelWidth != neutral.PixelWidth || full.PixelHeight != neutral.PixelHeight) return onto ?? full;
         var img = PluginPipeline.FromBitmap(neutral, out var nb, out int ns);
         var m = Render(spec, img, job, fullW, fullH);
-        if (m is null) return full;
+        if (m is null) return onto ?? full;
         int w = full.PixelWidth, h = full.PixelHeight, stride = w * 4;
         var fb = Bgra(full);
+        var ob = onto is not null && onto.PixelWidth == w && onto.PixelHeight == h ? Bgra(onto) : null;
         Parallel.For(0, h, y =>
         {
             for (int x = 0; x < w; x++)
@@ -97,7 +109,7 @@ public static class AdjustMask
                 float a = Math.Clamp(m[y * w + x], 0f, 1f);
                 int o = y * stride + x * 4, on = y * ns + x * 4;
                 for (int c = 0; c < 3; c++)
-                    fb[o + c] = (byte)Math.Clamp((int)(nb[on + c] + (fb[o + c] - nb[on + c]) * a + 0.5f), 0, 255);
+                    fb[o + c] = (byte)Math.Clamp((int)((ob is null ? nb[on + c] : ob[o + c]) + (fb[o + c] - nb[on + c]) * a + 0.5f), 0, 255);
             }
         });
         var bmp = BitmapSource.Create(w, h, full.DpiX, full.DpiY, PixelFormats.Bgra32, null, fb, stride);
@@ -105,7 +117,7 @@ public static class AdjustMask
         return bmp;
     }
 
-    private static ushort Mix(ushort n, ushort f, float a) => (ushort)Math.Clamp((int)(n + (f - n) * a + 0.5f), 0, 65535);
+    private static ushort Mix(ushort o, ushort n, ushort f, float a) => (ushort)Math.Clamp((int)(o + (f - n) * a + 0.5f), 0, 65535);
 
     private static byte[] Bgra(BitmapSource src)
     {

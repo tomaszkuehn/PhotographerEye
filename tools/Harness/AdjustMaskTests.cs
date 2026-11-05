@@ -110,5 +110,39 @@ internal static partial class Program
         Check(lv.Masks[AdjustMask.Key] is { Kind: MaskRender.Radial, Ref: null } dm && dm.Adjust?["Exposure"] == -1, "mask values: kept when the link becomes an own copy");
         var eyeJson = System.Text.Json.JsonSerializer.Serialize(new MaskSpec { Kind = MaskRender.Radial, Adjust = new Dictionary<string, double> { ["Tint"] = 5 } });
         Check(System.Text.Json.JsonSerializer.Deserialize<MaskSpec>(eyeJson)?.Adjust?["Tint"] == 5, "mask values: stored in the .eye JSON");
+
+        // Any mask can hold values of its own (a filter's mask, a link from a filter), not only the Adjustments mask.
+        var pm = new PluginEditState();
+        pm.Masks[fk] = new MaskSpec { Kind = MaskRender.Radial, P = new[] { 0.25, 0.5, 0.15, 0.15, 0.3 }, Adjust = new Dictionary<string, double> { ["Exposure"] = -1 } };
+        pm.Masks["sample.other:other"] = new MaskSpec { Kind = MaskRender.Link, Ref = fk, Invert = true, Adjust = new Dictionary<string, double> { ["Contrast"] = 10 } };
+        Check(AdjustMask.For(pm) is null && AdjustMask.For(pm, fk)?.Kind == MaskRender.Radial, "filter mask values: the filter's mask by its key");
+        Check(AdjustMask.Values(pm, fk)?["Exposure"] == -1 && AdjustMask.Values(pm) is null, "filter mask values: kept on the filter's mask");
+        Check(AdjustMask.For(pm, "sample.other:other") is { Invert: true } && AdjustMask.Values(pm, "sample.other:other")?["Contrast"] == 10,
+              "filter mask values: a link has the source shape and values of its own");
+        pm.Masks["x.none:none"] = new MaskSpec { Kind = "", Adjust = new Dictionary<string, double> { ["Exposure"] = 1 } };
+        Check(AdjustMask.For(pm, "x.none:none") is null, "filter mask values: whole photo (no kind) is no mask");
+
+        // Two masks add their changes onto each other: left radial -> full, right radial -> full2.
+        var two = new PluginEditState();
+        two.Masks[AdjustMask.Key] = new MaskSpec { Kind = MaskRender.Radial, P = new[] { 0.2, 0.5, 0.1, 0.1, 0.0 } };
+        two.Masks[fk] = new MaskSpec { Kind = MaskRender.Radial, P = new[] { 0.8, 0.5, 0.1, 0.1, 0.0 } };
+        var job2 = new PluginRenderJob { Registry = PluginRegistry.Empty, State = two };
+        var full2 = new Raw16Image(W, H);
+        for (int i = 0; i < W * H; i++) full2.R[i] = full2.G[i] = full2.B[i] = 10000;
+        var step1 = AdjustMask.Blend16(full, neutral, AdjustMask.For(two)!, job2, W, H);
+        var step2 = AdjustMask.Blend16(full2, neutral, AdjustMask.For(two, fk)!, job2, W, H, onto: step1);
+        int left = (H / 2) * W + (int)(0.2 * W), right = (H / 2) * W + (int)(0.8 * W);
+        Check(Math.Abs(step2.R[left] - 50000) < 300 && Math.Abs(step2.R[right] - 10000) < 300 && step2.R[k] == 20000,
+              $"two masks: each changes only its own area (left {step2.R[left]}, right {step2.R[right]}, corner {step2.R[k]})");
+        var nb2 = new byte[W * H * 4];
+        for (int i = 0; i < W * H; i++) { nb2[i * 4] = nb2[i * 4 + 1] = nb2[i * 4 + 2] = 10; nb2[i * 4 + 3] = 255; }
+        var f2bmp = BitmapSource.Create(W, H, 96, 96, PixelFormats.Bgra32, null, nb2, W * 4);
+        f2bmp.Freeze();
+        var s8 = AdjustMask.Blend8(f2bmp, nbmp, AdjustMask.For(two, fk)!, job2, W, H,
+            onto: AdjustMask.Blend8(fbmp, nbmp, AdjustMask.For(two)!, job2, W, H));
+        var sb8 = new byte[W * H * 4];
+        s8.CopyPixels(sb8, W * 4, 0);
+        Check(Math.Abs(sb8[left * 4 + 2] - 220) <= 2 && Math.Abs(sb8[right * 4 + 2] - 10) <= 2 && sb8[2] == 60,
+              $"two masks: 8-bit (left R {sb8[left * 4 + 2]}, right R {sb8[right * 4 + 2]}, corner R {sb8[2]})");
     }
 }

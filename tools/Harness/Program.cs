@@ -17,9 +17,32 @@ internal static partial class Program
 {
     private static int _fails;
 
+    /// <summary>
+    /// The harness must not freeze the machine: it runs below normal priority (child processes such as dcraw_emu
+    /// inherit it) and on at most cores - 2 logical processors (affinity), so the desktop always keeps free cores
+    /// even while the image loops (Parallel.For) run flat out. PE_HARNESS_CPUS overrides the count.
+    /// </summary>
+    private static void LimitLoad()
+    {
+        try
+        {
+            using var self = System.Diagnostics.Process.GetCurrentProcess();
+            self.PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal;
+            int all = Math.Min(Environment.ProcessorCount, 63);
+            int use = Math.Max(1, all - 2);
+            if (int.TryParse(Environment.GetEnvironmentVariable("PE_HARNESS_CPUS"), out int n) && n > 0) use = Math.Min(n, all);
+            if (use < all) self.ProcessorAffinity = (IntPtr)((1L << use) - 1);
+        }
+        catch
+        {
+            // a locked-down machine: run unlimited
+        }
+    }
+
     [STAThread]
     private static void Main(string[] args)
     {
+        LimitLoad();
         if (args.Length > 2 && args[0] == "--auto-color")
         {
             AutoColorProbe(args[1], args[2]);
