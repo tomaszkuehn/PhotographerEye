@@ -144,5 +144,33 @@ internal static partial class Program
         s8.CopyPixels(sb8, W * 4, 0);
         Check(Math.Abs(sb8[left * 4 + 2] - 220) <= 2 && Math.Abs(sb8[right * 4 + 2] - 10) <= 2 && sb8[2] == 60,
               $"two masks: 8-bit (left R {sb8[left * 4 + 2]}, right R {sb8[right * 4 + 2]}, corner R {sb8[2]})");
+
+        // MASK-module masks: independent library masks ("mask:N") that tools follow by a link.
+        var lib = new PluginEditState();
+        Check(PluginEditState.IsLibraryKey("mask:2") && !PluginEditState.IsLibraryKey("core:adjustments") && !PluginEditState.IsLibraryKey(fk),
+              "library masks: IsLibraryKey");
+        Check(PluginEditState.LibraryIndex("mask:7") == 7 && PluginEditState.LibraryIndex(fk) == 0, "library masks: LibraryIndex");
+        string k1 = lib.NewLibraryMaskKey();
+        Check(k1 == "mask:1", "library masks: the first key is mask:1");
+        lib.Masks[k1] = MaskRender.DefaultFor(MaskRender.Radial);
+        lib.Masks[fk] = new MaskSpec { Kind = MaskRender.Link, Ref = k1 };
+        Check(lib.NewLibraryMaskKey() == "mask:2", "library masks: the next key skips the used ones");
+        string k2 = lib.NewLibraryMaskKey();
+        lib.Masks[k2] = MaskRender.DefaultFor(MaskRender.Brush);
+        // creating the second mask did not touch the first: the same shape, the tool still follows the first
+        Check(lib.Masks[k1].Kind == MaskRender.Radial && lib.Resolve(lib.Masks[fk]) is { Kind: MaskRender.Radial } && lib.LinksTo(k1).SequenceEqual(new[] { fk }),
+              "library masks: creating one leaves the others and their users untouched");
+        Check(lib.Resolve(lib.Masks[fk]) is { Kind: MaskRender.Radial } rm && ReferenceEquals(rm, lib.Masks[k1]),
+              "library masks: a link resolves to the library record (rendered once per pass)");
+        lib.Masks[k1] = lib.Masks[k1] with { P = new[] { 0.7, 0.3, 0.1, 0.1, 0.5 } };
+        Check(lib.Resolve(lib.Masks[fk])?.P?[0] == 0.7, "library masks: a tool follows edits of the mask it uses");
+        lib.DetachLinksTo(k1);
+        lib.Masks.Remove(k1);
+        Check(lib.Masks[fk] is { Kind: MaskRender.Radial, Ref: null }, "library masks: removing the mask leaves the tool an own copy");
+        Check(lib.NewLibraryMaskKey() == "mask:1", "library masks: a removed key is free again");
+        lib.Masks[k1] = MaskRender.DefaultFor(MaskRender.Radial);
+        lib.Masks["sample.other:grade"] = new MaskSpec { Kind = MaskRender.Radial };
+        var missing = lib.MissingPlugins(PluginRegistry.Empty);
+        Check(missing.SequenceEqual(new[] { "sample.grade", "sample.other" }), "library masks: library keys are not missing plugins");
     }
 }

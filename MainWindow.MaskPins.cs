@@ -112,53 +112,6 @@ public partial class MainWindow
             .Select(kv => (kv.Key, MaskPinLabel(kv.Key, kv.Value) ?? kv.Key))
             .ToList();
 
-    /// <summary>
-    /// Link icon at the end of the mask scope row: use the mask of another tool or filter (e.g. the radial made in
-    /// Adjustments) instead of drawing a new one; both then follow the same shape. Null when there is nothing to link to.
-    /// </summary>
-    private ToggleButton? BuildMaskLinkToggle(string key, string label, string current)
-    {
-        bool linked = current == MaskRender.Link;
-        if (!linked && LinkableMasks(key).Count == 0) return null;
-        var b = IconToggle(MaskIcon(MaskRender.Link),
-            $"Use a mask of another tool for {label}: share it (edit once, both change) or copy it (an own mask you can change separately)",
-            "PluginMask_" + key + "_" + MaskRender.Link, linked);
-        b.Click += (_, _) =>
-        {
-            b.IsChecked = linked;
-            var choices = LinkableMasks(key);
-            var menu = new ContextMenu { PlacementTarget = b, Placement = PlacementMode.Bottom };
-            if (choices.Count == 0)
-                menu.Items.Add(new MenuItem { Header = "No other masks on this photo yet", IsEnabled = false });
-            var cur = _pluginState.Masks.TryGetValue(key, out var cm) ? cm : null;
-            if (choices.Count > 0)
-            {
-                menu.Items.Add(new MenuItem { Header = "Use the same mask — edit once, both change", IsEnabled = false, FontWeight = FontWeights.SemiBold });
-                foreach (var (src, text) in choices)
-                {
-                    var item = new MenuItem { Header = text, IsCheckable = true, IsChecked = linked && cur?.Ref == src, Padding = new Thickness(14, 0, 0, 0) };
-                    AutomationProperties.SetAutomationId(item, "PluginMaskLinkTo_" + src);
-                    item.Click += (_, _) => LinkMask(key, src);
-                    HighlightOnHover(item, src);
-                    menu.Items.Add(item);
-                }
-                menu.Items.Add(new Separator());
-                menu.Items.Add(new MenuItem { Header = "Copy the mask — an own mask, changed separately", IsEnabled = false, FontWeight = FontWeights.SemiBold });
-                foreach (var (src, text) in choices)
-                {
-                    var item = new MenuItem { Header = text, Padding = new Thickness(14, 0, 0, 0) };
-                    AutomationProperties.SetAutomationId(item, "PluginMaskCopyFrom_" + src);
-                    item.Click += (_, _) => CopyMaskFrom(key, src);
-                    HighlightOnHover(item, src);
-                    menu.Items.Add(item);
-                }
-            }
-            menu.Closed += (_, _) => HighlightMask(null);
-            menu.IsOpen = true;
-        };
-        return b;
-    }
-
     /// <summary>Makes the mask of <paramref name="key"/> use the mask of <paramref name="src"/>.</summary>
     private void LinkMask(string key, string src)
     {
@@ -209,6 +162,12 @@ public partial class MainWindow
         MaskBarShared.Text = $"Shared with {string.Join(", ", users)} — changes apply to {(links.Count == 1 ? "both" : "all of them")}";
         MaskBarShared.Visibility = Visibility.Visible;
         bool fromLink = _maskEditVia is { } via && links.Contains(via);
+        if (!fromLink && PluginEditState.IsLibraryKey(key))
+        {
+            // the mask of the MASK module was opened directly: the tools that use it follow it, that is the sharing contract
+            BtnMaskOnlyHere.Visibility = Visibility.Collapsed;
+            return;
+        }
         string only = fromLink ? MaskOwnerLabel(_maskEditVia!) : MaskOwnerLabel(key);
         BtnMaskOnlyHere.Content = $"Edit only for {only}";
         BtnMaskOnlyHere.ToolTip = fromLink
@@ -403,13 +362,17 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Starts editing the mask of <paramref name="key"/>: opens its section (and repeat area) and scrolls it into view.</summary>
+    /// <summary>Starts editing the mask of <paramref name="key"/>: opens its section (or the MASK module) and scrolls it into view.</summary>
     private void EditMaskFromPin(string key)
     {
         if (!_pluginState.Masks.TryGetValue(key, out var spec) || MaskTarget(key) is not { } t) return;
         if (_maskEditFilter == key) return;
         if (_maskEditFilter is not null) EndMaskEdit();
-        if (key != AdjustMask.Key && _pluginReg.FindFilter(key) is { } f)
+        if (PluginEditState.IsLibraryKey(key))
+        {
+            if (!IsSectionOpenNow(AdjMaskSectionKey)) SetSectionExpanded(AdjMaskSectionKey, true);
+        }
+        else if (key != AdjustMask.Key && _pluginReg.FindFilter(key) is { } f)
         {
             if (f.D.RepeatGroup.Length > 0) _repeatSelected[RepeatKey(f)] = f.FullId;
             if (!IsSectionOpenNow(f.PluginId)) SetSectionExpanded(f.PluginId, true);
@@ -419,8 +382,8 @@ public partial class MainWindow
         RebuildPluginUi();
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
-            var root = key == AdjustMask.Key ? (DependencyObject)AdjMaskHost : PluginPanelHost;
-            if (FindByAutomationId(root, "PluginMask_" + key) is FrameworkElement el) el.BringIntoView();
+            var root = key == AdjustMask.Key || PluginEditState.IsLibraryKey(key) ? (DependencyObject)AdjMaskHost : PluginPanelHost;
+            if (FindByAutomationId(root, PluginEditState.IsLibraryKey(key) ? "MaskListRow_" + key : "PluginMask_" + key) is FrameworkElement el) el.BringIntoView();
         });
         SetStatus($"Editing mask: {MaskPinLabel(key, spec) ?? t.Label}" + (AdjEditMask ? " — the sliders change only the inside of the mask until Done" : ""), error: false);
     }

@@ -29,7 +29,7 @@ public partial class MainWindow
     private readonly Dictionary<string, ToggleButton> _pluginToggles = new(StringComparer.Ordinal);
     private readonly List<(KeyGesture Gesture, Registered<CommandDescriptor> Cmd)> _pluginShortcuts = new();
     private readonly Dictionary<string, (Dictionary<string, double> Values, Dictionary<string, string> Text)> _exportOptions = new(StringComparer.Ordinal);
-    /// <summary>The mask being edited on the photo (its bar shows at the bottom); while set, changes in other tools link to this mask (<see cref="AutoScopeToEditedMask"/>).</summary>
+    /// <summary>The mask being edited on the photo (its bar shows at the bottom); maskable tools show a Work-inside button while it is set.</summary>
     private string? _maskEditFilter;
     private (Registered<FilterDescriptor> F, ParamDef D)? _pointPick;
     /// <summary>Runs after a successful point pick (Add of a repeat-group item).</summary>
@@ -223,6 +223,7 @@ public partial class MainWindow
         if (job.AdjustMaskExtras is not { Count: > 0 } extras || ct.IsCancellationRequested) return corrected;
 
         var result = corrected;
+        PluginImage? neutralImg = null; // the whole-photo render converted once, all masks compute their area on it
         foreach (var (key, mx) in extras)
         {
             if (AdjustMask.For(job.State, key) is not { } amask) continue;
@@ -236,7 +237,8 @@ public partial class MainWindow
             var masked = Adjust16.TryApplyGpu(maskedIn, s, g, manual, out _, mono: mono, grainSeed: seed, extra: mx2, ct: ct, cameraTone: curve)
                 ?? Adjust16.Apply(maskedIn, s, g, manual, out _, mono: mono, grainSeed: seed, extra: mx2, ct: ct, cameraTone: curve);
             ct.ThrowIfCancellationRequested();
-            result = AdjustMask.Blend16(masked, corrected, amask, job, fullW, fullH, onto: result);
+            neutralImg ??= PluginPipeline.FromRaw16(corrected);
+            result = AdjustMask.Blend16(masked, corrected, amask, job, fullW, fullH, onto: result, neutralImg);
             hist = null;
             blended = true;
         }
@@ -255,12 +257,14 @@ public partial class MainWindow
         blended = false;
         if (processed is null || job.AdjustMaskExtras is not { Count: > 0 } extras || job.Cancel.IsCancellationRequested) return processed;
         BitmapSource result = processed;
+        PluginImage? neutralImg = null; byte[]? neutralBgra = null; int neutralStride = 0;
         foreach (var (key, mx) in extras)
         {
             if (AdjustMask.For(job.State, key) is not { } amask) continue;
             var masked = AdjustmentsProcessor.Apply(src, s, g, manual, out _, mono: mono, grainSeed: seed, extra: mx);
             if (masked is null) continue;
-            result = AdjustMask.Blend8(masked, processed, amask, job, fullW, fullH, onto: result);
+            if (neutralImg is null) neutralImg = PluginPipeline.FromBitmap(processed, out neutralBgra!, out neutralStride);
+            result = AdjustMask.Blend8(masked, processed, amask, job, fullW, fullH, onto: result, neutralImg, neutralBgra, neutralStride);
             hist = null;
             blended = true;
         }
@@ -435,11 +439,7 @@ public partial class MainWindow
 
     private void SetFilterActive(Registered<FilterDescriptor> f, bool on)
     {
-        if (on)
-        {
-            AutoScopeToEditedMask(f);
-            _pluginState.Active.Add(f.FullId);
-        }
+        if (on) _pluginState.Active.Add(f.FullId);
         else _pluginState.Active.Remove(f.FullId);
         if (_pluginToggles.TryGetValue(f.FullId, out var btn)) btn.IsChecked = on;
         OnPluginUiChanged();
@@ -453,7 +453,7 @@ public partial class MainWindow
         _showHistogram = true;
         HistHost.Visibility = RightPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Hidden;
         UpdateSaveState();
-        RequestRender();
+        RequestPluginRenderThrottled();
         ScheduleHistCommit();
     }
 
@@ -691,7 +691,7 @@ public partial class MainWindow
             IsEnabled = !full,
             ToolTip = full ? $"Limit reached ({inst.Count} {RepeatPlural(noun, inst.Count)}) — remove one first"
                            : points ? $"Add a {nounL}: click it on the photo (Esc cancels). Up to {inst.Count}."
-                                    : $"Add a {nounL} with its own settings and mask (starts with the plugin's default settings and a radial mask in the middle of the view). Up to {inst.Count}."
+                                    : $"Add a {nounL} with its own settings; it asks for its mask — one of this photo's masks, a new one, or the whole photo. Up to {inst.Count}."
         };
         ToolTipService.SetShowOnDisabled(add, true);
         add.SetResourceReference(StyleProperty, "ToolButton");
@@ -705,7 +705,7 @@ public partial class MainWindow
             body.Children.Add(new TextBlock
             {
                 Text = points ? $"No {RepeatPlural(noun, 2)} yet. Click Add {nounL}, then click the photo."
-                              : $"No {RepeatPlural(noun, 2)} yet. Click Add {nounL}, then set it up and give it a mask (without a mask it covers the whole photo).",
+                              : $"No {RepeatPlural(noun, 2)} yet. Click Add {nounL}, then set it up and limit it to one of this photo's masks (its Mask row) — without a mask it covers the whole photo.",
                 Foreground = muted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0)
             });
         }
@@ -744,17 +744,27 @@ public partial class MainWindow
         var pd = free.D.Params.FirstOrDefault(d => d.Kind == ParamKind.Point);
         if (pd is null)
         {
-            // a new area (a mask of its own) starts with the plugin's default settings, not those of the selected one
+            // a new area starts with the plugin's default settings, not those of the selected one; no mask is
+            // created silently — the user picks one of the photo's masks (or a new one, or the whole photo) explicitly
             _pluginState.Active.Add(free.FullId);
             _repeatSelected[RepeatKey(free)] = free.FullId;
-            if (free.D.SupportsMask && !_pluginState.Masks.ContainsKey(free.FullId))
-            {
-                // a new area starts limited to a circle in the middle of the view, not on the whole photo
-                _pluginState.Masks[free.FullId] = NewMaskSpec(MaskRender.Radial);
-                BeginMaskEdit(free.FullId);
-            }
+            bool askMask = free.D.SupportsMask && !_pluginState.Masks.ContainsKey(free.FullId);
+            if (askMask) SetSectionExpanded(free.PluginId, true);
             DeferRebuild();
             OnPluginUiChanged();
+            if (askMask)
+            {
+                SetStatus($"Area {inst.IndexOf(free) + 1} added — choose where it works: a mask of this photo, a new mask, or the whole photo", error: false);
+                // after the panel rebuilds: open the mask choice of the new area (its Mask row)
+                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () =>
+                {
+                    if (FindByAutomationId(PluginPanelHost, "PluginMaskScope_" + free.FullId) is Button scope)
+                    {
+                        scope.BringIntoView();
+                        OpenMaskScopeMenu(scope, free.FullId, free.D.Label, null);
+                    }
+                });
+            }
             return;
         }
         string label = $"{free.D.RepeatGroup} {inst.IndexOf(free) + 1}";
@@ -998,7 +1008,6 @@ public partial class MainWindow
                 cb.Click += (_, _) =>
                 {
                     double v = cb.IsChecked == true ? 1.0 : 0.0;
-                    if (Math.Abs(v - d.Default) > 1e-9) AutoScopeToEditedMask(f);
                     _pluginState.SetValue(f, d, v);
                     OnPluginUiChanged();
                 };
@@ -1021,7 +1030,6 @@ public partial class MainWindow
                 combo.SelectionChanged += (_, _) =>
                 {
                     if (_pluginUiBuilding || combo.SelectedItem is not ComboBoxItem { Tag: string id }) return;
-                    if (id != d.DefaultText) AutoScopeToEditedMask(f);
                     _pluginState.SetText(f, d, id);
                     if (id == "custom")
                     {
@@ -1054,7 +1062,6 @@ public partial class MainWindow
                 ed.Value = _pluginState.GetText(f, d);
                 ed.CurveChanged += (v, final) =>
                 {
-                    if (!string.IsNullOrEmpty(v) && v != d.DefaultText) AutoScopeToEditedMask(f);
                     _pluginState.SetText(f, d, v);
                     OnPluginUiChanged();
                 };
@@ -1116,7 +1123,6 @@ public partial class MainWindow
                 {
                     var p = BrowseFile(d);
                     if (p is null) return;
-                    AutoScopeToEditedMask(f);
                     _pluginState.SetText(f, d, p);
                     DeferRebuild();
                     OnPluginUiChanged();
@@ -1154,7 +1160,6 @@ public partial class MainWindow
                 {
                     value.Text = FormatParam(e.NewValue, d);
                     if (_pluginUiBuilding) return;
-                    if (Math.Abs(e.NewValue - d.Default) > 1e-9) AutoScopeToEditedMask(f);
                     _pluginState.SetValue(f, d, e.NewValue);
                     OnPluginUiChanged();
                 };
@@ -1261,7 +1266,6 @@ public partial class MainWindow
 
         void Commit(Color c)
         {
-            if (ToHex(c) != (d.DefaultText ?? "")) AutoScopeToEditedMask(f);
             _pluginState.SetText(f, d, ToHex(c));
             swatch.Background = new SolidColorBrush(c);
             hexText.Text = ToHex(c);
@@ -1415,7 +1419,6 @@ public partial class MainWindow
         var src = PhotoGeo.MapFromOutput(CurrentDisplayGeo(), bi.Width, bi.Height, fr);
         var val = f.D.Stage == FilterStage.Output ? PhotoGeo.MapToOutput(_geo, bi.Width, bi.Height, src) : src;
         val = new Point(Math.Clamp(val.X, 0, 1), Math.Clamp(val.Y, 0, 1));
-        AutoScopeToEditedMask(f);
         _pluginState.SetText(f, d, Inv(val.X) + "," + Inv(val.Y));
         if (done is not null)
         {
@@ -1507,7 +1510,6 @@ public partial class MainWindow
         if (d is null) return;
         var val = f.D.Stage == FilterStage.Output ? PhotoGeo.MapToOutput(_geo, bi.Width, bi.Height, src) : src;
         val = new Point(Math.Clamp(val.X, 0, 1), Math.Clamp(val.Y, 0, 1));
-        AutoScopeToEditedMask(f);
         _pluginState.SetText(f, d, Inv(val.X) + "," + Inv(val.Y));
         if (final)
         {
@@ -1521,28 +1523,30 @@ public partial class MainWindow
     //  Masks
     // ------------------------------------------------------------------
 
-    /// <summary>Label and stage of a mask owner: a registered filter or the Adjustments panel.</summary>
+    /// <summary>Label and stage of a mask owner: a registered filter, the Adjustments panel, or a MASK-module mask ("mask:N").</summary>
     private (string Key, string Label, FilterStage Stage)? MaskTarget(string? key)
     {
         if (key is null) return null;
         if (key == AdjustMask.Key) return (key, AdjustMask.Label, FilterStage.Display);
+        if (PluginEditState.IsLibraryKey(key)) return (key, "Mask " + PluginEditState.LibraryIndex(key), FilterStage.Display);
         var f = _pluginReg.FindFilter(key);
         return f is null ? null : (f.FullId, f.D.Label, f.D.Stage);
     }
 
-    /// <summary>Mask selector at the top of the Adjustments panel (STANDARD / DETAIL sliders and curves).</summary>
+    /// <summary>The MASK section of the Adjustments panel: every mask of the photo in one place.</summary>
     private void BuildAdjustMaskUi()
     {
         if (AdjMaskHost is null) return;
         AdjMaskHost.Children.Clear();
         var muted = (Brush)FindResource("MutedBrush");
-        var ui = BuildMaskControls(AdjustMask.Key, AdjustMask.Label, muted);
         var mask = _pluginState.Masks.TryGetValue(AdjustMask.Key, out var m) && !string.IsNullOrEmpty(m.Kind) ? m : null;
-        string sub = mask is null ? "whole photo" : MaskKindName(mask.Kind) + (MaskValuesSummary() is null ? "" : " · own values");
+        int count = _pluginState.Masks.Count(kv => kv.Value is { } v && !string.IsNullOrEmpty(v.Kind));
+        string sub = count == 0 ? "create and manage the photo's masks" : count == 1 ? "1 mask" : $"{count} masks";
+        if (mask is not null) sub += $" · STANDARD / DETAIL: {MaskKindName(mask.Kind)}";
         if (AdjEditMask && _adjMaskKey != AdjustMask.Key) sub += $" · sliders: inside the {MaskOwnerLabel(AdjSetKey)} mask";
         var frame = MakeCollapsibleSection(AdjMaskSectionKey, "AdjMaskSection", "MASK", sub,
-            "Where the STANDARD / DETAIL sliders act: whole photo or a mask with values of its own\nClick to expand or collapse",
-            Array.Empty<UIElement>(), ui, mask is not null, defaultOpen: false, out _, headerAutomationId: "AdjMaskSectionHeader");
+            "All masks of the photo in one place: create them here (each mask is independent of the others), edit the shape on the photo, remove them.\nA tool — or the STANDARD / DETAIL sliders — is limited to a mask by choosing it in the tool's Mask row; a tool that follows a mask follows its shape.",
+            Array.Empty<UIElement>(), BuildMaskModuleBody(muted), mask is not null || count > 0, defaultOpen: false, out _, headerAutomationId: "AdjMaskSectionHeader");
         frame.Margin = new Thickness(0);
         AdjMaskHost.Children.Add(frame);
     }
@@ -1594,79 +1598,25 @@ public partial class MainWindow
         var sp = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
         AutomationProperties.SetAutomationId(sp, "PluginMaskBox_" + key);
         var mask = _pluginState.Masks.TryGetValue(key, out var mm) ? mm : null;
-        bool adjust = key == AdjustMask.Key;
-        string scope = adjust
-            ? "the STANDARD and DETAIL sliders (toolbar shadows/gamma, R/G/B curves, histogram levels and B&W stay whole-photo)"
-            : $"the {label} sliders (and the STANDARD / DETAIL sliders while this mask is edited or Inside the mask is chosen)";
-        var items = new List<(string Kind, string Label, bool Plugin)>
-        {
-            ("", "Whole photo", false),
-            (MaskRender.Linear, "Linear gradient", false),
-            (MaskRender.Radial, "Radial", false),
-            (MaskRender.Brush, "Brush", false),
-            (MaskRender.Luma, "Luminance range", false)
-        };
-        items.AddRange(_pluginReg.Masks.Select(m => (MaskRender.PluginPrefix + m.FullId, $"{m.D.Label} ({m.PluginName})", true)));
-        string current = mask?.Kind ?? "";
-        if (current != MaskRender.Link && !items.Any(i => i.Kind == current)) items.Add((current, $"{current} (missing)", true));
 
-        // Mask scope as a row of icons (the histogram toggle leads the row at the top of the Adjustments panel).
-        var icons = new WrapPanel { Margin = new Thickness(0, 0, 0, -3) };
-        AutomationProperties.SetAutomationId(icons, "PluginMask_" + key);
-        if (adjust)
+        // The scope of the tool: whole photo, a new mask, or an existing mask (an explicit choice — nothing is linked silently).
+        var row = new WrapPanel { Margin = new Thickness(0, 0, 0, -3) };
+        AutomationProperties.SetAutomationId(row, "PluginMask_" + key);
+        if (key == AdjustMask.Key)
         {
-            icons.Children.Add(BuildMaskMarkersToggle());
-            icons.Children.Add(new Border { Width = 1, Height = 16, Margin = new Thickness(2, 0, 5, 3), Background = muted, Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(BuildMaskMarkersToggle());
+            row.Children.Add(new Border { Width = 1, Height = 16, Margin = new Thickness(2, 0, 5, 3), Background = muted, Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center });
         }
-        foreach (var (kind, itemLabel, plugin) in items)
+        row.Children.Add(new TextBlock { Text = "Mask", Foreground = muted, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
+        row.Children.Add(BuildMaskScopeButton(key, label, mask));
+        sp.Children.Add(row);
+
+        if (mask is null)
         {
-            string tip = kind.Length == 0
-                ? adjust ? $"Whole photo — no mask: {scope} apply everywhere" : $"Whole photo — {scope} apply everywhere"
-                : adjust ? $"Mask: {itemLabel} — {scope} get values of their own in part of the photo (the red area), added to the whole-photo values"
-                : $"Mask: {itemLabel} — limits {scope} to part of the photo (the red area)";
-            var b = IconToggle(MaskIcon(plugin ? null : kind), tip, "PluginMask_" + key + "_" + (kind.Length == 0 ? "whole" : kind), kind == current);
-            b.Click += (_, _) =>
-            {
-                b.IsChecked = true; // a scope stays selected; choose another icon to change it
-                if (kind == current) return;
-                _pluginState.DetachLinksTo(key); // masks linked to this one keep their shape as own copies
-                if (kind.Length == 0)
-                {
-                    bool hadValues = MaskValuesSummary(key) is not null;
-                    if (AdjEditMask && _adjMaskKey == key) ShowAdjSet(false);
-                    _pluginState.Masks.Remove(key);
-                    if (_maskEditFilter == key) EndMaskEdit();
-                    if (hadValues) SetStatus("Mask removed — its own slider values are gone, the whole-photo values stay (Ctrl+Z brings it back)", error: false);
-                }
-                else
-                {
-                    // a new mask (another kind) starts with no values of its own: the previous mask's corrections do not carry over
-                    bool hadValues = MaskValuesSummary(key) is not null;
-                    if (AdjEditMask && _adjMaskKey == key) ShowAdjSet(false);
-                    _pluginState.Masks[key] = NewMaskSpec(kind);
-                    // the photo does not change; the sliders now set the values inside the new mask
-                    ShowAdjSet(true, key);
-                    SetStatus(hadValues
-                        ? "New mask starts with no values of its own — the previous mask's values are gone (Ctrl+Z brings them back); the sliders now set the inside of the mask"
-                        : "Sliders now set the values inside the mask — they add to the whole-photo values; Whole photo under the icons goes back", error: false);
-                    BeginMaskEdit(key);
-                }
-                DeferRebuild();
-                OnPluginUiChanged();
-            };
-            icons.Children.Add(b);
+            // While another mask is edited, the tool can be limited to it with one explicit click.
+            if (CanApplyInsideEdited(key)) sp.Children.Add(BuildApplyInsideEditedButton(key));
+            return sp;
         }
-        if (BuildMaskLinkToggle(key, label, current) is { } linkBtn) icons.Children.Add(linkBtn);
-        if (adjust) sp.Children.Add(icons);
-        else
-        {
-            // Label and icons side by side; in a narrow panel the icons move under the label instead of covering it.
-            var row = new WrapPanel();
-            row.Children.Add(new TextBlock { Text = "Mask", Foreground = muted, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
-            row.Children.Add(icons);
-            sp.Children.Add(row);
-        }
-        if (mask is null) return sp;
         sp.Children.Add(BuildAdjSetToggle(muted, key));
         if (mask.Kind == MaskRender.Link)
         {
@@ -1829,35 +1779,20 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// While a mask is edited (its bar is open at the bottom of the photo): the first change of a setting of another
-    /// tool links that tool to the edited mask, so its whole effect applies only inside the masked area. Tools that
-    /// cannot use a mask (SupportsMask false, Output stage) or already have their own mask are left alone, as is the
-    /// tool that owns the edited mask.
-    /// </summary>
-    private void AutoScopeToEditedMask(Registered<FilterDescriptor> f)
-    {
-        if (_maskEditFilter is not { } src || src == f.FullId) return;
-        if (!f.D.SupportsMask || f.D.Stage == FilterStage.Output) return;
-        if (_pluginState.Masks.ContainsKey(f.FullId)) return;
-        if (!_pluginState.Masks.TryGetValue(src, out var spec) || string.IsNullOrEmpty(spec.Kind) || spec.Kind == MaskRender.Link) return;
-        _pluginState.Masks[f.FullId] = new MaskSpec { Kind = MaskRender.Link, Ref = src };
-        RefreshMaskBox(f.FullId);
-        SetStatus($"{f.D.Label} applies inside the {MaskOwnerLabel(src)} mask now — its Mask row changes or removes that", error: false);
-    }
-
-    /// <summary>
     /// Replaces the mask row of <paramref name="key"/> in the plugin panel with a freshly built one, so it shows the
     /// new mask state without a full rebuild (which would break a slider or marker drag in progress).
     /// </summary>
     private void RefreshMaskBox(string key)
     {
-        if (PluginPanelHost is null || key == AdjustMask.Key || _pluginReg.FindFilter(key) is not { } f) return;
-        if (FindByAutomationId(PluginPanelHost, "PluginMaskBox_" + key) is not FrameworkElement box || box.Parent is not Panel parent) return;
+        string? label = key == AdjustMask.Key ? AdjustMask.Label : _pluginReg.FindFilter(key)?.D.Label;
+        var root = key == AdjustMask.Key ? (DependencyObject?)AdjMaskHost : PluginPanelHost;
+        if (label is null || root is null) return;
+        if (FindByAutomationId(root, "PluginMaskBox_" + key) is not FrameworkElement box || box.Parent is not Panel parent) return;
         int i = parent.Children.IndexOf(box);
         if (i < 0) return;
         // the Children indexer setter throws when the slot is still occupied, so replace via remove + insert
         parent.Children.RemoveAt(i);
-        parent.Children.Insert(i, BuildMaskControls(key, f.D.Label, (Brush)FindResource("MutedBrush")));
+        parent.Children.Insert(i, BuildMaskControls(key, label, (Brush)FindResource("MutedBrush")));
     }
 
     private void BeginMaskEdit(string key)
@@ -1885,6 +1820,7 @@ public partial class MainWindow
                 ? "Mask brush: paint on the photo, Alt erases, wheel zooms"
                 : "Mask: drag the handles on the photo", error: false);
         EnterAdjMaskSet(key);
+        RefreshAllMaskRows(); // the Work-inside buttons of the other tools follow the edit state
     }
 
     /// <summary>
@@ -1913,6 +1849,7 @@ public partial class MainWindow
         MaskBar.Visibility = Visibility.Collapsed;
         UpdateMaskTintSide();
         RefreshMaskPins();
+        RefreshAllMaskRows(); // the Work-inside buttons of the other tools follow the edit state
     }
 
     /// <summary>Ends mask editing from the on-photo bar, Esc or Enter; the mask itself stays.</summary>
@@ -1941,22 +1878,37 @@ public partial class MainWindow
             MaskRender.Luma => "luminance range",
             _ => "preview"
         };
-        MaskBarText.Text = $"Mask: {t.Label}, {kind}";
+        bool lib = PluginEditState.IsLibraryKey(t.Key);
+        MaskBarText.Text = lib ? $"Mask {PluginEditState.LibraryIndex(t.Key)}: {kind}" : $"Mask: {t.Label}, {kind}";
         bool panel = t.Key == AdjustMask.Key;
         string valuesKey = _maskEditVia ?? t.Key;
         bool local = AdjEditMask && _adjMaskKey == valuesKey;
         bool active = panel || _pluginReg.FindFilter(t.Key) is { } f && _pluginState.IsFilterActive(f);
-        const string inside = "Until Done the STANDARD / DETAIL sliders change only the inside of the mask (its own values, added to the whole-photo values)";
-        const string others = "; while it is open, changes in other tools that can use a mask apply inside it too";
-        MaskBarHint.Text =
-            (panel
-                ? inside
+        string hint;
+        if (lib)
+        {
+            var users = _pluginState.LinksTo(t.Key);
+            string who = string.Join(", ", users.Select(MaskOwnerLabel));
+            hint = users.Count == 0
+                ? "No tool uses this mask yet — a tool can be limited to it in its Mask row (or with its Work inside button)"
+                : $"Used by {who} — their settings act only inside this area";
+            if (local)
+                hint = "Until Done the STANDARD / DETAIL sliders change only the inside of the mask (its own values, added to the whole-photo values). " + hint;
+            active |= local || users.Any(u => _pluginReg.FindFilter(u) is { } uf && _pluginState.IsFilterActive(uf));
+        }
+        else
+        {
+            hint = panel
+                ? "Until Done the STANDARD / DETAIL sliders change only the inside of the mask (its own values, added to the whole-photo values); tools can be limited to this mask with the button in their Mask row"
                 : local
-                    ? (active ? $"The {t.Label} settings and, until Done, the STANDARD / DETAIL sliders act only inside the red area" : inside)
+                    ? (active ? $"The {t.Label} settings and, until Done, the STANDARD / DETAIL sliders act only inside the red area" : "Until Done the STANDARD / DETAIL sliders change only the inside of the mask")
                     : active
                         ? $"Only the {t.Label} settings act inside the red area"
-                        : $"No effect yet: set the {t.Label} sliders or the STANDARD / DETAIL sliders") + others;
-        active |= local || MaskValuesSummary(valuesKey) is not null;
+                        : $"No effect yet: set the {t.Label} sliders or the STANDARD / DETAIL sliders";
+            active |= local;
+        }
+        MaskBarHint.Text = hint;
+        active |= MaskValuesSummary(valuesKey) is not null;
         MaskBarHint.SetResourceReference(TextBlock.ForegroundProperty, active ? "MutedBrush" : "ErrorBrush");
         UpdateMaskBarShared(t.Key);
         MaskBar.Visibility = Visibility.Visible;
@@ -2477,6 +2429,7 @@ public partial class MainWindow
         _saving = true;
         BtnSave.IsEnabled = false;
         Mouse.OverrideCursor = Cursors.Wait;
+        BeginBusy(ExpectedFullRenderMs());
         SetStatus($"Exporting: {exp.D.Label}…", error: false);
         _ = Task.Run(() =>
         {
@@ -2486,6 +2439,9 @@ public partial class MainWindow
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var res = RenderFull(snap);
+                double mp = (res.R16 is not null ? (double)res.R16.W * res.R16.H : (double)res.Bmp!.PixelWidth * res.Bmp.PixelHeight) / 1e6;
+                double fullMs = sw.Elapsed.TotalMilliseconds;
+                Dispatcher.BeginInvoke(() => RecordFullRenderMs(fullMs, mp));
                 var img = res.R16 is not null ? PluginPipeline.FromRaw16(res.R16) : PluginPipeline.FromBitmap(res.Bmp!, out _, out _);
                 var req = new ExportRequest
                 {
@@ -2524,6 +2480,7 @@ public partial class MainWindow
             {
                 _saving = false;
                 Mouse.OverrideCursor = null;
+                EndBusy();
                 UpdateSaveState();
                 SetStatus(msg, error: !ok);
             });

@@ -51,51 +51,6 @@ public partial class MainWindow
 
     private static Shape Frame() => Fg(new Rectangle { Width = 15, Height = 12, StrokeThickness = 1.2, RadiusX = 1.5, RadiusY = 1.5 }.At(0.5, 2), false);
 
-    /// <summary>Icon for a mask kind ("" = whole photo); null kind → plugin mask (puzzle glyph).</summary>
-    private static UIElement MaskIcon(string? kind)
-    {
-        switch (kind)
-        {
-            case "":
-                return IconCanvas(Frame(),
-                    Fg(new Path { Data = Geometry.Parse("M2.5,12.5 L6,8 L8.5,10.5 L10.5,8.5 L13.5,12.5"), StrokeThickness = 1.2, StrokeLineJoin = PenLineJoin.Round }, false),
-                    Fg(new Ellipse { Width = 2.6, Height = 2.6 }.At(10, 4.2), true));
-            case MaskRender.Linear:
-                return IconCanvas(Frame(),
-                    Fg(new Rectangle
-                    {
-                        Width = 13, Height = 10,
-                        OpacityMask = new LinearGradientBrush(Colors.Black, Colors.Transparent, 90)
-                    }.At(1.5, 3), true));
-            case MaskRender.Radial:
-                return IconCanvas(Frame(),
-                    Fg(new Ellipse
-                    {
-                        Width = 11, Height = 9,
-                        OpacityMask = new RadialGradientBrush(Colors.Black, Colors.Transparent)
-                    }.At(2.5, 3.5), true),
-                    Fg(new Ellipse { Width = 11, Height = 9, StrokeThickness = 0.8, StrokeDashArray = new DoubleCollection { 1.5, 1.5 } }.At(2.5, 3.5), false));
-            case MaskRender.Brush:
-                return IconCanvas(
-                    Fg(new Path
-                    {
-                        Data = Geometry.Parse("M1.5,12 C4,4 7,13 10,7 C11.5,4 13.5,4 14.5,5"),
-                        StrokeThickness = 2.6, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round
-                    }, false));
-            case MaskRender.Luma:
-                return IconCanvas(
-                    Fg(new Rectangle
-                    {
-                        Width = 15, Height = 6, RadiusX = 1, RadiusY = 1,
-                        OpacityMask = new LinearGradientBrush(Color.FromArgb(0x30, 0, 0, 0), Colors.Black, 0)
-                    }.At(0.5, 5), true),
-                    Fg(new Path { Data = Geometry.Parse("M5,2.5 V13.5 M11,2.5 V13.5"), StrokeThickness = 1.4 }, false));
-            case MaskRender.Link:
-                return new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13 };
-            default:
-                return new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13 };
-        }
-    }
 
     private static UIElement HistogramIcon() =>
         IconCanvas(Fg(new Path

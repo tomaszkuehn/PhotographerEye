@@ -19,7 +19,26 @@ public sealed class PluginEditState
     public HashSet<string> Active { get; } = new(StringComparer.Ordinal);
     /// <summary>User filter order (full ids). Filters not listed follow by their default order.</summary>
     public List<string> Order { get; } = new();
+    /// <summary>Masks by owner key: a filter's full id, "core:adjustments", or an independent mask of the MASK module ("mask:N").</summary>
     public Dictionary<string, MaskSpec> Masks { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Key prefix of a mask created in the MASK module: an independent mask, owned by no tool.</summary>
+    public const string MaskLibraryPrefix = "mask:";
+
+    /// <summary>True for the key of a mask of the MASK module (not a filter's or the panel's own mask).</summary>
+    public static bool IsLibraryKey(string key) => key.StartsWith(MaskLibraryPrefix, StringComparison.Ordinal);
+
+    /// <summary>Number in a library key ("mask:2" → 2); 0 when it is not a library key.</summary>
+    public static int LibraryIndex(string key) =>
+        IsLibraryKey(key) && int.TryParse(key.AsSpan(MaskLibraryPrefix.Length), out var i) ? i : 0;
+
+    /// <summary>Next free library key ("mask:1", "mask:2", …). Creating that mask touches no other mask and no tool.</summary>
+    public string NewLibraryMaskKey()
+    {
+        int n = 1;
+        while (Masks.ContainsKey(MaskLibraryPrefix + n)) n++;
+        return MaskLibraryPrefix + n;
+    }
 
     public static string Key(string filterFullId, string paramId) => filterFullId + "/" + paramId;
 
@@ -273,7 +292,7 @@ public sealed class PluginEditState
     /// <summary>Plugin ids referenced by this state that are not loaded.</summary>
     public IReadOnlyList<string> MissingPlugins(PluginRegistry reg)
     {
-        var ids = Values.Keys.Concat(Text.Keys).Concat(Active).Concat(Masks.Keys)
+        var ids = Values.Keys.Concat(Text.Keys).Concat(Active).Concat(Masks.Keys.Where(k => !IsLibraryKey(k)))
             .Select(PluginIdOf)
             .Where(id => id.Length > 0)
             .Distinct()
