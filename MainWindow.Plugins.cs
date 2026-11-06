@@ -2013,6 +2013,7 @@ public partial class MainWindow
     {
         BtnMaskTint.IsChecked = on;
         BtnMaskTintSide.IsChecked = on;
+        MaskOverlay.ShowEditFill = on; // off: the brush strokes draw as thin centre lines, not thick area marks
         UpdateMaskTintSide();
         UpdateMaskPreview();
         if (_maskEditFilter is not null)

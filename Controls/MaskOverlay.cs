@@ -99,6 +99,11 @@ public sealed class MaskOverlay : Canvas
         Redraw();
     }
 
+    /// <summary>False while the mask colour is off (the O toggle): the edited brush strokes draw as thin centre lines
+    /// instead of the thick area marks, so the photo shows the result clean — the outline stays traceable, like the
+    /// thin ellipse of an edited radial mask.</summary>
+    public bool ShowEditFill { get; set; } = true;
+
     /// <summary>
     /// Markers of the photo's other masks; clicking one raises <see cref="PinClicked"/>. With no mask being edited
     /// only the markers take the mouse, the rest of the photo still pans and zooms.
@@ -564,16 +569,16 @@ public sealed class MaskOverlay : Canvas
             for (int i = 2; i + 1 < st.Length; i += 2) pts.Add(ToView(st[i], st[i + 1]));
             if (pts.Count == 1) pts.Add(new Point(pts[0].X + 0.01, pts[0].Y));
             bool paint = st[0] >= 0.5;
-            Children.Add(new Polyline
+            // colour on: the strokes mark the painted area; colour off: a thin centreline only, like the outline of
+            // a radial mask — a clean photo with the result, the shape still traceable for painting and erasing.
+            if (ShowEditFill)
+                AddStroke(pts, paint ? StrokeFill : Frozen(Color.FromArgb(60, 80, 160, 255)), Math.Max(1, st[1] * 2 * k));
+            else
             {
-                Points = pts,
-                Stroke = paint ? StrokeFill : Frozen(Color.FromArgb(60, 80, 160, 255)),
-                StrokeThickness = Math.Max(1, st[1] * 2 * k),
-                StrokeLineJoin = PenLineJoin.Round,
-                StrokeStartLineCap = PenLineCap.Round,
-                StrokeEndLineCap = PenLineCap.Round,
-                IsHitTestVisible = false
-            });
+                var line = paint ? Light : Frozen(Color.FromArgb(255, 120, 180, 255));
+                AddStroke(pts, Dark, 3);
+                AddStroke(pts, line, 1.2);
+            }
         }
         if (_mouseInside && _hoverPin < 0)
         {
@@ -587,6 +592,18 @@ public sealed class MaskOverlay : Canvas
             }
         }
     }
+
+    private void AddStroke(PointCollection pts, Brush stroke, double thickness) =>
+        Children.Add(new Polyline
+        {
+            Points = pts,
+            Stroke = stroke,
+            StrokeThickness = thickness,
+            StrokeLineJoin = PenLineJoin.Round,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            IsHitTestVisible = false
+        });
 
     /// <summary>Draws now — e.g. the brush circle after its size was changed by a key while the pointer rests.</summary>
     public void Refresh() => Redraw();
