@@ -230,7 +230,7 @@ public partial class MainWindow : Window
 
         if (_files.Count == 0)
         {
-            SetStatus("No images in folder (jpg, jpeg, png)", error: true);
+            SetStatus("No images in folder (jpg, png, tiff, heic, RAW)", error: true);
             CounterText.Text = "– / –";
             _index = -1;
             BtnEdgeLeft.Visibility = Visibility.Collapsed;
@@ -1865,7 +1865,7 @@ public partial class MainWindow : Window
         var dlg = new OpenFileDialog
         {
             Title = "Open Image",
-            Filter = "Images|*.jpg;*.jpeg;*.png;*.heic;*.heif;*.hif;*.avif" + PluginOpenPatterns() + "|RAW|*.rw2;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.cr2;*.cr3;*.crw;*.orf;*.raf;*.pef;*.ptx;*.dng;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.mos;*.erf;*.kdc;*.dcr;*.mef;*.rwl|All files|*.*",
+            Filter = "Images|*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.heic;*.heif;*.hif;*.avif" + PluginOpenPatterns() + "|RAW|*.rw2;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.cr2;*.cr3;*.crw;*.orf;*.raf;*.pef;*.ptx;*.dng;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.mos;*.erf;*.kdc;*.dcr;*.mef;*.rwl|All files|*.*",
             CheckFileExists = true
         };
         if (dlg.ShowDialog(this) == true)
