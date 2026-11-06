@@ -24,29 +24,24 @@ public sealed class TransNoisePlugin : IEyePlugin
         Description = "Turns coarse, irregular noise into fine, even grain that is pleasant to the eye instead of removing it (experimental)."
     };
 
-    /// <summary>Areas (instances of one panel tool), each with its own mask and settings.</summary>
-    public const int AreaCount = 6;
-
     public void Initialize(IPluginHost host)
     {
-        // Area 1 keeps the id "transnoise", so edits saved with the single-filter version still load.
-        for (int i = 1; i <= AreaCount; i++)
+        // A single instance, hooked up like every other panel tool: it works on the whole photo, or — chosen in
+        // its Mask row — inside an existing mask of the photo. The id stays "transnoise", so edits saved with the
+        // earlier versions still load (areas 2–6 of the old multi-area layout are gone; their values go dormant).
+        host.AddFilter(new FilterDescriptor
         {
-            host.AddFilter(new FilterDescriptor
-            {
-                Id = i == 1 ? "transnoise" : "transnoise" + i,
-                Label = "Trans-noise area " + i,
-                Description = "Turns coarse blotchy noise into fine grain (whole photo, or only inside this area's mask)",
-                Group = "Detail",
-                Stage = FilterStage.Display,
-                Order = i,
-                SupportsMask = true,
-                RepeatGroup = "Area",
-                Params = TransNoise.Params(),
-                IsIdentity = TransNoise.IsIdentity,
-                Render = (img, p, ctx) => TransNoise.Render(img, p, ctx)
-            });
-        }
+            Id = "transnoise",
+            Label = "Trans-noise",
+            Description = "Turns coarse blotchy noise into fine grain (whole photo, or inside the mask chosen in its Mask row)",
+            Group = "Detail",
+            Stage = FilterStage.Display,
+            Order = 1,
+            SupportsMask = true,
+            Params = TransNoise.Params(),
+            IsIdentity = TransNoise.IsIdentity,
+            Render = (img, p, ctx) => TransNoise.Render(img, p, ctx)
+        });
     }
 }
 
