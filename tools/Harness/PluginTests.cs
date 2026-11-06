@@ -233,6 +233,22 @@ internal static partial class Program
         var radInv = MaskRender.Render(MaskRender.DefaultFor(MaskRender.Radial) with { Invert = true }, pimg, ctx, reg);
         Check(radInv is not null && rad is not null && Math.Abs(radInv[ci] + rad[ci] - 1f) < 1e-4f, "inverted mask = 1 - mask");
         {
+            // A plain selection brush: fully inside the stroke, nothing beyond — no faded tool rim (no opacity, no pressure).
+            var b = MaskRender.Render(new MaskSpec { Kind = MaskRender.Brush, Strokes = new List<double[]> { new[] { 1.0, 0.10, 0.5, 0.5 } } }, pimg, ctx, reg);
+            double rr = 0.10 * W;
+            float At(float[]? m, double dx, double dy) => m?[(int)(H / 2 + dy) * W + (int)(W / 2 + dx)] ?? -1;
+            Check(b is not null && At(b, 0, 0) == 1f && At(b, rr * 0.8, 0) == 1f && At(b, 0, rr * 0.8) == 1f && At(b, rr * 0.5, rr * 0.5) == 1f
+                  && At(b, rr + 2, 0) == 0f && At(b, 0, rr + 2) == 0f,
+                  "brush mask: hard edge — full inside the stroke, nothing beyond (no faded rim)");
+            var hole = MaskRender.Render(new MaskSpec
+            {
+                Kind = MaskRender.Brush,
+                Strokes = new List<double[]> { new[] { 1.0, 0.10, 0.5, 0.5 }, new[] { 0.0, 0.04, 0.5, 0.5 } }
+            }, pimg, ctx, reg);
+            Check(hole is not null && At(hole, 0, 0) == 0f && At(hole, 0.06 * W, 0) == 1f,
+                  "brush mask: erase is hard too — a hole out, paint around it");
+        }
+        {
             // Rotated radial (P[5], degrees clockwise, pixel space): a thin horizontal ellipse turned by 90 / 45 degrees.
             double mn = Math.Min(W, H);
             double[] Ell(double angle) => new[] { 0.5, 0.5, 0.4 * mn / W, 0.08 * mn / H, 0.0, angle };

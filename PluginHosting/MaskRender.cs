@@ -263,7 +263,8 @@ public static class MaskRender
         return m;
     }
 
-    /// <summary>Strokes: [mode, radius (fraction of width), x1, y1, x2, y2, ...]. Paint = max, erase = min.</summary>
+    /// <summary>Strokes: [mode, radius (fraction of width), x1, y1, x2, y2, ...]. Paint = max, erase = min. Each dab is
+    /// hard-edged — a plain selection brush: fully inside the stroke, nothing beyond it, no opacity or pressure.</summary>
     private static float[] RenderBrush(MaskSpec s, int w, int h)
     {
         var m = new float[w * h];
@@ -294,12 +295,12 @@ public static class MaskRender
         return m;
     }
 
+    /// <summary>A hard-edged dab: 1 inside the circle (0 for an erase dab), no fade towards the rim.</summary>
     private static void Dab(float[] m, int w, int h, double cx, double cy, double r, bool paint)
     {
-        const double hardness = 0.5;
         int x0 = Math.Max(0, (int)Math.Floor(cx - r)), x1 = Math.Min(w - 1, (int)Math.Ceiling(cx + r));
         int y0 = Math.Max(0, (int)Math.Floor(cy - r)), y1 = Math.Min(h - 1, (int)Math.Ceiling(cy + r));
-        double inner = r * hardness;
+        double rr = r * r;
         for (int y = y0; y <= y1; y++)
         {
             int row = y * w;
@@ -307,12 +308,10 @@ public static class MaskRender
             for (int x = x0; x <= x1; x++)
             {
                 double dx = x + 0.5 - cx;
-                double d = Math.Sqrt(dx * dx + dy * dy);
-                if (d >= r) continue;
-                float f = d <= inner ? 1f : 1f - Smooth((d - inner) / (r - inner));
+                if (dx * dx + dy * dy >= rr) continue;
                 int i = row + x;
-                if (paint) { if (f > m[i]) m[i] = f; }
-                else m[i] = Math.Min(m[i], 1f - f);
+                if (paint) m[i] = 1f;
+                else m[i] = 0f;
             }
         }
     }
