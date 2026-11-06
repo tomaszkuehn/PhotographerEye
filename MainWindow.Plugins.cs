@@ -352,10 +352,62 @@ public partial class MainWindow
     //  Panel / toolbar UI
     // ------------------------------------------------------------------
 
+    /// <summary>The element the panel is scrolled to: its slot in <paramref name="Parent"/> and how far it sits below the view top.</summary>
+    private sealed record PanelAnchor(Panel Parent, int Index, double Within);
+
+    /// <summary>
+    /// The child of <paramref name="parent"/> that the top of the view falls into, so a rebuild can put the same
+    /// content back under it whatever grows or shrinks above.
+    /// </summary>
+    private static PanelAnchor? TopAnchor(Panel parent, FrameworkElement content, double offset)
+    {
+        PanelAnchor? best = null;
+        foreach (var c in parent.Children.OfType<FrameworkElement>())
+        {
+            double y;
+            try { y = c.TransformToAncestor(content).Transform(new Point(0, 0)).Y; }
+            catch { return best; } // not laid out yet: keep what was found so far
+            if (y <= offset + 0.5) best = new PanelAnchor(parent, parent.Children.IndexOf(c), offset - y);
+        }
+        return best;
+    }
+
+    private PanelAnchor? CapturePanelAnchor(ScrollViewer? scroll)
+    {
+        if (scroll is null || scroll.VerticalOffset < 1 || scroll.Content is not FrameworkElement content) return null;
+        double offset = scroll.VerticalOffset;
+        // a section of the plugin area first, else the top-level block (MASK, STANDARD, DETAIL) the view is in
+        var a = TopAnchor(PluginPanelHost, content, offset) ?? (content is Panel p ? TopAnchor(p, content, offset) : null);
+        Debug.Log($"PANEL ANCHOR: capture offset={offset:0.#} -> {(a is null ? "none" : $"index {a.Index} within {a.Within:0.#}")}");
+        return a;
+    }
+
+    private static void RestorePanelAnchor(ScrollViewer? scroll, PanelAnchor? anchor)
+    {
+        if (scroll is null || anchor is not { } a || a.Parent.Children.Count <= a.Index) return;
+        if (scroll.Content is not FrameworkElement content) return;
+        try
+        {
+            scroll.UpdateLayout();
+            if (a.Parent.Children[a.Index] is not FrameworkElement c) return;
+            double y = c.TransformToAncestor(content).Transform(new Point(0, 0)).Y;
+            double target = Math.Max(0, y + a.Within);
+            scroll.ScrollToVerticalOffset(target);
+            Debug.Log($"PANEL ANCHOR: restore index {a.Index} y={y:0.#} within={a.Within:0.#} -> offset {target:0.#}");
+        }
+        catch (Exception ex) { Debug.Log($"PANEL ANCHOR: restore failed [{ex.GetType().Name}] {ex.Message}"); }
+    }
+
     private void RebuildPluginUi()
     {
         if (PluginToolbarHost is null || PluginPanelHost is null) return;
         CheckAdjSet();
+        // The panel stays where the user scrolled it: what sits at the top of the view goes back there after the
+        // rebuild, however the sections above grow or shrink (tool toggles, masks, areas).
+        DependencyObject? up = PluginPanelHost;
+        while (up is not null and not ScrollViewer) up = VisualTreeHelper.GetParent(up);
+        var scroll = up as ScrollViewer;
+        var anchor = CapturePanelAnchor(scroll);
         _pluginUiBuilding = true;
         string? focusedList = FocusedListPanel();
         try
@@ -379,6 +431,7 @@ public partial class MainWindow
         {
             _pluginUiBuilding = false;
         }
+        RestorePanelAnchor(scroll, anchor);
     }
 
     private static bool IsFaulted(Registered<FilterDescriptor> f) => f.Owner is { Faulted: true };
@@ -679,7 +732,7 @@ public partial class MainWindow
             chip.Click += (_, _) =>
             {
                 _repeatSelected[RepeatKey(target)] = target.FullId;
-                DeferRebuild();
+                RefreshRepeatSection(target.PluginId, target.FullId); // the panel stays where the user scrolled it
                 RefreshPointMarkers();
             };
             row.Children.Add(chip);
@@ -1631,6 +1684,11 @@ public partial class MainWindow
             if (_pluginState.Masks.TryGetValue(key, out var m)) _pluginState.Masks[key] = m with { Invert = inv.IsChecked == true };
             SyncMaskOverlaySpec();
             OnPluginUiChanged();
+            bool on = inv.IsChecked == true;
+            SetStatus(key == AdjustMask.Key
+                ? on ? "Mask inverted: its own STANDARD / DETAIL values apply outside it now" : "Mask normal: its own STANDARD / DETAIL values apply inside it again"
+                : on ? $"Mask inverted: {MaskOwnerLabel(key)} works outside it now" : $"Mask normal: {MaskOwnerLabel(key)} works inside it again", error: false);
+            ShowMaskAreaForAWhile(key);
         };
         inv.SetResourceReference(ForegroundProperty, "ForegroundBrush"); // readable on the panel background
         opts.Children.Add(inv);
@@ -1795,9 +1853,35 @@ public partial class MainWindow
         parent.Children.Insert(i, BuildMaskControls(key, label, (Brush)FindResource("MutedBrush")));
     }
 
+    /// <summary>
+    /// Replaces only the section of <paramref name="pluginId"/> in the plugin panel (like <see cref="RefreshMaskBox"/>
+    /// replaces one mask row), so switching a repeat-group chip does not rebuild the panel — the scroll and everything
+    /// else stay as the user left them, and the clicked chip keeps the keyboard focus.
+    /// </summary>
+    private void RefreshRepeatSection(string pluginId, string? focusChip = null)
+    {
+        var box = FindByAutomationId(PluginPanelHost, "PluginGroup_" + pluginId) as FrameworkElement;
+        if (box is null || box.Parent is not Panel parent)
+        {
+            RebuildPluginUi(); // the section is not there (first build): fall back to a full rebuild
+            return;
+        }
+        var ordered = new List<Registered<FilterDescriptor>>();
+        foreach (var stage in new[] { FilterStage.Base, FilterStage.SceneLinear, FilterStage.Display, FilterStage.Output })
+            ordered.AddRange(_pluginState.Ordered(_pluginReg, stage).Where(f => f.D.Params.Count > 0 || f.D.Placement == FilterPlacement.Panel));
+        var filters = ordered.Where(f => f.PluginId == pluginId).ToList();
+        if (filters.Count == 0) { RebuildPluginUi(); return; }
+        int i = parent.Children.IndexOf(box);
+        parent.Children.RemoveAt(i);
+        parent.Children.Insert(i, BuildPluginSection(pluginId, filters, (Brush)FindResource("MutedBrush"), (Brush)FindResource("BorderBrushCol")));
+        if (focusChip is not null && FindByAutomationId(PluginPanelHost, "RepeatItem_" + focusChip) is System.Windows.Controls.Primitives.ToggleButton chip)
+            chip.Focus();
+    }
+
     private void BeginMaskEdit(string key)
     {
         if (!_pluginState.Masks.TryGetValue(key, out var spec)) return;
+        _maskEditVia = null; // cleared for a direct edit; the link route sets it again after entering the source mask
         if (spec.Kind == MaskRender.Link)
         {
             // a linked mask is edited through the mask it uses
@@ -1997,6 +2081,11 @@ public partial class MainWindow
             MaskOverlay.SetPreview(null);
             return;
         }
+        // Editing through a linked tool ("Edit that mask"): the tint shows where that tool works — the linked mask
+        // with the link's invert — so the highlighted area is exactly the area its effect applies in, also when
+        // the link's Invert is toggled while editing.
+        if (_maskEditVia is not null && _pluginState.Masks.TryGetValue(_maskEditVia, out var via) && _pluginState.Resolve(via) is { } eff)
+            spec = eff;
         int seq = Interlocked.Increment(ref _maskPreviewSeq);
         RenderMaskTint(src, spec, t.Stage, 60, 60, 255, 140,
             () => seq == Volatile.Read(ref _maskPreviewSeq),

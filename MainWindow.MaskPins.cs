@@ -227,6 +227,10 @@ public partial class MainWindow
         {
             if (_pluginState.Masks.TryGetValue(key, out var m)) _pluginState.Masks[key] = m with { Invert = inv.IsChecked == true };
             OnPluginUiChanged();
+            bool on = inv.IsChecked == true;
+            string srcName = src is null ? "the mask it uses" : MaskOwnerLabel(src);
+            SetStatus(on ? $"{MaskOwnerLabel(key)} works outside {srcName} now" : $"{MaskOwnerLabel(key)} works inside {srcName} again", error: false);
+            ShowMaskAreaForAWhile(key);
         };
         inv.SetResourceReference(ForegroundProperty, "ForegroundBrush"); // readable on the panel background
         opts.Children.Add(inv);
@@ -291,8 +295,10 @@ public partial class MainWindow
         if (!editing)
         {
             bool visible = show && pins.Count > 0;
-            if (visible && _baseInfo is ImageInfo bi) MaskOverlay.SetMapping(CurrentDisplayGeo(), bi.Width, bi.Height);
-            var v = visible ? Visibility.Visible : Visibility.Collapsed;
+            // A shown mask (hover of a menu entry, the moment after an invert toggle) keeps the overlay up even with no pins
+            bool shown = visible || MaskOverlay.HasHighlight;
+            if (shown && _baseInfo is ImageInfo bi) MaskOverlay.SetMapping(CurrentDisplayGeo(), bi.Width, bi.Height);
+            var v = shown ? Visibility.Visible : Visibility.Collapsed;
             if (MaskOverlay.Visibility != v) MaskOverlay.Visibility = v;
         }
         MaskOverlay.SetPins(pins, show);
@@ -325,6 +331,30 @@ public partial class MainWindow
     }
 
     private int _maskHighlightSeq;
+
+    private System.Windows.Threading.DispatcherTimer? _maskInvertShow;
+
+    /// <summary>
+    /// Shows the effective area of the mask of <paramref name="key"/> on the photo for a few seconds (e.g. after its
+    /// invert is toggled), so it is clear which area the tool works in now. While a mask is edited its red preview
+    /// already shows it. Null clears it at once.
+    /// </summary>
+    private void ShowMaskAreaForAWhile(string? key)
+    {
+        if (_maskEditFilter is not null && key is not null) return;
+        HighlightMask(key);
+        if (key is null) return;
+        _maskInvertShow ??= NewMaskInvertShowTimer();
+        _maskInvertShow.Stop();
+        _maskInvertShow.Start();
+    }
+
+    private System.Windows.Threading.DispatcherTimer NewMaskInvertShowTimer()
+    {
+        var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        t.Tick += (_, _) => { t.Stop(); HighlightMask(null); };
+        return t;
+    }
 
     /// <summary>While the pointer (or keyboard focus) is on a menu item, the mask it names is shown on the photo.</summary>
     private void HighlightOnHover(MenuItem item, string key)
@@ -362,7 +392,8 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Starts editing the mask of <paramref name="key"/>: opens its section (or the MASK module) and scrolls it into view.</summary>
+    /// <summary>Starts editing the mask of <paramref name="key"/>: opens its section (or the MASK module). The panel
+    /// itself stays where the user scrolled it — the row to edit is found through the status line, not by moving the panel.</summary>
     private void EditMaskFromPin(string key)
     {
         if (!_pluginState.Masks.TryGetValue(key, out var spec) || MaskTarget(key) is not { } t) return;
@@ -380,11 +411,6 @@ public partial class MainWindow
         else if (key == AdjustMask.Key && !IsSectionOpenNow(AdjMaskSectionKey)) SetSectionExpanded(AdjMaskSectionKey, true);
         BeginMaskEdit(key);
         RebuildPluginUi();
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
-        {
-            var root = key == AdjustMask.Key || PluginEditState.IsLibraryKey(key) ? (DependencyObject)AdjMaskHost : PluginPanelHost;
-            if (FindByAutomationId(root, PluginEditState.IsLibraryKey(key) ? "MaskListRow_" + key : "PluginMask_" + key) is FrameworkElement el) el.BringIntoView();
-        });
         SetStatus($"Editing mask: {MaskPinLabel(key, spec) ?? t.Label}" + (AdjEditMask ? " — the sliders change only the inside of the mask until Done" : ""), error: false);
     }
 
