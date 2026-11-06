@@ -97,6 +97,38 @@ public static class MaskRender
         return a == -90 ? 90 : a;
     }
 
+    /// <summary>
+    /// The user feather of a radial mask (0..1): 0 = no feather (the outer outline sits on the inner ellipse), 1 = the
+    /// outer outline is twice the inner ellipse (its double diameter). The stored band (P[4]) is a fraction of the
+    /// outer radius, so band = F / (1 + F); a stored band above 0.5 (not reachable through the UI) reads as 1.
+    /// </summary>
+    public static double RadialUserFeather(double band)
+    {
+        double f = Math.Clamp(band, 0.0, 0.5);
+        return f / (1 - f);
+    }
+
+    /// <summary>Inverse of <see cref="RadialUserFeather"/>: the stored band of a user feather 0..1.</summary>
+    public static double RadialBandFraction(double userFeather)
+    {
+        double f = Math.Clamp(userFeather, 0.0, 1.0);
+        return f / (1 + f);
+    }
+
+    /// <summary>
+    /// Feather drag by the outer outline of a radial mask: the pointer at <paramref name="innerRatio"/> × the inner
+    /// ellipse (1 = on the inner ellipse, 2 = twice it) with the inner ellipse kept fixed; returns the new stored band
+    /// and the scale of the outer radii (P[2], P[3]). A ratio of 1 + the start band (the pointer on the grabbed
+    /// outline) gives back the start values, so the outline does not jump when it is grabbed; a stored band above
+    /// 0.5 (legacy, not reachable through the UI) snaps into the range on the first drag.
+    /// </summary>
+    public static (double Band, double Scale) RadialFeatherDrag(double band0, double innerRatio)
+    {
+        double f0 = Math.Clamp(band0, 0.0, 0.5);
+        double f = Math.Clamp(innerRatio - 1, 0.0, 1.0);
+        return (f / (1 + f), (1 + f) * (1 - f0));
+    }
+
     public static bool IsGeometric(string kind) => kind is Linear or Radial or Brush;
 
     /// <summary>

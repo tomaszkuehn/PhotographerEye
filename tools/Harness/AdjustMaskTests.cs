@@ -172,5 +172,25 @@ internal static partial class Program
         lib.Masks["sample.other:grade"] = new MaskSpec { Kind = MaskRender.Radial };
         var missing = lib.MissingPlugins(PluginRegistry.Empty);
         Check(missing.SequenceEqual(new[] { "sample.grade", "sample.other" }), "library masks: library keys are not missing plugins");
+
+        // Feather of a radial mask by the outer outline: 0 = on the inner ellipse, 100 % = twice its diameter.
+        Check(MaskRender.RadialBandFraction(0) == 0 && Math.Abs(MaskRender.RadialBandFraction(1) - 0.5) < 1e-12,
+              "radial feather: 0 % is a hard edge, 100 % stores the band 0.5");
+        Check(Math.Abs(MaskRender.RadialBandFraction(0.5) - 1.0 / 3) < 1e-12, "radial feather: 50 % stores the band 1/3");
+        Check(MaskRender.RadialUserFeather(0) == 0 && Math.Abs(MaskRender.RadialUserFeather(0.5) - 1) < 1e-12 &&
+              Math.Abs(MaskRender.RadialUserFeather(1.0 / 3) - 0.5) < 1e-12,
+              "radial feather: the user scale of stored bands (legacy bands over 0.5 read as 100 %)");
+        bool roundTrip = true;
+        foreach (double f in new[] { 0.0, 0.25, 0.5, 1.0 })
+            if (Math.Abs(MaskRender.RadialUserFeather(MaskRender.RadialBandFraction(f)) - f) > 1e-12) roundTrip = false;
+        Check(roundTrip, "radial feather: band and user scale are inverse");
+        var (grab, grabScale) = MaskRender.RadialFeatherDrag(0.5, 2.0); // pointer on the grabbed outer outline
+        Check(Math.Abs(grab - 0.5) < 1e-12 && Math.Abs(grabScale - 1) < 1e-12, "radial feather drag: grabbing the outline does not move it");
+        var (hard, hardScale) = MaskRender.RadialFeatherDrag(0.5, 1.0); // dragged onto the inner ellipse
+        Check(hard == 0 && Math.Abs(hardScale - 0.5) < 1e-12, "radial feather drag: 0 % = the outer sits on the inner");
+        var (soft, softScale) = MaskRender.RadialFeatherDrag(0.5, 3.0); // past twice the inner: capped at 100 %
+        Check(Math.Abs(soft - 0.5) < 1e-12 && Math.Abs(softScale - 1) < 1e-12, "radial feather drag: 100 % = twice the inner, no further");
+        var (fromHard, fromHardScale) = MaskRender.RadialFeatherDrag(0.0, 2.0); // from a hard edge out to twice the circle
+        Check(Math.Abs(fromHard - 0.5) < 1e-12 && Math.Abs(fromHardScale - 2) < 1e-12, "radial feather drag: from a hard edge the outer grows to twice the inner");
     }
 }

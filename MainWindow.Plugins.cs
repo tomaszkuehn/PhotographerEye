@@ -1697,17 +1697,17 @@ public partial class MainWindow
             sp.Children.Add(rot);
 
             sp.Children.Add(LabelRow("Feather", out var fv, muted));
-            double feather0 = mask.P is not null && mask.P.Length > 4 ? Math.Clamp(mask.P[4], 0, 1) : 0.5;
-            var fea = new Slider { Minimum = 0, Maximum = 100, Value = Math.Round(feather0 * 100), SmallChange = 1, LargeChange = 10 };
-            fea.ToolTip = "How softly the effect fades out towards the edge of the ellipse: 0 = hard edge, 100 = fades all the way from the centre. Double-click resets to 50.";
+            double band0 = mask.P is not null && mask.P.Length > 4 ? Math.Clamp(mask.P[4], 0, 1) : 0.5;
+            var fea = new Slider { Minimum = 0, Maximum = 100, Value = Math.Round(MaskRender.RadialUserFeather(band0) * 100), SmallChange = 1, LargeChange = 10 };
+            fea.ToolTip = "How softly the edge fades: 0 = hard edge (the outlines meet), 100 = the solid outer outline is twice the dashed inner ellipse. Drag the outer outline on the photo to set it by hand. Double-click resets to the default (100).";
             AutomationProperties.SetAutomationId(fea, "PluginMaskFeather_" + key);
             PhotoshopSlider.SetEnable(fea, true);
             fv.Text = $"{fea.Value:0}";
-            fea.MouseDoubleClick += (_, _) => fea.Value = 50;
+            fea.MouseDoubleClick += (_, _) => fea.Value = 100;
             fea.ValueChanged += (_, e) =>
             {
                 fv.Text = $"{e.NewValue:0}";
-                SetRadialParam(key, 4, Math.Round(e.NewValue) / 100.0);
+                SetRadialParam(key, 4, MaskRender.RadialBandFraction(e.NewValue / 100.0));
             };
             sp.Children.Add(fea);
         }
@@ -1818,7 +1818,9 @@ public partial class MainWindow
         if (IsInteractiveMask(spec.Kind))
             SetStatus(spec.Kind == MaskRender.Brush
                 ? "Mask brush: paint on the photo, Alt erases, wheel zooms"
-                : "Mask: drag the handles on the photo", error: false);
+                : spec.Kind == MaskRender.Radial
+                    ? "Mask: drag the handles to size the circle, the outer outline to set the feather"
+                    : "Mask: drag the handles on the photo", error: false);
         EnterAdjMaskSet(key);
         RefreshAllMaskRows(); // the Work-inside buttons of the other tools follow the edit state
     }
@@ -1873,7 +1875,7 @@ public partial class MainWindow
         string kind = spec.Kind switch
         {
             MaskRender.Linear => "linear gradient — drag the handles",
-            MaskRender.Radial => "radial — drag the handles",
+            MaskRender.Radial => "radial — drag the handles; the outer outline sets the feather",
             MaskRender.Brush => "brush — paint, Alt erases",
             MaskRender.Luma => "luminance range",
             _ => "preview"
@@ -1963,7 +1965,11 @@ public partial class MainWindow
         if (_pluginState.Masks.TryGetValue(_maskEditFilter, out var was)) spec = spec with { Adjust = was.Adjust }; // the overlay edits the shape only
         _pluginState.Masks[_maskEditFilter] = spec;
         OnPluginUiChanged();
-        if (final && spec.Kind == MaskRender.Radial) DeferRebuild(); // rotation slider follows the handle
+        // Live feedback while the outer outline is dragged: the feather of the radial mask, 0..100.
+        if (spec.Kind == MaskRender.Radial && !final &&
+            was?.P is { Length: > 4 } o && spec.P is { Length: > 4 } n && Math.Abs(n[4] - o[4]) > 1e-6)
+            SetStatus($"Feather {MaskRender.RadialUserFeather(n[4]) * 100:0} % — drag the outer outline (0 = hard edge, 100 = twice the inner ellipse)", error: false);
+        if (final && spec.Kind == MaskRender.Radial) DeferRebuild(); // the rotation and feather sliders follow the handles
     }
 
     private void RefreshMaskOverlay()

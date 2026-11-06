@@ -22,7 +22,7 @@ public partial class MainWindow
     /// <summary>The masks a new one can be drawn with.</summary>
     private static (string Kind, string Name, string Tip)[] NewMaskKinds() => new[]
     {
-        (MaskRender.Radial, "Radial", "A soft circle in the middle of the view — drag its handles"),
+        (MaskRender.Radial, "Radial", "A soft circle in the middle of the view — drag its handles to size it, the outer outline to set the feather"),
         (MaskRender.Linear, "Linear gradient", "A gradient from one line to another"),
         (MaskRender.Brush, "Brush", "Paint the area by hand; Alt erases"),
         (MaskRender.Luma, "Luminance range", "The dark (or bright) part of the photo")

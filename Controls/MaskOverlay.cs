@@ -49,6 +49,7 @@ public sealed class MaskOverlay : Canvas
     private List<MaskPin> _pins = new();
     private bool _pinsVisible;
     private int _hoverPin = -1;
+    private bool _hoverOuter;
     private List<(Point At, List<MaskPin> Pins)> _clusters = new();
 
     /// <summary>Brush radius as a fraction of the photo width.</summary>
@@ -66,7 +67,7 @@ public sealed class MaskOverlay : Canvas
         MouseLeftButtonDown += OnDown;
         MouseMove += OnMove;
         MouseLeftButtonUp += OnUp;
-        MouseLeave += (_, _) => { _mouseInside = false; _hoverPin = -1; UpdateCursor(); Redraw(); };
+        MouseLeave += (_, _) => { _mouseInside = false; _hoverPin = -1; _hoverOuter = false; UpdateCursor(); Redraw(); };
         MouseWheel += (_, e) =>
         {
             if (_viewer is null) return;
@@ -125,7 +126,9 @@ public sealed class MaskOverlay : Canvas
 
     private void UpdateCursor()
     {
-        Cursor = _hoverPin >= 0 ? Cursors.Hand : Editing && _spec?.Kind == "brush" ? Cursors.None : Cursors.Arrow;
+        Cursor = _hoverPin >= 0 ? Cursors.Hand
+            : _mouseInside && _hoverOuter ? Cursors.Hand
+            : Editing && _spec?.Kind == "brush" ? Cursors.None : Cursors.Arrow;
     }
 
     /// <summary>Without a background only the markers are hit (the photo under the rest keeps panning).</summary>
@@ -246,8 +249,14 @@ public sealed class MaskOverlay : Canvas
 
     private const double RotateGap = 22;
     private const int RotateHandle = 3;
+    /// <summary>Drag of the outer outline of a radial mask: tunes the feather, the inner ellipse stays fixed.</summary>
+    private const int FeatherDrag = 101;
+    private const double OutlineGrab = 7;
 
     private double[] RadialParams() => Params(6, 0.5, 0.5, 0.3, 0.3, 0.5, 0);
+
+    /// <summary>Scale of the inner (dashed, fully covered) ellipse of a radial mask: 1 - feather, kept positive.</summary>
+    private static double RadialInner(double[] p) => Math.Max(0.001, 1 - Math.Clamp(p[4], 0.0, 1.0));
 
     /// <summary>Point of the radial ellipse at (a, b) along its own axes (1, 0 = end of the first radius), in view coordinates.</summary>
     private Point RadialPoint(double[] p, double a, double b)
@@ -273,12 +282,14 @@ public sealed class MaskOverlay : Canvas
             }
             case "radial":
             {
-                // Center, the two radius handles on the (rotated) axes and the rotation handle past the top of the ellipse.
+                // Center, the two radius handles on the (rotated) axes of the inner ellipse — they size the covered
+                // core, the outer outline is the feather grip — and the rotation handle past the top of the outer edge.
                 var p = RadialParams();
+                double inner = RadialInner(p);
                 var c = ToView(p[0], p[1]);
                 list.Add(c);
-                list.Add(RadialPoint(p, 1, 0));
-                list.Add(RadialPoint(p, 0, 1));
+                list.Add(RadialPoint(p, inner, 0));
+                list.Add(RadialPoint(p, 0, inner));
                 var top = RadialPoint(p, 0, -1);
                 var dir = top - c;
                 if (dir.Length < 1e-3) dir = new Vector(0, -1);
@@ -288,6 +299,32 @@ public sealed class MaskOverlay : Canvas
             }
         }
         return list;
+    }
+
+    /// <summary>True when the view point lies on the outer (solid) outline of the radial mask being edited — the feather grip.</summary>
+    private bool NearRadialOuter(Point view)
+    {
+        if (_spec is null || _spec.Kind != "radial") return false;
+        var p = RadialParams();
+        Point prev = RadialPoint(p, 1, 0);
+        for (int i = 1; i <= 72; i++)
+        {
+            double a = i * Math.PI * 2 / 72;
+            var q = RadialPoint(p, Math.Cos(a), Math.Sin(a));
+            if (DistToSeg(view, prev, q) <= OutlineGrab) return true;
+            prev = q;
+        }
+        return false;
+    }
+
+    private static double DistToSeg(Point pt, Point a, Point b)
+    {
+        double dx = b.X - a.X, dy = b.Y - a.Y;
+        double len2 = dx * dx + dy * dy;
+        if (len2 < 1e-9) return (pt - a).Length;
+        double t = Math.Clamp(((pt.X - a.X) * dx + (pt.Y - a.Y) * dy) / len2, 0, 1);
+        double x = a.X + t * dx - pt.X, y = a.Y + t * dy - pt.Y;
+        return Math.Sqrt(x * x + y * y);
     }
 
     // ------------------------------------------------------------------
@@ -559,8 +596,9 @@ public sealed class MaskOverlay : Canvas
     {
         var pos = e.GetPosition(this);
         int pin = PinAt(pos);
-        // A marker wins over painting and moving the shape, but not over a handle of the mask being edited.
-        if (pin >= 0 && !(Editing && _spec is not null && _spec.Kind != "brush" && Handles().Any(h => (h - pos).Length <= HandleR + 4)))
+        // A marker wins over painting and moving the shape, but not over a handle of the mask being edited nor its outer outline (the feather grip).
+        if (pin >= 0 && !(Editing && _spec is not null && _spec.Kind != "brush" &&
+                          (Handles().Any(h => (h - pos).Length <= HandleR + 4) || (_spec.Kind == "radial" && NearRadialOuter(pos)))))
         {
             e.Handled = true;
             PinClicked?.Invoke(_clusters[pin].Pins.ToList(), pos);
@@ -581,6 +619,8 @@ public sealed class MaskOverlay : Canvas
         _drag = -1;
         for (int i = 0; i < hs.Count; i++)
             if ((hs[i] - pos).Length <= HandleR + 4) { _drag = i; break; }
+        if (_drag < 0 && _spec.Kind == "radial" && NearRadialOuter(pos))
+            _drag = FeatherDrag; // the outer outline: tuning the feather (the inner ellipse stays fixed)
         if (_drag < 0) _drag = 100; // move whole shape
         _dragStartSrc = ToSrc(pos);
         _dragStartP = _spec.Kind == "linear" ? Params(4, 0.5, 0.25, 0.5, 0.6) : RadialParams();
@@ -594,11 +634,14 @@ public sealed class MaskOverlay : Canvas
         if (_drag < 0 && _stroke is null)
         {
             int h = PinAt(_mouse);
-            if (h != _hoverPin)
+            bool outer = _mouseInside && Editing && _spec?.Kind == "radial" && NearRadialOuter(_mouse);
+            if (h != _hoverPin || outer != _hoverOuter)
             {
+                bool pinChanged = h != _hoverPin;
                 _hoverPin = h;
+                _hoverOuter = outer;
                 UpdateCursor();
-                Redraw();
+                if (pinChanged) Redraw(); // the pin highlight follows, the cursor change needs no redraw
             }
         }
         if (_spec is null || !Editing) return;
@@ -644,12 +687,27 @@ public sealed class MaskOverlay : Canvas
                 if (a <= -180) a += 360;
                 p[5] = Math.Round(a, 2);
             }
+            else if (_drag == FeatherDrag)
+            {
+                // The outer outline follows the pointer and the inner (dashed) ellipse stays fixed:
+                // on the inner ellipse = 0 feather, twice its diameter = 100 %.
+                double th = _dragStartP[5] * Math.PI / 180, cos = Math.Cos(th), sin = Math.Sin(th);
+                double nx = (ox * cos + oy * sin) / Math.Max(1e-6, _dragStartP[2] * _srcW);
+                double ny = (oy * cos - ox * sin) / Math.Max(1e-6, _dragStartP[3] * _srcH);
+                double m = Math.Sqrt(nx * nx + ny * ny); // in units of the outer ellipse
+                double f0 = Math.Clamp(_dragStartP[4], 0, 1);
+                var (band, scale) = MaskRender.RadialFeatherDrag(f0, m / Math.Max(1e-6, 1 - f0));
+                p[2] = _dragStartP[2] * scale;
+                p[3] = _dragStartP[3] * scale;
+                p[4] = band;
+            }
             else
             {
-                // Radius handles: distance from the center, independent of the display and mask rotation.
+                // Radius handles on the inner ellipse: distance from the center, independent of the display and mask rotation.
+                double inner = RadialInner(p);
                 double dist = Math.Sqrt(ox * ox + oy * oy);
-                if (_drag == 1) p[2] = Math.Clamp(dist / _srcW, 0.01, 2.0);
-                else p[3] = Math.Clamp(dist / _srcH, 0.01, 2.0);
+                if (_drag == 1) p[2] = Math.Clamp(dist / (inner * _srcW), 0.01, 2.0);
+                else p[3] = Math.Clamp(dist / (inner * _srcH), 0.01, 2.0);
             }
         }
         _spec = _spec with { P = p };
