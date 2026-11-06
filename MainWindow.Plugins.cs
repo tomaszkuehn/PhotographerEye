@@ -744,7 +744,7 @@ public partial class MainWindow
             IsEnabled = !full,
             ToolTip = full ? $"Limit reached ({inst.Count} {RepeatPlural(noun, inst.Count)}) — remove one first"
                            : points ? $"Add a {nounL}: click it on the photo (Esc cancels). Up to {inst.Count}."
-                                    : $"Add a {nounL} with its own settings; it asks for its mask — one of this photo's masks, a new one, or the whole photo. Up to {inst.Count}."
+                                    : $"Add a {nounL} with its own settings; it works on the whole photo until you limit it in its Mask row. Up to {inst.Count}."
         };
         ToolTipService.SetShowOnDisabled(add, true);
         add.SetResourceReference(StyleProperty, "ToolButton");
@@ -758,7 +758,7 @@ public partial class MainWindow
             body.Children.Add(new TextBlock
             {
                 Text = points ? $"No {RepeatPlural(noun, 2)} yet. Click Add {nounL}, then click the photo."
-                              : $"No {RepeatPlural(noun, 2)} yet. Click Add {nounL}, then set it up and limit it to one of this photo's masks (its Mask row) — without a mask it covers the whole photo.",
+                              : $"No {RepeatPlural(noun, 2)} yet. Click Add {nounL} and set it up — it works on the whole photo; limit it with its Mask row if you want.",
                 Foreground = muted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0)
             });
         }
@@ -797,27 +797,15 @@ public partial class MainWindow
         var pd = free.D.Params.FirstOrDefault(d => d.Kind == ParamKind.Point);
         if (pd is null)
         {
-            // a new area starts with the plugin's default settings, not those of the selected one; no mask is
-            // created silently — the user picks one of the photo's masks (or a new one, or the whole photo) explicitly
+            // Hooked up like every other tool: the new area starts with the plugin's default settings and works on
+            // the whole photo; no mask is created silently and none is asked for — its Mask row limits it when the
+            // user wants (a photo mask, a new one, or a linked one).
             _pluginState.Active.Add(free.FullId);
             _repeatSelected[RepeatKey(free)] = free.FullId;
-            bool askMask = free.D.SupportsMask && !_pluginState.Masks.ContainsKey(free.FullId);
-            if (askMask) SetSectionExpanded(free.PluginId, true);
+            SetSectionExpanded(free.PluginId, true);
             DeferRebuild();
             OnPluginUiChanged();
-            if (askMask)
-            {
-                SetStatus($"Area {inst.IndexOf(free) + 1} added — choose where it works: a mask of this photo, a new mask, or the whole photo", error: false);
-                // after the panel rebuilds: open the mask choice of the new area (its Mask row)
-                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () =>
-                {
-                    if (FindByAutomationId(PluginPanelHost, "PluginMaskScope_" + free.FullId) is Button scope)
-                    {
-                        scope.BringIntoView();
-                        OpenMaskScopeMenu(scope, free.FullId, free.D.Label, null);
-                    }
-                });
-            }
+            SetStatus($"Area {inst.IndexOf(free) + 1} added — it works on the whole photo; limit it in its Mask row when you want", error: false);
             return;
         }
         string label = $"{free.D.RepeatGroup} {inst.IndexOf(free) + 1}";

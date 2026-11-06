@@ -106,32 +106,6 @@ public partial class MainWindow
         SetStatus($"Mask {PluginEditState.LibraryIndex(key)} created — independent of the others; tools can be limited to it in their Mask row (Ctrl+Z removes it)", error: false);
     }
 
-    /// <summary>
-    /// Creates an independent mask of <paramref name="kind"/> and makes <paramref name="key"/> follow it (a link), so the
-    /// tool works inside it. The mask belongs to the MASK module; the tool's previous own mask is replaced (its own slider
-    /// values do not carry over; Ctrl+Z brings them back).
-    /// </summary>
-    private void CreateLibraryMaskBound(string kind, string key)
-    {
-        if (_baseInfo is not ImageInfo)
-        {
-            SetStatus("Open a photo first", error: true);
-            return;
-        }
-        bool had = _pluginState.Masks.TryGetValue(key, out var old) && !string.IsNullOrEmpty(old.Kind);
-        if (_maskEditFilter is not null) EndMaskEdit();
-        _pluginState.DetachLinksTo(key); // masks that followed this tool's previous mask keep their own copy
-        var libKey = _pluginState.NewLibraryMaskKey();
-        _pluginState.Masks[libKey] = NewMaskSpec(kind);
-        _pluginState.Masks[key] = new MaskSpec { Kind = MaskRender.Link, Ref = libKey };
-        SetSectionExpanded(AdjMaskSectionKey, true);
-        RebuildPluginUi();
-        BeginMaskEdit(libKey);
-        SetStatus(had
-            ? $"{MaskOwnerLabel(key)} now works inside Mask {PluginEditState.LibraryIndex(libKey)} — the previous mask and its own values are gone (Ctrl+Z brings them back)"
-            : $"{MaskOwnerLabel(key)} now works inside Mask {PluginEditState.LibraryIndex(libKey)} — drag the handles on the photo (Ctrl+Z goes back to the whole photo)", error: false);
-    }
-
     /// <summary>Gives <paramref name="key"/> a mask that is not a library mask: a plugin-computed one. It shows in the MASK module with its owner.</summary>
     private void SetToolMask(string key, MaskSpec spec)
     {
@@ -254,7 +228,7 @@ public partial class MainWindow
         {
             Content = cur,
             Padding = new Thickness(8, 1, 8, 1),
-            ToolTip = $"Where {label} works: the whole photo, a new mask, or an existing mask (shared: edit once, all change)"
+            ToolTip = $"Where {label} works: the whole photo, or one of the photo's masks (created in the MASK section; shared: edit once, all change)"
         };
         b.SetResourceReference(StyleProperty, "ToolButton");
         AutomationProperties.SetAutomationId(b, "PluginMaskScope_" + key);
@@ -263,7 +237,8 @@ public partial class MainWindow
         return b;
     }
 
-    /// <summary>Menu of the scope button: whole photo, a new mask, an existing mask (use the same / a copy), plugin masks.</summary>
+    /// <summary>Menu of the scope button: whole photo, or one of the photo's masks — the same (shared) or a copy. Masks are
+    /// created only in the MASK section, never here.</summary>
     private void OpenMaskScopeMenu(Button target, string key, string label, MaskSpec? mask)
     {
         var menu = new ContextMenu { PlacementTarget = target, Placement = PlacementMode.Bottom };
@@ -273,16 +248,6 @@ public partial class MainWindow
         wholeItem.Click += (_, _) => { if (!whole) RemoveToolMask(key); };
         menu.Items.Add(wholeItem);
 
-        menu.Items.Add(new Separator());
-        menu.Items.Add(new MenuItem { Header = "New mask — created in MASK, this tool follows it", IsEnabled = false, FontWeight = FontWeights.SemiBold });
-        foreach (var (kind, name, tip) in NewMaskKinds())
-        {
-            var k = kind;
-            var item = new MenuItem { Header = name, ToolTip = tip };
-            AutomationProperties.SetAutomationId(item, "PluginMaskNew_" + k + "_" + key);
-            item.Click += (_, _) => CreateLibraryMaskBound(k, key);
-            menu.Items.Add(item);
-        }
         foreach (var m in _pluginReg.Masks)
         {
             var item = new MenuItem { Header = $"{m.D.Label} ({m.PluginName})", ToolTip = "A mask computed by the plugin — set it up below" };
