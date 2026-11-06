@@ -227,6 +227,7 @@ public partial class MainWindow
         AutomationProperties.SetAutomationId(infoTb, "MaskListInfo_" + key);
         text.Children.Add(name);
         text.Children.Add(infoTb);
+        if (spec.Kind == MaskRender.Brush) text.Children.Add(BuildBrushControls(key, muted));
         row.Children.Add(text);
         return row;
     }

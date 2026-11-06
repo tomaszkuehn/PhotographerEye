@@ -588,6 +588,9 @@ public sealed class MaskOverlay : Canvas
         }
     }
 
+    /// <summary>Draws now — e.g. the brush circle after its size was changed by a key while the pointer rests.</summary>
+    public void Refresh() => Redraw();
+
     // ------------------------------------------------------------------
     //  Mouse
     // ------------------------------------------------------------------

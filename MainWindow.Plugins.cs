@@ -1712,31 +1712,7 @@ public partial class MainWindow
 
         if (mask.Kind == MaskRender.Brush)
         {
-            sp.Children.Add(LabelRow("Brush size", out var bv, muted));
-            var size = new Slider { Minimum = 0.5, Maximum = 30, Value = Math.Clamp(MaskOverlay.BrushRadius * 100, 0.5, 30), SmallChange = 0.5, LargeChange = 2 };
-            PhotoshopSlider.SetEnable(size, true);
-            bv.Text = $"{size.Value:0.#} %";
-            size.ValueChanged += (_, e) =>
-            {
-                MaskOverlay.BrushRadius = e.NewValue / 100.0;
-                bv.Text = $"{e.NewValue:0.#} %";
-            };
-            sp.Children.Add(size);
-            var brow = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
-            var erase = new CheckBox { Content = "Erase (or hold Alt)", IsChecked = MaskOverlay.BrushErase, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
-            erase.SetResourceReference(ForegroundProperty, "ForegroundBrush"); // readable on the panel background
-            erase.Click += (_, _) => MaskOverlay.BrushErase = erase.IsChecked == true;
-            var clear = new Button { Content = "Clear strokes", Padding = new Thickness(8, 1, 8, 1) };
-            clear.SetResourceReference(StyleProperty, "ToolButton");
-            clear.Click += (_, _) =>
-            {
-                if (_pluginState.Masks.TryGetValue(key, out var m)) _pluginState.Masks[key] = m with { Strokes = new List<double[]>() };
-                SyncMaskOverlaySpec();
-                OnPluginUiChanged();
-            };
-            brow.Children.Add(erase);
-            brow.Children.Add(clear);
-            sp.Children.Add(brow);
+            sp.Children.Add(BuildBrushControls(key, muted));
         }
         else if (mask.Kind == MaskRender.Radial)
         {
@@ -1878,6 +1854,45 @@ public partial class MainWindow
             chip.Focus();
     }
 
+    /// <summary>
+    /// Size, erase and clear of the brush mask of <paramref name="key"/>: in a tool's mask row and — for a mask created
+    /// in the MASK module — in its row there, so a brush mask always has its tool size at hand (also [ and ] while painting).
+    /// </summary>
+    private FrameworkElement BuildBrushControls(string key, Brush muted)
+    {
+        var sp = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+        sp.Children.Add(LabelRow("Brush size", out var bv, muted));
+        var size = new Slider { Minimum = 0.5, Maximum = 30, Value = Math.Clamp(MaskOverlay.BrushRadius * 100, 0.5, 30), SmallChange = 0.5, LargeChange = 2 };
+        size.ToolTip = "How wide the brush paints, in % of the photo width. [ and ] on the photo do the same while this mask is edited. Double-click resets to 4 %.";
+        AutomationProperties.SetAutomationId(size, "PluginMaskBrushSize_" + key);
+        PhotoshopSlider.SetEnable(size, true);
+        bv.Text = $"{size.Value:0.#} %";
+        size.MouseDoubleClick += (_, _) => size.Value = 4;
+        size.ValueChanged += (_, e) =>
+        {
+            MaskOverlay.BrushRadius = e.NewValue / 100.0;
+            bv.Text = $"{e.NewValue:0.#} %";
+        };
+        sp.Children.Add(size);
+        var brow = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+        var erase = new CheckBox { Content = "Erase (or hold Alt)", IsChecked = MaskOverlay.BrushErase, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+        erase.SetResourceReference(ForegroundProperty, "ForegroundBrush"); // readable on the panel background
+        erase.Click += (_, _) => MaskOverlay.BrushErase = erase.IsChecked == true;
+        var clear = new Button { Content = "Clear strokes", Padding = new Thickness(8, 1, 8, 1) };
+        clear.SetResourceReference(StyleProperty, "ToolButton");
+        AutomationProperties.SetAutomationId(clear, "PluginMaskClear_" + key);
+        clear.Click += (_, _) =>
+        {
+            if (_pluginState.Masks.TryGetValue(key, out var m)) _pluginState.Masks[key] = m with { Strokes = new List<double[]>() };
+            SyncMaskOverlaySpec();
+            OnPluginUiChanged();
+        };
+        brow.Children.Add(erase);
+        brow.Children.Add(clear);
+        sp.Children.Add(brow);
+        return sp;
+    }
+
     private void BeginMaskEdit(string key)
     {
         if (!_pluginState.Masks.TryGetValue(key, out var spec)) return;
@@ -1901,7 +1916,7 @@ public partial class MainWindow
         RefreshMaskOverlay();
         if (IsInteractiveMask(spec.Kind))
             SetStatus(spec.Kind == MaskRender.Brush
-                ? "Mask brush: paint on the photo, Alt erases, wheel zooms"
+                ? "Mask brush: paint on the photo, Alt erases, [ and ] change the brush size, wheel zooms"
                 : spec.Kind == MaskRender.Radial
                     ? "Mask: drag the handles to size the circle, the outer outline to set the feather"
                     : "Mask: drag the handles on the photo", error: false);
@@ -1960,7 +1975,7 @@ public partial class MainWindow
         {
             MaskRender.Linear => "linear gradient — drag the handles",
             MaskRender.Radial => "radial — drag the handles; the outer outline sets the feather",
-            MaskRender.Brush => "brush — paint, Alt erases",
+            MaskRender.Brush => "brush — paint, Alt erases, [ ] size",
             MaskRender.Luma => "luminance range",
             _ => "preview"
         };
@@ -2454,6 +2469,17 @@ public partial class MainWindow
         if (_maskEditFilter is not null && (e.Key == Key.Escape || (e.Key == Key.Enter && Keyboard.FocusedElement is not TextBoxBase)))
         {
             FinishMaskEdit();
+            e.Handled = true;
+            return true;
+        }
+        if (_maskEditFilter is not null && Keyboard.Modifiers == ModifierKeys.None && Keyboard.FocusedElement is not TextBoxBase &&
+            (e.Key == Key.OemOpenBrackets || e.Key == Key.OemCloseBrackets) &&
+            _pluginState.Masks.TryGetValue(_maskEditFilter, out var editSpec) && editSpec.Kind == MaskRender.Brush)
+        {
+            double v = Math.Clamp(MaskOverlay.BrushRadius * 100 + (e.Key == Key.OemOpenBrackets ? -1 : 1), 0.5, 30);
+            MaskOverlay.BrushRadius = v / 100.0;
+            MaskOverlay.Refresh(); // the circle under the cursor follows at once
+            SetStatus($"Brush size {v:0.#} % — paint on the photo, Alt erases", error: false);
             e.Handled = true;
             return true;
         }
