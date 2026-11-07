@@ -167,11 +167,9 @@ internal static partial class Program
         Check(small.G.All(float.IsFinite) && Math.Abs(small.G.Average(v => (double)v) - before) < 0.004,
               "trans-noise: half-resolution preview renders and keeps the brightness");
 
-        // Several areas: one repeat group, each instance with its own mask and settings.
-        var areas = reg.Filters.Where(o => o.PluginId == f.PluginId).OrderBy(o => o.D.Order).ToList();
-        Check(areas.Count == 6 && areas.All(a => a.D.RepeatGroup == "Area" && a.D.SupportsMask) && areas[0].FullId == f.FullId
-              && areas.Select(a => a.FullId).Distinct().Count() == areas.Count,
-              $"trans-noise: {areas.Count} maskable areas in one repeat group, area 1 keeps the old id");
+        // One tool now (the multi-area layout is gone): the independence of masks comes from their own values.
+        var areas = reg.Filters.Where(o => o.PluginId == f.PluginId).ToList();
+        Check(areas.Count == 1 && areas[0].FullId == f.FullId, "trans-noise: one tool (the multi-area layout is gone)");
 
         var raw = new Raw16Image(W, H);
         for (int i = 0; i < N; i++)
@@ -181,16 +179,6 @@ internal static partial class Program
             raw.B[i] = (ushort)Math.Clamp(src.B[i] * 65535, 0, 65535);
         }
         static MaskSpec Disk(double cx, double cy) => new MaskSpec { Kind = MaskRender.Radial, P = new[] { cx, cy, 0.12, 0.15, 0.0 } };
-        Raw16Image? RunAreas(double s1, double s2, bool mask2 = true)
-        {
-            var st = new PluginEditState();
-            var amt = f.D.Params.First(p => p.Id == "amount");
-            st.Active.Add(areas[0].FullId); st.SetValue(areas[0], amt, s1); st.Masks[areas[0].FullId] = Disk(0.25, 0.5);
-            st.Active.Add(areas[1].FullId); st.SetValue(areas[1], amt, s2);
-            if (mask2) st.Masks[areas[1].FullId] = Disk(0.75, 0.5);
-            var job = new PluginRenderJob { Registry = reg, State = st, Meta = new ImageMeta { Width = W, Height = H }, IsPreview = false, Cancel = CancellationToken.None };
-            return PluginPipeline.ApplyRaw16(raw, FilterStage.Display, job, W, H);
-        }
         double Diff(Raw16Image? o, int x0, int x1, int y0, int y1)
         {
             if (o is null) return 0;
@@ -198,15 +186,74 @@ internal static partial class Program
             for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) { s += Math.Abs(o.G[y * W + x] - raw.G[y * W + x]) / 65535.0; c++; }
             return s / c;
         }
-        var two = RunAreas(100, 100);
-        double in1 = Diff(two, 70, 90, 110, 130), in2 = Diff(two, 230, 250, 110, 130);
-        double between = Diff(two, 150, 170, 20, 220), corner = Diff(two, 0, 20, 0, 20);
-        Check(in1 > 0.003 && in2 > 0.003 && between < 1e-6 && corner < 1e-6,
-              $"trans-noise: two areas with two masks change only inside them (in {in1:0.0000}/{in2:0.0000}, between {between:0.000000}, corner {corner:0.000000})");
-        var oneOff = RunAreas(100, 0);
-        Check(Diff(oneOff, 70, 90, 110, 130) > 0.003 && Diff(oneOff, 230, 250, 110, 130) < 1e-6,
-              "trans-noise: each area has its own strength (area 2 at 0 leaves its mask untouched)");
-        var global2 = RunAreas(100, 100, mask2: false);
-        Check(Diff(global2, 150, 170, 20, 220) > 0.003, "trans-noise: an area without a mask covers the whole photo");
+
+        // The own values of masks: the tool's base works inside its mask, and a mask with its own set replaces the
+        // tool's values inside it (nothing stacks) — the masks stay independent.
+        var amt = f.D.Params.First(p => p.Id == "amount");
+        Raw16Image? RunMaskValues(double? mask2Amount)
+        {
+            var st = new PluginEditState();
+            st.Active.Add(f.FullId);
+            st.SetValue(f, amt, 100);
+            st.Masks[f.FullId] = Disk(0.25, 0.5); // the tool's scope: Mask 1 (left disk)
+            var pl = new Dictionary<string, double>();
+            if (mask2Amount is { } a) pl[PluginEditState.Key(f.FullId, "amount")] = a;
+            st.Masks["mask:2"] = Disk(0.75, 0.5) with { Plugin = pl.Count > 0 ? pl : null };
+            var job = new PluginRenderJob { Registry = reg, State = st, Meta = new ImageMeta { Width = W, Height = H }, IsPreview = false, Cancel = CancellationToken.None };
+            return PluginPipeline.ApplyRaw16(raw, FilterStage.Display, job, W, H);
+        }
+        double In(Raw16Image? o, int x0, int x1) => Diff(o, x0, x1, 110, 130);
+        var baseOnly = RunMaskValues(null);
+        Check(In(baseOnly, 70, 90) > 0.003 && In(baseOnly, 230, 250) < 1e-6 && Diff(baseOnly, 150, 170, 20, 220) < 1e-6,
+              $"trans-noise: without own values the tool's mask decides (in {In(baseOnly, 70, 90):0.0000}, mask 2 {In(baseOnly, 230, 250):0.000000})");
+        var zeroed = RunMaskValues(0);
+        Check(In(zeroed, 70, 90) > 0.003 && In(zeroed, 230, 250) < 1e-6,
+              $"trans-noise: Mask 2's own amount 0 replaces the tool's inside it (mask 1 {In(zeroed, 70, 90):0.0000}, mask 2 {In(zeroed, 230, 250):0.000000})");
+        var half = RunMaskValues(50);
+        Check(In(half, 230, 250) > 0.0005 && Math.Abs(In(half, 230, 250) - In(zeroed, 230, 250)) > 1e-6,
+              $"trans-noise: the mask's own strength applies inside it (mask 2 at 50: {In(half, 230, 250):0.0000})");
+
+        // The tool follows the mask picked on the photo: a mask picked for the first time starts from the plugin's
+        // default values, the one left behind keeps its own, and a revisited one keeps what it showed.
+        Raw16Image? Render(PluginEditState st) =>
+            PluginPipeline.ApplyRaw16(raw, FilterStage.Display,
+                new PluginRenderJob { Registry = reg, State = st, Meta = new ImageMeta { Width = W, Height = H }, IsPreview = false, Cancel = CancellationToken.None }, W, H);
+        var mst = new PluginEditState();
+        mst.Active.Add(f.FullId);
+        mst.SetValue(f, amt, 100);
+        mst.Masks[f.FullId] = new MaskSpec { Kind = MaskRender.Link, Ref = "mask:1" };
+        mst.Masks["mask:1"] = Disk(0.25, 0.5);
+        mst.Masks["mask:2"] = Disk(0.75, 0.5);
+        var rBefore = Render(mst);
+        Check(In(rBefore, 70, 90) > 0.003 && In(rBefore, 230, 250) < 1e-6, "move: the tool starts in Mask 1");
+        mst.MoveToolMaskTo(f, "mask:2");
+        var rAfter = Render(mst);
+        Check(Math.Abs(In(rAfter, 70, 90) - In(rBefore, 70, 90)) < 1e-6,
+              $"move: Mask 1 keeps its values as its own set ({In(rBefore, 70, 90):0.0000} -> {In(rAfter, 70, 90):0.0000})");
+        Check(In(rAfter, 230, 250) < 1e-6 && mst.GetValue(f, amt) == amt.Default && mst.Masks[f.FullId].Ref == "mask:2"
+              && mst.Masks["mask:1"].Plugin is not null && mst.Masks["mask:2"].Plugin is null,
+              "move: the new mask starts from the plugin's defaults (nothing changes there until the user sets it)");
+        mst.SetValue(f, amt, 50); // the user applies the tool to the new mask
+        var rTurned = Render(mst);
+        Check(Math.Abs(In(rTurned, 70, 90) - In(rBefore, 70, 90)) < 1e-6 && In(rTurned, 230, 250) > 0.0005 && In(rTurned, 230, 250) < In(rBefore, 70, 90),
+              $"move: the sliders now shape Mask 2 (mask 1 {In(rTurned, 70, 90):0.0000}, mask 2 {In(rTurned, 230, 250):0.0000} at 50)");
+        mst.MoveToolMaskTo(f, "mask:1"); // back to Mask 1: it is revisited, so its own values come back and Mask 2 keeps its 50
+        var rBack = Render(mst);
+        Check(Math.Abs(In(rBack, 70, 90) - In(rBefore, 70, 90)) < 1e-6 && Math.Abs(In(rBack, 230, 250) - In(rTurned, 230, 250)) < 1e-6,
+              $"move: switching back changes nothing on the photo (mask 1 {In(rBack, 70, 90):0.0000}, mask 2 {In(rBack, 230, 250):0.0000})");
+        mst.MoveToolMaskTo(f, "mask:2"); // and forth: Mask 1 keeps its 100, the tool's values become Mask 2's 50 again
+        var rForth = Render(mst);
+        Check(Math.Abs(In(rForth, 70, 90) - In(rBefore, 70, 90)) < 1e-6 && Math.Abs(In(rForth, 230, 250) - In(rTurned, 230, 250)) < 1e-6
+              && Math.Abs(mst.GetValue(f, amt) - 50) < 1e-9,
+              "move: revisiting dissolves the mask's own values into the tool's (the sliders point at it)");
+        // regression for the leak the tester hit: moving a base slider the masks never set (grain) must not change a
+        // mask that carries its own set — MoveToolMaskTo snapshots every parameter, so the own set is complete.
+        var grn = f.D.Params.First(p => p.Id == "grain");
+        mst.SetValue(f, grn, 0);
+        var rNoGrain = Render(mst);
+        Check(Math.Abs(In(rNoGrain, 70, 90) - In(rForth, 70, 90)) < 1e-6,
+              $"move: a base grain edit does not leak into Mask 1 (own set complete, mask 1 {In(rNoGrain, 70, 90):0.0000} stays {In(rForth, 70, 90):0.0000})");
+        Check(In(rNoGrain, 230, 250) < In(rForth, 230, 250) - 0.001,
+              $"move: a base grain edit still shapes the tool's mask (mask 2 {In(rNoGrain, 230, 250):0.0000} vs {In(rForth, 230, 250):0.0000})");
     }
 }

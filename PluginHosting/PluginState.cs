@@ -85,6 +85,15 @@ public sealed class PluginEditState
     /// <summary>True when the filter's parameters (or toggle) differ from defaults - ignoring IsIdentity.</summary>
     public bool IsFilterOn(Registered<FilterDescriptor> f)
     {
+        if (IsBaseOn(f)) return true;
+        if (f.D.Placement == FilterPlacement.Toolbar || f.D.Params.Count == 0) return false;
+        string prefix = f.FullId + "/";
+        return Masks.Values.Any(m => m.Plugin is { } pl && pl.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal)));
+    }
+
+    /// <summary>True when the filter's own value set (the whole scope: the whole photo or its mask) differs from the defaults.</summary>
+    public bool IsBaseOn(Registered<FilterDescriptor> f)
+    {
         if (f.D.Placement == FilterPlacement.Toolbar || f.D.Params.Count == 0)
             return Active.Contains(f.FullId);
         foreach (var d in f.D.Params)
@@ -101,17 +110,33 @@ public sealed class PluginEditState
     public bool IsFilterActive(Registered<FilterDescriptor> f)
     {
         if (f.Owner is { Faulted: true }) return false;
-        if (!IsFilterOn(f)) return false;
+        if (BaseActive(f)) return true;
+        // the own values of masks turn the tool on inside them (each set checked on its own)
+        foreach (var (key, _) in OwnValueMasks(f))
+            if (!RunsIdentity(f, ParamsForMask(f, key))) return true;
+        return false;
+    }
+
+    /// <summary>True when the tool's own value set is on and changes the photo (the IsIdentity check).</summary>
+    public bool BaseActive(Registered<FilterDescriptor> f)
+    {
+        if (f.Owner is { Faulted: true } || !IsBaseOn(f)) return false;
+        return !RunsIdentity(f, ParamsFor(f));
+    }
+
+    /// <summary>False when the IsIdentity check says the parameters change nothing (a failed check counts as identity, like the whole filter today).</summary>
+    public bool RunsIdentity(Registered<FilterDescriptor> f, FilterParams p)
+    {
         var id = f.D.IsIdentity;
-        if (id is null) return true;
+        if (id is null) return false;
         try
         {
-            return !id(ParamsFor(f));
+            return id(p);
         }
         catch (Exception ex)
         {
             PluginManager.Instance.ReportFailure(f.Owner, $"{f.FullId} IsIdentity", ex);
-            return false;
+            return true;
         }
     }
 
@@ -135,6 +160,43 @@ public sealed class PluginEditState
         f.D.SupportsMask && Masks.TryGetValue(f.FullId, out var m) ? Resolve(m) : null;
 
     /// <summary>
+    /// The filter's parameters inside a mask: the mask's own values (<see cref="MaskSpec.Plugin"/>) replace the tool's;
+    /// a parameter the mask does not set (and every text parameter) keeps the tool's value.
+    /// </summary>
+    public FilterParams ParamsForMask(Registered<FilterDescriptor> f, string maskKey)
+    {
+        var local = Masks.TryGetValue(maskKey, out var m) ? m.Plugin : null;
+        var values = new Dictionary<string, double>();
+        var text = new Dictionary<string, string>();
+        foreach (var d in f.D.Params)
+        {
+            if (d.IsText) text[d.Id] = GetText(f, d);
+            else values[d.Id] = local is { } pl && pl.TryGetValue(Key(f.FullId, d.Id), out var v) ? v : GetValue(f, d);
+        }
+        return new FilterParams(f.D.Params, values, text);
+    }
+
+    /// <summary>
+    /// Masks whose own values (<see cref="MaskSpec.Plugin"/>) apply to <paramref name="f"/>: the mask's key and its
+    /// resolved shape. The tool's own mask entry and shapes that resolve to nothing (a link to a removed mask) are not
+    /// among them.
+    /// </summary>
+    public List<(string Key, MaskSpec Shape)> OwnValueMasks(Registered<FilterDescriptor> f)
+    {
+        var list = new List<(string, MaskSpec)>();
+        if (!f.D.SupportsMask || f.D.Params.Count == 0) return list;
+        string prefix = f.FullId + "/";
+        foreach (var kv in Masks)
+        {
+            if (kv.Key == f.FullId || kv.Value.Plugin is not { } pl
+                || !pl.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))) continue;
+            if (Resolve(kv.Value) is not { } shape) continue;
+            list.Add((kv.Key, shape));
+        }
+        return list;
+    }
+
+    /// <summary>
     /// The mask that actually applies: a "link" mask gives the mask of its <see cref="MaskSpec.Ref"/> (inverted when the
     /// link is inverted); a link to a missing mask or to another link gives null (whole photo).
     /// </summary>
@@ -145,6 +207,56 @@ public sealed class PluginEditState
         if (m.Ref is null || !Masks.TryGetValue(m.Ref, out var src) || src is null || string.IsNullOrEmpty(src.Kind) || src.Kind == MaskRender.Link)
             return null;
         return m.Invert ? src with { Invert = !src.Invert } : src;
+    }
+
+    /// <summary>
+    /// The mask active on the photo changed: a tool scoped to another mask follows the user there. The mask it leaves
+    /// keeps the values it showed (they become the mask's own set, <see cref="MaskSpec.Plugin"/>). A mask picked for the
+    /// first time starts from the plugin's default values; a revisited one keeps what it showed (its own set dissolves
+    /// into the tool's values), so nothing on the photo changes and the tool's sliders point at the picked mask. Only a
+    /// link scope moves; an own shape stands and a whole-photo tool is untouched.
+    /// </summary>
+    public void MoveToolMaskTo(Registered<FilterDescriptor> f, string maskKey)
+    {
+        if (!f.D.SupportsMask) return;
+        if (!Masks.TryGetValue(f.FullId, out var entry) || entry.Kind != MaskRender.Link || entry.Ref is not { } old || old == maskKey) return;
+        if (!Masks.TryGetValue(maskKey, out var target) || string.IsNullOrEmpty(target.Kind) || target.Kind == MaskRender.Link) return;
+        string prefix = f.FullId + "/";
+        // the mask left behind keeps what it showed: the tool's current values become its own. Every parameter of the
+        // tool is materialized (defaults included), so the mask's own set is complete: otherwise a base edit of a slider
+        // the mask never set would leak through ParamsForMask into that mask and change it with the other masks.
+        if (Masks.TryGetValue(old, out var left) && !string.IsNullOrEmpty(left.Kind) && left.Kind != MaskRender.Link && left.Plugin is null)
+        {
+            var snap = new Dictionary<string, double>(StringComparer.Ordinal);
+            foreach (var d in f.D.Params)
+            {
+                if (d.IsText) continue;
+                snap[Key(f.FullId, d.Id)] = Values.TryGetValue(Key(f.FullId, d.Id), out var v) ? v : d.Default;
+            }
+            if (snap.Count > 0) Masks[old] = left with { Plugin = snap };
+        }
+        if (target.Plugin is { } pl)
+        {
+            // revisited: the mask keeps what it showed — its own values become the tool's values (the sliders point at it now)
+            foreach (var d in f.D.Params)
+            {
+                if (d.IsText) continue;
+                var k = Key(f.FullId, d.Id);
+                if (!pl.TryGetValue(k, out var v)) continue;
+                if (Math.Abs(v - d.Default) < 1e-9) Values.Remove(k);
+                else Values[k] = v;
+            }
+            // a mask can carry the own values of several tools: only this tool's keys dissolve, the others are kept
+            var rest = pl.Where(kv => !kv.Key.StartsWith(prefix, StringComparison.Ordinal))
+                         .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+            Masks[maskKey] = rest.Count > 0 ? target with { Plugin = rest } : target with { Plugin = null };
+        }
+        else
+        {
+            // a new mask for this tool: it starts from the plugin's default values
+            foreach (var k in Values.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList()) Values.Remove(k);
+        }
+        Masks[f.FullId] = entry with { Ref = maskKey };
     }
 
     /// <summary>Keys of the masks linked to the mask of <paramref name="key"/>.</summary>
@@ -267,7 +379,8 @@ public sealed class PluginEditState
         Strokes = m.Strokes?.Select(s => (double[])s.Clone()).ToList(),
         Values = m.Values is null ? null : new Dictionary<string, double>(m.Values),
         Text = m.Text is null ? null : new Dictionary<string, string>(m.Text),
-        Adjust = CopyAdjust(m.Adjust)
+        Adjust = CopyAdjust(m.Adjust),
+        Plugin = CopyAdjust(m.Plugin)
     };
 
     public static Dictionary<string, double>? CopyAdjust(Dictionary<string, double>? a) =>

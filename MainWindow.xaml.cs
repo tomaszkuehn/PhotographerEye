@@ -2166,6 +2166,8 @@ public partial class MainWindow : Window
         _monoMode = MonoMode.None;
         UpdateMonoButton();
         _pluginState.Clear();
+        _lastEditedMask = null;
+        _scopeChosen.Clear();
         EndMaskEdit();
         RebuildPluginUi();
         if (!silent)
@@ -2285,6 +2287,8 @@ public partial class MainWindow : Window
             Aspect = string.IsNullOrWhiteSpace(st.CropAspect) ? "original" : st.CropAspect
         };
         _pluginState.Load(st, _pluginReg);
+        _lastEditedMask = null; // per photo: a mask active on another photo must not limit this one's tools
+        _scopeChosen.Clear();
         if (wasMaskSet is not null) ShowAdjSet(true, wasMaskSet);
         SyncMaskOverlaySpec();
         RebuildPluginUi();

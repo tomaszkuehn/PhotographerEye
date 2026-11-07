@@ -31,6 +31,10 @@ public partial class MainWindow
     private readonly Dictionary<string, (Dictionary<string, double> Values, Dictionary<string, string> Text)> _exportOptions = new(StringComparer.Ordinal);
     /// <summary>The mask being edited on the photo (its bar shows at the bottom); maskable tools show a Work-inside button while it is set.</summary>
     private string? _maskEditFilter;
+    /// <summary>The mask last active on the photo (edited or created): a tool enabled after it follows that mask, until its Mask row says otherwise.</summary>
+    private string? _lastEditedMask;
+    /// <summary>Tools the user set to the whole photo on this photo (their explicit choice stands; enabling them again does not re-scope).</summary>
+    private readonly HashSet<string> _scopeChosen = new(StringComparer.Ordinal);
     private (Registered<FilterDescriptor> F, ParamDef D)? _pointPick;
     /// <summary>Runs after a successful point pick (Add of a repeat-group item).</summary>
     private Action? _pointPickDone;
@@ -495,11 +499,31 @@ public partial class MainWindow
         if (on) _pluginState.Active.Add(f.FullId);
         else _pluginState.Active.Remove(f.FullId);
         if (_pluginToggles.TryGetValue(f.FullId, out var btn)) btn.IsChecked = on;
+        if (on) AutoScopeToActiveMask(f);
         OnPluginUiChanged();
     }
 
-    private void OnPluginUiChanged()
+    /// <summary>
+    /// A mask active on the photo limits a NEW tool to its area — the user can change that in the Mask row. Only a tool
+    /// that never got a mask and was never scoped by hand is bound: the whole photo was its silent default, an explicit
+    /// choice (the scope menu, a removed mask) stands. A tool already scoped to another mask follows the user when the
+    /// mask on the photo changes (<see cref="PluginEditState.MoveToolMaskTo"/>, at the moment the mask is picked).
+    /// </summary>
+    private void AutoScopeToActiveMask(Registered<FilterDescriptor> f)
     {
+        if (_pluginState.Masks.ContainsKey(f.FullId) || _scopeChosen.Contains(f.FullId)
+            || !f.D.SupportsMask || f.D.Stage == FilterStage.Output || IsFaulted(f)) return;
+        if (_lastEditedMask is not { } src || src == f.FullId
+            || !_pluginState.Masks.TryGetValue(src, out var shape)
+            || string.IsNullOrEmpty(shape.Kind) || shape.Kind == MaskRender.Link) return;
+        _pluginState.Masks[f.FullId] = new MaskSpec { Kind = MaskRender.Link, Ref = src };
+        RefreshMaskBox(f.FullId);
+        SetStatus($"{f.D.Label} works inside {MaskOwnerLabel(src)} — the mask active on the photo; its Mask row changes that (the whole photo, another mask)", error: false);
+    }
+
+    private void OnPluginUiChanged(Registered<FilterDescriptor>? turnedOn = null)
+    {
+        if (turnedOn is not null) AutoScopeToActiveMask(turnedOn);
         UpdatePluginSectionBadges();
         RefreshPointMarkers();
         if (_maskEditFilter is not null) UpdateMaskBar();
@@ -1048,9 +1072,8 @@ public partial class MainWindow
                 AutomationProperties.SetAutomationId(cb, aid);
                 cb.Click += (_, _) =>
                 {
-                    double v = cb.IsChecked == true ? 1.0 : 0.0;
-                    _pluginState.SetValue(f, d, v);
-                    OnPluginUiChanged();
+                    _pluginState.SetValue(f, d, cb.IsChecked == true ? 1.0 : 0.0);
+                    OnPluginUiChanged(f);
                 };
                 return cb;
             }
@@ -1082,7 +1105,7 @@ public partial class MainWindow
                             DeferRebuild();
                         }
                     }
-                    OnPluginUiChanged();
+                    OnPluginUiChanged(f);
                 };
                 sp.Children.Add(combo);
                 return sp;
@@ -1104,7 +1127,7 @@ public partial class MainWindow
                 ed.CurveChanged += (v, final) =>
                 {
                     _pluginState.SetText(f, d, v);
-                    OnPluginUiChanged();
+                    OnPluginUiChanged(f);
                 };
                 rb.Click += (_, _) =>
                 {
@@ -1202,7 +1225,7 @@ public partial class MainWindow
                     value.Text = FormatParam(e.NewValue, d);
                     if (_pluginUiBuilding) return;
                     _pluginState.SetValue(f, d, e.NewValue);
-                    OnPluginUiChanged();
+                    OnPluginUiChanged(f);
                 };
                 slider.PreviewMouseLeftButtonDown += (_, e) =>
                 {
@@ -1310,7 +1333,7 @@ public partial class MainWindow
             _pluginState.SetText(f, d, ToHex(c));
             swatch.Background = new SolidColorBrush(c);
             hexText.Text = ToHex(c);
-            OnPluginUiChanged();
+            OnPluginUiChanged(f);
         }
 
         swatch.Click += (_, _) => OpenColorPopup(swatch, ParseHex(_pluginState.GetText(f, d)), Commit);
@@ -1900,6 +1923,10 @@ public partial class MainWindow
         }
         if (_cropMode) SetCropMode(false);
         _maskEditFilter = key;
+        _lastEditedMask = key; // stays after Done: it is the mask active on the photo for tools enabled afterwards
+        if (_newMaskBtn is { } b) b.IsEnabled = false; // a mask is on the bar: creating another one waits until Done / Esc
+        // every tool scoped to another mask follows the user to the mask picked on the photo (the mask it leaves keeps its own values)
+        foreach (var t in _pluginReg.Filters) _pluginState.MoveToolMaskTo(t, key);
         MaskOverlay.SetSpec(spec, IsInteractiveMask(spec.Kind));
         RefreshMaskOverlay();
         if (IsInteractiveMask(spec.Kind))
@@ -1932,6 +1959,7 @@ public partial class MainWindow
         }
         _maskEditFilter = null;
         _maskEditVia = null;
+        if (_newMaskBtn is { } b) b.IsEnabled = true; // the bar is down: creating a mask is possible again
         Interlocked.Increment(ref _maskPreviewSeq);
         MaskOverlay.Clear();
         MaskOverlay.Visibility = Visibility.Collapsed;

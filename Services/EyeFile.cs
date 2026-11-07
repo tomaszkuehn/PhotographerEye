@@ -69,6 +69,12 @@ public sealed record MaskSpec
     /// They add to the whole-photo values inside the mask; outside it only the whole-photo values apply.
     /// </summary>
     public Dictionary<string, double>? Adjust { get; init; }
+    /// <summary>
+    /// Own values of plugin filters inside this mask ("pluginFullId:paramId" keys, slider units): a tool scoped to
+    /// another mask keeps its values there, and inside this mask these replace them (a parameter not listed falls back
+    /// to the tool's value). Set by the tool's sliders while this mask is the one active on the photo.
+    /// </summary>
+    public Dictionary<string, double>? Plugin { get; init; }
 }
 
 public static class EyeFile

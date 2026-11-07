@@ -118,8 +118,21 @@ public partial class MainWindow
         if (key == src || !_pluginState.Masks.TryGetValue(src, out var s) || s.Kind == MaskRender.Link) return;
         bool inv = _pluginState.Masks.TryGetValue(key, out var old) && old.Kind == MaskRender.Link && old.Invert;
         _pluginState.DetachLinksTo(key); // no chains: masks that used this one keep their own copy
-        if (_maskEditFilter == key) EndMaskEdit();
-        _pluginState.Masks[key] = new MaskSpec { Kind = MaskRender.Link, Ref = src, Invert = inv, Adjust = PluginEditState.CopyAdjust(old?.Adjust) };
+        // a linked tool follows with the pick semantics (the mask left behind keeps a complete own set); an own-shape
+        // mask or the Adjustments panel gets the plain link
+        var f = _pluginReg.FindFilter(key);
+        if (f is { } lf && lf.D.SupportsMask)
+        {
+            if (_maskEditFilter == key) EndMaskEdit();
+            _pluginState.MoveToolMaskTo(lf, src);
+            if (!_pluginState.Masks.TryGetValue(key, out var cur) || cur.Kind != MaskRender.Link || cur.Ref != src)
+                _pluginState.Masks[key] = new MaskSpec { Kind = MaskRender.Link, Ref = src, Invert = inv, Adjust = PluginEditState.CopyAdjust(old?.Adjust) };
+        }
+        else
+        {
+            if (_maskEditFilter == key) EndMaskEdit();
+            _pluginState.Masks[key] = new MaskSpec { Kind = MaskRender.Link, Ref = src, Invert = inv, Adjust = PluginEditState.CopyAdjust(old?.Adjust) };
+        }
         RebuildPluginUi();
         OnPluginUiChanged();
         RefreshMaskPins();

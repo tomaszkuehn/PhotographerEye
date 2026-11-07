@@ -63,6 +63,9 @@ public partial class MainWindow
             .ThenBy(kv => PluginEditState.LibraryIndex(kv.Key))
             .ThenBy(kv => kv.Key, StringComparer.Ordinal);
 
+    /// <summary>+ New mask, greyed out while the mask bar is up (one mask banner at a time; Esc or Done frees creating).</summary>
+    private Button? _newMaskBtn;
+
     private UIElement BuildNewMaskButton(Brush muted)
     {
         var b = new Button
@@ -73,6 +76,8 @@ public partial class MainWindow
         };
         b.SetResourceReference(StyleProperty, "ToolButton");
         AutomationProperties.SetAutomationId(b, "BtnMaskNew");
+        b.IsEnabled = _maskEditFilter is null;
+        _newMaskBtn = b;
         b.Click += (_, _) =>
         {
             var menu = new ContextMenu { PlacementTarget = b, Placement = PlacementMode.Bottom };
@@ -97,7 +102,12 @@ public partial class MainWindow
             SetStatus("Open a photo first", error: true);
             return;
         }
-        if (_maskEditFilter is not null) EndMaskEdit();
+        if (_maskEditFilter is not null)
+        {
+            // a mask is in use (the bar at the bottom of the screen): creating another one must wait until it is done
+            SetStatus($"Finish {MaskOwnerLabel(_maskEditFilter)} first (Esc or the bar's Done) — then create a new mask", error: true);
+            return;
+        }
         var key = _pluginState.NewLibraryMaskKey();
         _pluginState.Masks[key] = NewMaskSpec(kind); // a pure add: no other mask, no tool is touched
         SetSectionExpanded(AdjMaskSectionKey, true);
@@ -120,6 +130,7 @@ public partial class MainWindow
     /// <summary>The tool of <paramref name="key"/> works on the whole photo again: its mask is removed (followers keep their own copy).</summary>
     private void RemoveToolMask(string key)
     {
+        _scopeChosen.Add(key); // an explicit whole photo: enabling the tool again must not bring a mask back
         bool hadValues = MaskValuesSummary(key) is not null;
         var links = _pluginState.LinksTo(key);
         if (AdjEditMask && _adjMaskKey == key) ShowAdjSet(false);
@@ -155,6 +166,7 @@ public partial class MainWindow
             : links.Count == 0
                 ? $"Mask of {label} removed — it works on the whole photo now"
                 : $"Mask of {label} removed — it works on the whole photo now; {string.Join(", ", links.Select(MaskOwnerLabel))} keep the current shape as their own copy";
+        if (!library) _scopeChosen.Add(key); // its tool falls back to the whole photo — that stands when it is enabled again
         if (hadValues) msg += "; its own slider values are gone with it (Ctrl+Z brings them back)";
         SetStatus(msg, error: false);
     }
@@ -310,7 +322,12 @@ public partial class MainWindow
         b.Click += (_, _) =>
         {
             if (!CanApplyInsideEdited(key)) return;
-            _pluginState.Masks[key] = new MaskSpec { Kind = MaskRender.Link, Ref = src };
+            // the tool usually has no mask yet (then a plain link is set); with an existing link the move carries the
+            // mask-follow semantics: the mask left behind keeps a complete own set, the picked one dissolves or resets
+            var link = _pluginReg.FindFilter(key);
+            if (link is { } lf && lf.D.SupportsMask) _pluginState.MoveToolMaskTo(lf, src);
+            if (!_pluginState.Masks.TryGetValue(key, out var cur) || cur.Kind != MaskRender.Link || cur.Ref != src)
+                _pluginState.Masks[key] = new MaskSpec { Kind = MaskRender.Link, Ref = src };
             RefreshMaskBox(key);
             RefreshMaskPins();
             OnPluginUiChanged();

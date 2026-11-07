@@ -233,34 +233,107 @@ public static class PluginPipeline
     private static bool RunOne(Registered<FilterDescriptor> f, PluginImage img, RenderContext ctx, PluginRenderJob job,
         Dictionary<MaskSpec, float[]> maskCache)
     {
-        var p = job.State.ParamsFor(f);
-        var maskSpec = job.State.MaskFor(f);
-        float[]? mask = null;
-        if (maskSpec is not null && !maskCache.TryGetValue(maskSpec, out mask))
+        var state = job.State;
+        var own = state.OwnValueMasks(f);
+        PluginImage? pre = own.Count > 0 ? img.Clone() : null;
+        bool ran = false;
+        if (state.BaseActive(f))
         {
-            try
+            var p = state.ParamsFor(f);
+            var maskSpec = state.MaskFor(f);
+            float[]? mask = RenderMask(maskSpec, img, ctx, job, maskCache);
+            if (mask is not null || maskSpec is null)
             {
-                mask = ctx.Stage == FilterStage.Output && job.OutputGeo is { } og && MaskRender.IsGeometric(maskSpec.Kind)
-                    ? MaskRender.RenderMapped(maskSpec, img.Width, img.Height, og.Geo, og.SrcW, og.SrcH)
-                    : MaskRender.Render(maskSpec, img, ctx, job.Registry);
+                // Without a mask (the common case) the filter renders in place: no clone and no copy back. A mask renders
+                // the effect on a copy and blends only the masked area back into the original.
+                var work = mask is null ? img : img.Clone();
+                if (CheckSize(f, work, img, job) && RenderFiltered(f, work, p, ctx, job))
+                {
+                    if (mask is not null && !ReferenceEquals(work, img))
+                    {
+                        MaskRender.Blend(img, work, mask);
+                        img.CopyFrom(work);
+                    }
+                    ran = true;
+                }
             }
-            catch (OperationCanceledException) when (job.Cancel.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                var owner = maskSpec.Kind.StartsWith(MaskRender.PluginPrefix) ? job.Registry.FindMask(maskSpec.Kind.Substring(MaskRender.PluginPrefix.Length))?.Owner : null;
-                PluginManager.Instance.ReportFailure(owner, $"mask {maskSpec.Kind} for {f.FullId}", ex);
-                job.Report.Errors.Add($"{f.D.Label}: mask failed ({ex.Message})");
-                return false;
-            }
-            if (mask is not null) maskCache[maskSpec] = mask;
         }
+        // The own values of masks: the filter runs once more from the state before it (so the sets replace, not stack)
+        // and each mask's result replaces the photo inside that mask — the masks keep their independent settings.
+        foreach (var (mk, shape) in own)
+        {
+            job.Cancel.ThrowIfCancellationRequested();
+            var p = state.ParamsForMask(f, mk);
+            if (!maskCache.TryGetValue(shape, out var plane))
+            {
+                try
+                {
+                    plane = MaskRender.Render(shape, img, ctx, job.Registry);
+                }
+                catch (OperationCanceledException) when (job.Cancel.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    var owner = shape.Kind.StartsWith(MaskRender.PluginPrefix) ? job.Registry.FindMask(shape.Kind.Substring(MaskRender.PluginPrefix.Length))?.Owner : null;
+                    PluginManager.Instance.ReportFailure(owner, $"mask {shape.Kind} for {f.FullId}", ex);
+                    job.Report.Errors.Add($"{f.D.Label}: mask failed ({ex.Message})");
+                    continue;
+                }
+                if (plane is null) continue;
+                maskCache[shape] = plane;
+            }
+            var kimg = pre!.Clone();
+            if (!CheckSize(f, kimg, img, job) || !RenderFiltered(f, kimg, p, ctx, job)) continue;
+            MaskRender.Replace(img, kimg, plane);
+            ran = true;
+        }
+        return ran;
+    }
 
-        // Without a mask (the common case) the filter renders in place: no clone and no copy back. A mask renders
-        // the effect on a copy and blends only the masked area back into the original.
-        var work = mask is null ? img : img.Clone();
+    /// <summary>Renders the plane of the filter's mask (cached per mask spec); null when the filter has none. A failed mask reports and counts as no mask.</summary>
+    private static float[]? RenderMask(MaskSpec? maskSpec, PluginImage img, RenderContext ctx, PluginRenderJob job,
+        Dictionary<MaskSpec, float[]> maskCache)
+    {
+        if (maskSpec is null) return null;
+        if (maskCache.TryGetValue(maskSpec, out var mask)) return mask;
+        try
+        {
+            mask = ctx.Stage == FilterStage.Output && job.OutputGeo is { } og && MaskRender.IsGeometric(maskSpec.Kind)
+                ? MaskRender.RenderMapped(maskSpec, img.Width, img.Height, og.Geo, og.SrcW, og.SrcH)
+                : MaskRender.Render(maskSpec, img, ctx, job.Registry);
+        }
+        catch (OperationCanceledException) when (job.Cancel.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var owner = maskSpec.Kind.StartsWith(MaskRender.PluginPrefix) ? job.Registry.FindMask(maskSpec.Kind.Substring(MaskRender.PluginPrefix.Length))?.Owner : null;
+            PluginManager.Instance.ReportFailure(owner, $"mask {maskSpec.Kind}", ex);
+            job.Report.Errors.Add($"mask failed ({ex.Message})");
+            return null;
+        }
+        maskCache[maskSpec] = mask!;
+        return mask;
+    }
+
+    /// <summary>False (reported) when <paramref name="work"/> no longer matches the photo's size — a plugin may not resize the image.</summary>
+    private static bool CheckSize(Registered<FilterDescriptor> f, PluginImage work, PluginImage img, PluginRenderJob job)
+    {
+        if (work.Width == img.Width && work.Height == img.Height) return true;
+        PluginManager.Instance.ReportFailure(f.Owner, $"{f.FullId} changed the image size", null);
+        job.Report.Errors.Add($"{f.D.Label}: changed the image size");
+        return false;
+    }
+
+    /// <summary>
+    /// Runs one filter's render on <paramref name="work"/> with the caller's cancel/timeout handling. False on failure
+    /// or cancellation (the failure is reported).
+    /// </summary>
+    private static bool RenderFiltered(Registered<FilterDescriptor> f, PluginImage work, FilterParams p, RenderContext ctx, PluginRenderJob job)
+    {
         // The caller may cancel and dispose the job's token source while this render still runs (a newer preview
         // replaces it). Everything here waits on the local linked source, which lives until the render returns.
         CancellationTokenSource cts;
@@ -313,18 +386,7 @@ public static class PluginPipeline
             job.Report.Errors.Add($"{f.D.Label}: {inner.Message}");
             return false;
         }
-        if (work.Width != img.Width || work.Height != img.Height)
-        {
-            PluginManager.Instance.ReportFailure(f.Owner, $"{f.FullId} changed the image size", null);
-            job.Report.Errors.Add($"{f.D.Label}: changed the image size");
-            return false;
-        }
         PluginManager.ReportSuccess(f.Owner);
-        if (mask is not null && !ReferenceEquals(work, img))
-        {
-            MaskRender.Blend(img, work, mask);
-            img.CopyFrom(work);
-        }
         return true;
     }
 }

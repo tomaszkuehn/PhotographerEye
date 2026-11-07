@@ -363,4 +363,22 @@ public static class MaskRender
             }
         });
     }
+
+    /// <summary>dst = dst + m * (src - dst): inside the mask the source (the filter run with the mask's own values) replaces the destination.</summary>
+    public static void Replace(PluginImage dst, PluginImage src, float[] m)
+    {
+        Parallel.For(0, dst.Height, y =>
+        {
+            int row = y * dst.Width;
+            for (int x = 0; x < dst.Width; x++)
+            {
+                int i = row + x;
+                float a = m[i];
+                if (a <= 0f) continue;
+                dst.R[i] += a * (src.R[i] - dst.R[i]);
+                dst.G[i] += a * (src.G[i] - dst.G[i]);
+                dst.B[i] += a * (src.B[i] - dst.B[i]);
+            }
+        });
+    }
 }
