@@ -195,7 +195,7 @@
                         ToolTip="Rotate right 90 degrees (swaps landscape/portrait)" />
                 <Button x:Name="BtnCrop" AutomationProperties.AutomationId="BtnCrop" Content="&#xE7A8;" Style="{StaticResource FlatButton}" Click="OnCropClick"
                         ToolTip="Crop &amp; straighten (C) — drag inside: move, handles: resize, drag outside or Ctrl+drag: rotate, Esc: close" />
-                <Button x:Name="BtnPanel" Content="&#xE9E9;" Style="{StaticResource FlatButton}" Click="OnPanelToggleClick"
+                <Button x:Name="BtnPanel" AutomationProperties.AutomationId="BtnPanel" Content="&#xE9E9;" Style="{StaticResource FlatButton}" Click="OnPanelToggleClick"
                         ToolTip="Adjustments panel — exposure, contrast, white balance, saturation, clarity, dehaze, denoise (E)" />
                 <Button x:Name="BtnPresent" Content="&#xE740;" Style="{StaticResource FlatButton}" Click="OnPresentationClick"
                         ToolTip="Presentation — full screen on black, no bars (F / F11; P slideshow; Esc exits)" />
@@ -500,42 +500,42 @@
                                   <TextBlock Text="Exposure" />
                                   <TextBlock x:Name="ExpValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0.00" />
                               </Grid>
-                              <Slider x:Name="ExpSlider" Minimum="-5" Maximum="5" SmallChange="0.05" LargeChange="0.25" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="ExpSlider" AutomationProperties.AutomationId="SliderExposure" Minimum="-5" Maximum="5" SmallChange="0.05" LargeChange="0.25" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Contrast" />
                                   <TextBlock x:Name="ContrastValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="ContrastSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="ContrastSlider" AutomationProperties.AutomationId="SliderContrast" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Highlights" />
                                   <TextBlock x:Name="HighlightsValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="HighlightsSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="HighlightsSlider" AutomationProperties.AutomationId="SliderHighlights" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Shadows" />
                                   <TextBlock x:Name="PanelShadowValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="PanelShadowSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="PanelShadowSlider" AutomationProperties.AutomationId="SliderShadows" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Whites" />
                                   <TextBlock x:Name="WhitesValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="WhitesSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="WhitesSlider" AutomationProperties.AutomationId="SliderWhites" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Blacks" />
                                   <TextBlock x:Name="BlacksValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="BlacksSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="BlacksSlider" AutomationProperties.AutomationId="SliderBlacks" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
@@ -555,13 +555,13 @@
                                       <TextBlock x:Name="TempValue" Foreground="{StaticResource MutedBrush}" Text="0" />
                                   </StackPanel>
                               </Grid>
-                              <Slider x:Name="TempSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True"
+                              <Slider x:Name="TempSlider" AutomationProperties.AutomationId="SliderTemp" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True"
                                       ToolTip="Temperature: − cooler (blue), + warmer (amber). Fine near 0, wide range towards the ends" />
                               <Grid Margin="0,8,0,0">
                                   <TextBlock Text="Tint" Foreground="{StaticResource MutedBrush}" />
                                   <TextBlock x:Name="TintValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="TintSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True"
+                              <Slider x:Name="TintSlider" AutomationProperties.AutomationId="SliderTint" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True"
                                       ToolTip="Tint: − green, + magenta (fluorescent / LED light)" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
@@ -569,14 +569,14 @@
                                   <TextBlock Text="Clarity" />
                                   <TextBlock x:Name="ClarityValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="ClaritySlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="ClaritySlider" AutomationProperties.AutomationId="SliderClarity" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Saturation" />
                                   <TextBlock x:Name="SatValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="SatSlider" Value="0" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="SatSlider" AutomationProperties.AutomationId="SliderSaturation" Value="0" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           </StackPanel>
                           <StackPanel x:Name="DetailSectionBody" AutomationProperties.AutomationId="DetailSectionBody">
@@ -585,28 +585,28 @@
                                   <TextBlock Text="Sharpening" />
                                   <TextBlock x:Name="SharpenValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="SharpenSlider" Minimum="0" Maximum="150" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="SharpenSlider" AutomationProperties.AutomationId="SliderSharpen" Minimum="0" Maximum="150" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Dehaze" />
                                   <TextBlock x:Name="DehazeValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="DehazeSlider" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="DehazeSlider" AutomationProperties.AutomationId="SliderDehaze" Minimum="-100" Maximum="100" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Noise reduction" ToolTip="Removes luminance grain; strength adapts to the noise measured in the photo, edges and texture are kept" />
                                   <TextBlock x:Name="DenoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="DenoiseSlider" Minimum="0" Maximum="200" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="DenoiseSlider" AutomationProperties.AutomationId="SliderDenoise" Minimum="0" Maximum="200" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           <StackPanel Margin="0,12,0,0">
                               <Grid>
                                   <TextBlock Text="Color noise reduction" ToolTip="Removes colored speckles and color blotches; brightness detail is not affected" />
                                   <TextBlock x:Name="ColorNoiseValue" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" Text="0" />
                               </Grid>
-                              <Slider x:Name="ColorNoiseSlider" Minimum="0" Maximum="200" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
+                              <Slider x:Name="ColorNoiseSlider" AutomationProperties.AutomationId="SliderColorNoise" Minimum="0" Maximum="200" SmallChange="1" LargeChange="10" Margin="0,4,0,0" v:PhotoshopSlider.Enable="True" />
                           </StackPanel>
                           </StackPanel>
                           <StackPanel x:Name="PluginPanelHost" AutomationProperties.AutomationId="PluginPanelHost" />
