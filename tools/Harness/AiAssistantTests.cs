@@ -256,6 +256,70 @@ internal static partial class Program
 
         TestPrivacyPolicy();
         TestAiAssistantStages();
+        TestAiCurves();
+    }
+
+    /// <summary>Stage 5: set_curve and set_levels (the histogram's curves and levels).</summary>
+    private static void TestAiCurves()
+    {
+        const double E = 1e-6;
+        var names = AiTools.Catalog(false).Select(t => t!["function"]!["name"]!.ToString()).ToList();
+        Check(names.Contains("set_curve") && names.Contains("set_levels"), "ai curves: catalogue has set_curve and set_levels");
+
+        var ed = new FakeEditor();
+        var r = Run(ed, "set_curve", JsonNode.Parse("""{"channel":"rgb","points":[[1,1],[0.75,0.8],[0,0],[0.25,0.2]]}"""));
+        Check(!r.Error && r.Changed && ed.Curves["rgb"].Length == 2 &&
+              Math.Abs(ed.Curves["rgb"][0][0] - 0.25) < E && Math.Abs(ed.Curves["rgb"][0][1] - 0.2) < E && Math.Abs(ed.Curves["rgb"][1][0] - 0.75) < E &&
+              r.StepNote == "RGB curve: 0.25→0.2 0.75→0.8" && JsonNode.Parse(r.Content)!["image_after"] is not null,
+            "ai curves: set_curve sorts the points, leaves out the fixed ends, renders and reports");
+        var gs = JsonNode.Parse(Run(ed, "get_state", null).Content)!;
+        Check(gs["curves"]!["rgb"]!.AsArray().Count == 2 && gs["curves"]!["red"] is null, "ai curves: get_state shows the curves that have points");
+
+        r = Run(ed, "set_curve", JsonNode.Parse("""{"channel":"rgb","points":[[0.3,0.5],[0.6,0.4]]}"""));
+        Check(r.Error && !r.Changed && ed.Curves["rgb"].Length == 2 && r.Content.Contains("must not decrease"), "ai curves: a reversing curve is refused, the old one stays");
+        r = Run(ed, "set_curve", JsonNode.Parse("""{"channel":"red","points":[[0.5,0.5],[0.51,0.6]]}"""));
+        Check(r.Error && !ed.Curves.ContainsKey("red"), "ai curves: points too close are refused");
+        Check(Run(ed, "set_curve", JsonNode.Parse("""{"channel":"purple","points":[[0.5,0.6]]}""")).Error, "ai curves: unknown channel is an error");
+        Check(Run(ed, "set_curve", JsonNode.Parse("""{"channel":"red"}""")).Error, "ai curves: points or reset are required");
+        var many = new JsonArray(Enumerable.Range(1, 13).Select(i => (JsonNode)new JsonArray(i * 0.07, i * 0.07)).ToArray());
+        Check(Run(ed, "set_curve", new JsonObject { ["channel"] = "green", ["points"] = many }).Error, "ai curves: too many points are refused");
+
+        r = Run(ed, "set_curve", JsonNode.Parse("""{"channel":"b","points":"[[0.5,0.45]]"}"""));
+        Check(!r.Error && ed.Curves["blue"].Length == 1 && Math.Abs(ed.Curves["blue"][0][1] - 0.45) < E, "ai curves: points as a JSON string, channel b");
+        r = Run(ed, "set_curve", JsonNode.Parse("""{"channel":"green","points":[{"x":0.25,"y":0.3},{"in":0.7,"out":0.72}]}"""));
+        Check(!r.Error && ed.Curves["green"].Length == 2 && Math.Abs(ed.Curves["green"][1][1] - 0.72) < E, "ai curves: points as objects");
+        r = Run(ed, "set_curve", JsonNode.Parse("""{"channel":"rgb","reset":true}"""));
+        Check(!r.Error && r.Changed && !ed.Curves.ContainsKey("rgb") && r.StepNote == "RGB curve removed", "ai curves: reset removes the curve");
+        r = Run(ed, "set_curve", JsonNode.Parse("""{"channel":"red","points":[[0,0.06]]}"""));
+        Check(!r.Error && ed.Curves["red"].Length == 1 && ed.Curves["red"][0][0] == 0, "ai curves: a lifted black end is kept");
+
+        // levels: the points follow the classic black / white / gamma / output controls
+        Check(AiTools.LevelPoints(0, 1, 1, 0, 1).Length == 0, "ai levels: neutral levels have no points");
+        var lp = AiTools.LevelPoints(0.1, 0.9, 1, 0, 1);
+        Check(lp.Length == 2 && Math.Abs(lp[0][0] - 0.1) < E && lp[0][1] == 0 && Math.Abs(lp[1][0] - 0.9) < E && lp[1][1] == 1, "ai levels: black and white points");
+        var cc = new ImgViewer.Imaging.ChannelCurve();
+        cc.FromLevelPairs(lp);
+        Check(cc.MapLevels(0.05) < E && Math.Abs(cc.MapLevels(0.5) - 0.5) < E && cc.MapLevels(0.95) > 1 - E,
+            "ai levels: below black is black, above white is white, the middle stays");
+        cc.FromLevelPairs(AiTools.LevelPoints(0, 1, 2, 0, 1));
+        Check(Math.Abs(cc.MapLevels(0.25) - 0.5) < E && cc.MapLevels(0.5) > 0.6, "ai levels: gamma 2 brightens the midtones");
+        cc.FromLevelPairs(AiTools.LevelPoints(0, 1, 1, 0.05, 0.9));
+        Check(Math.Abs(cc.MapLevels(0) - 0.05) < E && Math.Abs(cc.MapLevels(1) - 0.9) < E && Math.Abs(cc.MapLevels(0.5) - 0.475) < E,
+            "ai levels: output black and white compress the range");
+        cc.FromLevelPairs(AiTools.LevelPoints(0.2, 0.25, 0.3, 0, 1));
+        Check(cc.LevelCount == AiTools.LevelPoints(0.2, 0.25, 0.3, 0, 1).Length, "ai levels: no points the levels editor would merge");
+
+        r = Run(ed, "set_levels", JsonNode.Parse("""{"channel":"rgb","black":0.06,"white":0.94}"""));
+        Check(!r.Error && r.Changed && new[] { "levels_red", "levels_green", "levels_blue" }.All(id => ed.Curves[id].Length == 2 && Math.Abs(ed.Curves[id][0][0] - 0.06) < E) &&
+              r.StepNote == "RGB levels: black 0.06, white 0.94, gamma 1", "ai levels: rgb sets the three channels alike");
+        r = Run(ed, "set_levels", JsonNode.Parse("""{"channel":"blue","black":0.1}"""));
+        Check(!r.Error && Math.Abs(ed.Curves["levels_blue"][0][0] - 0.1) < E && Math.Abs(ed.Curves["levels_red"][0][0] - 0.06) < E && ed.Curves["levels_blue"].Length == 1,
+            "ai levels: one channel replaces only its own levels");
+        r = Run(ed, "set_levels", JsonNode.Parse("""{"channel":"red","reset":true}"""));
+        Check(!r.Error && !ed.Curves.ContainsKey("levels_red") && ed.Curves.ContainsKey("levels_green") && r.StepNote == "Red levels removed", "ai levels: reset");
+        Check(Run(ed, "set_levels", JsonNode.Parse("""{"channel":"x","black":0.1}""")).Error, "ai levels: unknown channel is an error");
+        gs = JsonNode.Parse(Run(ed, "get_state", null).Content)!;
+        Check(gs["curves"]!["levels_green"]!.AsArray().Count == 2 && gs["curves"]!["levels_red"] is null, "ai levels: get_state shows the levels");
     }
 
     private static void TestPrivacyPolicy()
@@ -439,6 +503,16 @@ internal static partial class Program
         {
             if (maskKey is null) ToolMask.Remove(filterId);
             else ToolMask[filterId] = maskKey;
+        }
+
+        // ---- stage 5 ----
+        public readonly Dictionary<string, double[][]> Curves = new();
+        public double[][] GetCurve(string id) => Curves.TryGetValue(id, out var c) ? c : Array.Empty<double[]>();
+        public void SetCurve(string id, double[][] points)
+        {
+            if (!AiTools.CurveIds.Contains(id)) throw new ArgumentException($"unknown curve '{id}'");
+            if (points.Length == 0) Curves.Remove(id);
+            else Curves[id] = points;
         }
     }
 

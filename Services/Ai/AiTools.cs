@@ -64,6 +64,16 @@ public interface IAiEditor
     void SetMaskValues(string key, IReadOnlyDictionary<string, double> values);
     /// <summary>Limits a filter to a mask (it follows the mask), or back to the whole photo when <paramref name="maskKey"/> is null.</summary>
     void SetToolMask(string filterId, string? maskKey);
+
+    // ---- stage 5: curves and levels ----
+    /// <summary>
+    /// Points of a curve (<see cref="AiTools.CurveIds"/>): "rgb" the histogram's master curve, "red" / "green" / "blue" the
+    /// channel curves, "levels_red" / "levels_green" / "levels_blue" the channel levels. [input, output] display fractions
+    /// 0..1 with the ends 0→0 and 1→1 implied; empty when the curve has no points.
+    /// </summary>
+    double[][] GetCurve(string id);
+    /// <summary>Replaces a curve (already validated; empty removes it) and renders.</summary>
+    void SetCurve(string id, double[][] points);
 }
 
 /// <summary>One parameter of a plugin filter. Kind: slider, toggle, choice or color.</summary>
@@ -189,8 +199,44 @@ public static class AiTools
             new JsonObject { ["filter"] = Str("filter id"), ["mask"] = Str("mask key or none") }));
         tools.Add(Fn("delete_mask", "Remove a mask: its own values go with it and filters limited to it work on the whole photo again.",
             new JsonObject { ["mask"] = Str("mask key") }));
+
+        // stage 5: curves and levels (the histogram tools)
+        JsonObject Channel() => new() { ["type"] = "string", ["enum"] = new JsonArray("rgb", "red", "green", "blue") };
+        tools.Add(Fn("set_curve", "Tone curve of the histogram, applied on top of the basic settings. Points are [input, output] pairs of displayed brightness 0..1 " +
+                                  "(the ends 0→0 and 1→1 are implied; outputs must not decrease). channel rgb: the master curve, all channels, " +
+                                  "e.g. a gentle S [[0.25,0.2],[0.75,0.8]] adds contrast, [[0.5,0.58]] brightens the midtones, [[0,0.06]] lifts the blacks (matte); " +
+                                  "red / green / blue: one colour channel, e.g. blue [[0.5,0.45]] warms the midtones, red [[0.25,0.22],[0.75,0.8]] adds red to the highlights only. " +
+                                  "Replaces that channel's earlier curve; points [] or reset: true removes it. get_state shows the current curves.",
+            new JsonObject
+            {
+                ["channel"] = Channel(),
+                ["points"] = new JsonObject
+                {
+                    ["type"] = "array", ["description"] = "[[input, output], ...], up to 12 points, inputs 0..1 at least 0.02 apart",
+                    ["items"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "number" } }
+                },
+                ["reset"] = new JsonObject { ["type"] = "boolean" }
+            }));
+        tools.Add(Fn("set_levels", "Levels of a colour channel, after its curve: black and white are the input brightness 0..1 that becomes black / white " +
+                                   "(e.g. black 0.06 when the histogram starts at 6%), gamma > 1 brightens the midtones, < 1 darkens them (1 = neutral, 0.3..3), " +
+                                   "output_black / output_white compress the output (0.05 = faded blacks). channel rgb sets red, green and blue alike; " +
+                                   "different black / white per channel removes a colour cast. Replaces the channel's earlier levels; reset: true removes them.",
+            new JsonObject
+            {
+                ["channel"] = Channel(),
+                ["black"] = Num("input black point 0..1, default 0"), ["white"] = Num("input white point 0..1, default 1"),
+                ["gamma"] = Num("midtones 0.3..3, default 1"),
+                ["output_black"] = Num("0..1, default 0"), ["output_white"] = Num("0..1, default 1"),
+                ["reset"] = new JsonObject { ["type"] = "boolean" }
+            }));
         return tools;
     }
+
+    /// <summary>Curve ids of <see cref="IAiEditor.GetCurve"/>.</summary>
+    public static readonly string[] CurveIds = { "rgb", "red", "green", "blue", "levels_red", "levels_green", "levels_blue" };
+
+    /// <summary>Most points a curve may have.</summary>
+    public const int MaxCurvePoints = 12;
 
     /// <summary>Basic settings that can have values of their own inside a mask (the STANDARD / DETAIL sliders).</summary>
     public static readonly string[] MaskableKeys =
@@ -248,6 +294,7 @@ public static class AiTools
                     }
                     o["plugins_on"] = on;
                     o["masks"] = MasksJson(ed);
+                    o["curves"] = CurvesJson(ed);
                     return new AiToolResult(o.ToJsonString());
                 }
                 case "analyze_image":
@@ -388,6 +435,10 @@ public static class AiTools
                     ed.DeleteMask(m.Key);
                     return await AfterAsync(ed, ct, new JsonObject { ["deleted"] = m.Key }, $"{m.Key} deleted");
                 }
+                case "set_curve":
+                    return await SetCurveAsync(ed, args, ct);
+                case "set_levels":
+                    return await SetLevelsAsync(ed, args, ct);
                 default:
                     return new AiToolResult(Err($"unknown function '{name}'"), Error: true);
             }
@@ -846,5 +897,171 @@ public static class AiTools
         var res = new JsonObject { ["mask"] = key, ["kind"] = kind };
         if (existing is null) res["note"] = "the mask changes nothing yet: give it values (set_mask_values) or limit a filter to it (link_tool_to_mask)";
         return await AfterAsync(ed, ct, res, $"{(existing is null ? "created" : "reshaped")} {key} ({kind}{(invert ? ", inverted" : "")})");
+    }
+
+    // ---------------- stage 5: curves and levels ----------------
+
+    /// <summary>The curves and levels that have points, {id: [[in, out], ...]}.</summary>
+    public static JsonObject CurvesJson(IAiEditor ed)
+    {
+        var o = new JsonObject();
+        foreach (var id in CurveIds)
+        {
+            var pts = ed.GetCurve(id);
+            if (pts.Length > 0) o[id] = PointsJson(pts);
+        }
+        return o;
+    }
+
+    private static JsonArray PointsJson(double[][] pts) =>
+        new(pts.Select(p => (JsonNode)new JsonArray(Math.Round(p[0], 3), Math.Round(p[1], 3))).ToArray());
+
+    /// <summary>"rgb", "red", "green" or "blue" (also r/g/b, luma, master, all); null when unknown.</summary>
+    private static string? Channel(JsonObject args)
+    {
+        string c = (args["channel"]?.ToString() ?? "rgb").Trim().ToLowerInvariant();
+        return c switch
+        {
+            "" or "rgb" or "luma" or "luminance" or "master" or "all" => "rgb",
+            "red" or "r" => "red",
+            "green" or "g" => "green",
+            "blue" or "b" => "blue",
+            _ => null
+        };
+    }
+
+    private static bool Reset(JsonObject args) => args["reset"] is JsonNode n && TryNumber(n, out double v) && v != 0;
+
+    /// <summary>
+    /// The model's curve points: [[in, out], ...] (or {in, out} / {x, y} objects, or the array as a JSON string), clamped to
+    /// 0..1, sorted, the implied ends 0→0 and 1→1 left out. Null with <paramref name="error"/> when they cannot form a curve.
+    /// </summary>
+    public static double[][]? ParseCurvePoints(JsonNode? node, out string? error)
+    {
+        error = null;
+        if (node is JsonValue sv && sv.TryGetValue<string>(out var s))
+        {
+            try
+            {
+                node = string.IsNullOrWhiteSpace(s) ? new JsonArray() : JsonNode.Parse(s);
+            }
+            catch (JsonException)
+            {
+                node = null;
+            }
+        }
+        if (node is not JsonArray arr)
+        {
+            error = "points must be an array of [input, output] pairs";
+            return null;
+        }
+        var list = new List<double[]>();
+        foreach (var item in arr)
+        {
+            double x, y;
+            if (item is JsonArray pa && pa.Count == 2 && TryNumber(pa[0], out x) && TryNumber(pa[1], out y)) { }
+            else if (item is JsonObject po && (TryNumber(po["in"], out x) || TryNumber(po["x"], out x) || TryNumber(po["input"], out x))
+                     && (TryNumber(po["out"], out y) || TryNumber(po["y"], out y) || TryNumber(po["output"], out y))) { }
+            else
+            {
+                error = "each point must be [input, output] with numbers 0..1";
+                return null;
+            }
+            x = Math.Clamp(x, 0, 1);
+            y = Math.Clamp(y, 0, 1);
+            // the fixed ends are implied
+            if ((x <= 0.001 && y <= 0.001) || (x >= 0.999 && y >= 0.999)) continue;
+            list.Add(new[] { Math.Round(x, 4), Math.Round(y, 4) });
+        }
+        list.Sort((a, b) => a[0].CompareTo(b[0]));
+        if (list.Count > MaxCurvePoints)
+        {
+            error = $"at most {MaxCurvePoints} points";
+            return null;
+        }
+        for (int i = 1; i < list.Count; i++)
+        {
+            if (list[i][0] - list[i - 1][0] < 0.02)
+            {
+                error = string.Format(CultureInfo.InvariantCulture, "inputs {0} and {1} are too close (keep them at least 0.02 apart)", list[i - 1][0], list[i][0]);
+                return null;
+            }
+            if (list[i][1] < list[i - 1][1])
+            {
+                error = "outputs must not decrease (a curve cannot reverse tones)";
+                return null;
+            }
+        }
+        return list.ToArray();
+    }
+
+    private static string ChannelLabel(string ch) => ch == "rgb" ? "RGB" : char.ToUpperInvariant(ch[0]) + ch[1..];
+
+    private static async Task<AiToolResult> SetCurveAsync(IAiEditor ed, JsonObject args, CancellationToken ct)
+    {
+        var ch = Channel(args);
+        if (ch is null) return Fail("channel must be rgb, red, green or blue");
+        double[][] pts;
+        if (Reset(args) || args["points"] is null)
+        {
+            if (!Reset(args)) return Fail("points are required (or reset: true)");
+            pts = Array.Empty<double[]>();
+        }
+        else
+        {
+            var parsed = ParseCurvePoints(args["points"], out var error);
+            if (parsed is null) return Fail(error!);
+            pts = parsed;
+        }
+        ed.SetCurve(ch, pts);
+        var res = new JsonObject { ["channel"] = ch, ["points"] = PointsJson(ed.GetCurve(ch)) };
+        return await AfterAsync(ed, ct, res, pts.Length == 0
+            ? $"{ChannelLabel(ch)} curve removed"
+            : $"{ChannelLabel(ch)} curve: " + string.Join(" ", pts.Select(p => string.Format(CultureInfo.InvariantCulture, "{0:0.##}→{1:0.##}", p[0], p[1]))));
+    }
+
+    /// <summary>
+    /// Level points for black / white input points, gamma and output range: piecewise linear, so gamma is followed at the
+    /// quarter, half and three-quarter tones. Empty when everything is neutral.
+    /// </summary>
+    public static double[][] LevelPoints(double black, double white, double gamma, double outBlack, double outWhite)
+    {
+        black = Math.Clamp(black, 0, 0.95);
+        white = Math.Clamp(white, black + 0.05, 1);
+        gamma = Math.Clamp(gamma, 0.3, 3);
+        outBlack = Math.Clamp(outBlack, 0, 0.95);
+        outWhite = Math.Clamp(outWhite, outBlack + 0.05, 1);
+        var pts = new List<double[]>();
+        void Add(double x, double y)
+        {
+            if (pts.Count > 0 && x - pts[^1][0] < 0.006) return; // the levels editor merges points this close
+            pts.Add(new[] { Math.Round(x, 4), Math.Round(y, 4) });
+        }
+        if (outBlack > 1e-4) Add(0, outBlack);
+        if (black > 1e-4) Add(black, outBlack);
+        if (Math.Abs(gamma - 1) > 1e-3)
+            foreach (double q in new[] { 0.25, 0.5, 0.75 })
+                Add(black + (white - black) * Math.Pow(q, gamma), outBlack + (outWhite - outBlack) * q);
+        if (white < 1 - 1e-4) Add(white, outWhite);
+        if (outWhite < 1 - 1e-4 && (pts.Count == 0 || pts[^1][0] < 1 - 0.006)) Add(1, outWhite);
+        return pts.ToArray();
+    }
+
+    private static async Task<AiToolResult> SetLevelsAsync(IAiEditor ed, JsonObject args, CancellationToken ct)
+    {
+        var ch = Channel(args);
+        if (ch is null) return Fail("channel must be rgb, red, green or blue");
+        double Get(string k, double d) => TryNumber(args[k], out double v) ? v : d;
+        double black = Get("black", 0), white = Get("white", 1), gamma = Get("gamma", 1), ob = Get("output_black", 0), ow = Get("output_white", 1);
+        var pts = Reset(args) ? Array.Empty<double[]>() : LevelPoints(black, white, gamma, ob, ow);
+        var ids = ch == "rgb" ? new[] { "levels_red", "levels_green", "levels_blue" } : new[] { "levels_" + ch };
+        foreach (var id in ids) ed.SetCurve(id, pts);
+        var res = new JsonObject { ["channel"] = ch, ["points"] = PointsJson(ed.GetCurve(ids[0])) };
+        string note = pts.Length == 0
+            ? $"{ChannelLabel(ch)} levels removed"
+            : string.Format(CultureInfo.InvariantCulture, "{0} levels: black {1:0.###}, white {2:0.###}, gamma {3:0.##}{4}", ChannelLabel(ch),
+                Math.Clamp(black, 0, 0.95), Math.Clamp(white, Math.Clamp(black, 0, 0.95) + 0.05, 1), Math.Clamp(gamma, 0.3, 3),
+                ob > 1e-4 || ow < 1 - 1e-4 ? string.Format(CultureInfo.InvariantCulture, ", output {0:0.###}..{1:0.###}", ob, ow) : "");
+        return await AfterAsync(ed, ct, res, note);
     }
 }

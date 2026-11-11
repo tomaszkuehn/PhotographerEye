@@ -76,6 +76,10 @@ Beyond the basic settings:
   set_mask_values (values added inside the mask, e.g. Exposure 0.4 to brighten a face) or link_tool_to_mask to limit a
   filter to it. Mask coordinates are fractions of the photo as it is shown now (after any crop); look at the preview or
   the 3x3 zones to place them. A mask without values or a linked filter changes nothing.
+- Histogram: set_curve (master rgb curve or one colour channel; an S curve, faded blacks, toning shadows and highlights
+  differently) and set_levels (black / white point, gamma, per channel to remove a cast). Use them for what the sliders
+  cannot do; start with the sliders for plain exposure and contrast. The luminance percentiles of analyze_image tell
+  where the histogram starts and ends.
 
 Earlier requests appear in short form ("[changes: …]"); the settings may also have been changed by hand since, so call
 get_state before building on them.

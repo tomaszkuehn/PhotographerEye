@@ -12,7 +12,8 @@
       steps, the answer and the photo-preview note, the usage line shows tokens; the conversation survives closing
       and reopening the chat window; a stage 2-4 request (list_plugins, set_plugin, straighten, set_crop,
       create_mask, set_mask_values, link_tool_to_mask) runs with no tool error and lands in the .eye file together
-      with the conversation; one Undo removes the whole request; "New conversation" drops it from the .eye file.
+      with the conversation; one Undo removes the whole request; set_curve / set_levels land in the .eye file and
+      one Undo removes them; "New conversation" drops it from the .eye file.
   Exit code 0 = all checks passed.
 #>
 param(
@@ -162,6 +163,18 @@ public static class FakeOllama
             }
             else final = "Done stages.";
         }
+        else if (text.Contains("TEST-CURVES"))
+        {
+            if (turnTools.Count == 0)
+            {
+                calls.Add(Call("set_curve", D("channel", "rgb", "points", new object[] { new object[] { 0.25, 0.2 }, new object[] { 0.75, 0.8 } })));
+                calls.Add(Call("set_curve", D("channel", "blue", "points", new object[] { new object[] { 0.5, 0.45 } })));
+                calls.Add(Call("set_levels", D("channel", "rgb", "black", 0.05, "white", 0.95)));
+                calls.Add(Call("set_levels", D("channel", "red", "black", 0.08)));
+            }
+            else if (result("get_state") == null) calls.Add(Call("get_state", D()));
+            else { CurvesState = result("get_state"); final = "Done curves."; }
+        }
         else final = "OK.";
 
         var msg = D("role", "assistant", "content", final ?? "");
@@ -171,6 +184,7 @@ public static class FakeOllama
     }
 
     static double PluginValue;
+    public static string CurvesState = "";
 
     // the first panel filter with a slider: set it 60% of the way from its default towards an end
     static void PickPlugin(string json)
@@ -417,6 +431,25 @@ if ($e) {
   Check ([math]::Abs($e.Exposure - 0.6) -lt 1e-6) 'Undo: the earlier request stays'
 }
 
+# ------------------------------------------------------------------ 4b. curves and levels
+Ask 'TEST-CURVES s-curve, warmer midtones, levels'
+$errs = Tool-Errors
+Check ($errs.Count -eq 0) 'set_curve / set_levels ran without errors' ($errs -join ' || ')
+$gsc = [FakeOllama]::CurvesState
+Check ($gsc -match '"rgb":\[\[0\.2\d*,0\.2\d*\],\[0\.7\d*,0\.8\d*\]\]') 'get_state: the master curve' $gsc
+Check ($gsc -match '"blue":\[\[0\.5,0\.45\]\]') 'get_state: the blue curve' $gsc
+Check ($gsc -match '"levels_green":\[\[0\.05,0\],\[0\.95,1\]\]' -and $gsc -match '"levels_red":\[\[0\.08,0\]\]') 'get_state: the levels' $gsc
+$e = Wait-Eye { param($x) $x.CurveB -and $x.LevelR }
+Check ([bool]$e) '.eye: curves and levels stored' $(if ($e) { '' } else { (Get-Content $eyePath -Raw -ErrorAction SilentlyContinue) })
+if ($e) {
+  Check (@($e.Stretch).Count -eq 2 -and [math]::Abs($e.Stretch[0][0] - 0.25) -lt 0.01 -and [math]::Abs($e.Stretch[0][1] - 0.2) -lt 0.01) '.eye: the master curve (histogram stretch)'
+  Check (@($e.CurveB).Count -eq 1 -and [math]::Abs($e.CurveB[0][1] - 0.45) -lt 1e-6) '.eye: the blue curve'
+  Check (@($e.LevelG).Count -eq 2 -and @($e.LevelB).Count -eq 2 -and @($e.LevelR).Count -eq 1 -and [math]::Abs($e.LevelR[0][0] - 0.08) -lt 1e-6) '.eye: the levels per channel'
+}
+Invoke-Id 'BtnUndo'
+$e = Wait-Eye { param($x) -not $x.CurveB -and -not $x.LevelR -and @($x.Stretch).Count -eq 0 }
+Check ([bool]$e) 'Undo: curves and levels removed in one step'
+
 # ------------------------------------------------------------------ 5. new conversation
 Invoke-Id 'AiNew'
 $e = Wait-Eye { param($x) -not $x.Assistant }
@@ -438,11 +471,11 @@ function Send-Key([string]$k) {
 }
 (Find-Id 'AiInput').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('draft')
 Send-Key '{UP}'
-Check ((Input-Value) -match '^TEST-STAGES') 'Up: the newest request' (Input-Value)
+Check ((Input-Value) -match '^TEST-CURVES') 'Up: the newest request' (Input-Value)
 Send-Key '{UP}'
-Check ((Input-Value) -match '^TEST-BASIC') 'Up again: the older request' (Input-Value)
+Check ((Input-Value) -match '^TEST-STAGES') 'Up again: the older request' (Input-Value)
 Send-Key '{DOWN}'
-Check ((Input-Value) -match '^TEST-STAGES') 'Down: back to the newer request' (Input-Value)
+Check ((Input-Value) -match '^TEST-CURVES') 'Down: back to the newer request' (Input-Value)
 Send-Key '{DOWN}'
 Check ((Input-Value) -eq 'draft') 'Down past the newest: the unfinished text returns' (Input-Value)
 

@@ -496,5 +496,34 @@ public partial class MainWindow
             _w._histCommitTimer?.Stop();
             _w.UpdateSaveState();
         }
+
+        // ---------------- stage 5: curves and levels ----------------
+
+        /// <summary>The master curve is the histogram stretch in display fractions; the rest are the channel curves and levels.</summary>
+        private static CurveKind CurveKindOf(string id) => id switch
+        {
+            "rgb" => CurveKind.Stretch,
+            "red" => CurveKind.Red,
+            "green" => CurveKind.Green,
+            "blue" => CurveKind.Blue,
+            "levels_red" => CurveKind.LevelsRed,
+            "levels_green" => CurveKind.LevelsGreen,
+            "levels_blue" => CurveKind.LevelsBlue,
+            _ => throw new ArgumentException($"unknown curve '{id}'")
+        };
+
+        public double[][] GetCurve(string id)
+        {
+            EnsurePhoto();
+            return new CommandContext(_w, "ai", null, null).GetCurve(CurveKindOf(id));
+        }
+
+        public void SetCurve(string id, double[][] points)
+        {
+            EnsurePhoto();
+            var ctx = new CommandContext(_w, "ai", null, null);
+            ctx.SetCurve(CurveKindOf(id), points);
+            Applied(ctx);
+        }
     }
 }

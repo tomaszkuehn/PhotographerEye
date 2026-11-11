@@ -130,9 +130,12 @@ przetrwa zamknięcie aplikacji. „Nowa rozmowa” zeruje historię i liczniki.
 | 4 | `create_mask` | `radial` (środek, promienie, feather), `linear` (x1,y1 → x2,y2), `luma` (low, high, feather). Współrzędne 0..1 są w kadrze, tak jak model widzi podgląd. Aplikacja przelicza je na zdjęcie źródłowe (kadr, prostowanie, obrót). Z `mask` zmienia kształt istniejącej maski, a pominięte parametry zostają bez zmian. W `radial` promienie opisują wewnętrzną elipsę (pełny efekt), a feather 0..1 to ta sama skala co suwak Feather w panelu: 0 = twarda krawędź, 1 (domyślnie) = miękka krawędź do 2× promienia. `get_state` zwraca je w tej samej postaci. |
 | 4 | `set_mask_values` | Wartości podstawowych suwaków dodawane wewnątrz maski. Zera są pomijane, `{}` usuwa wartości. |
 | 4 | `link_tool_to_mask`, `delete_mask` | Ogranicza filtr do maski (`none` przywraca całe zdjęcie). Usunięcie maski przywraca całe zdjęcie powiązanym filtrom. |
+| 5 | `set_curve` | `{channel, points}` albo `{channel, reset: true}`. `channel`: `rgb` to krzywa główna histogramu (rozciąganie, zapisywane w `.eye` jako `Stretch`/`StretchEv`), a `red`/`green`/`blue` to krzywe kanałów (`CurveR/G/B`). Punkty `[wejście, wyjście]` są w jasności wyświetlanej 0..1, a końce 0→0 i 1→1 są domyślne. Do 12 punktów, wejścia co najmniej 0,02 od siebie. Wyjścia nie mogą maleć. Wywołanie zastępuje wcześniejszą krzywą kanału. |
+| 5 | `set_levels` | `{channel, black, white, gamma, output_black, output_white}` albo `reset`. Klasyczne poziomy zamieniane na punkty poziomów kanału (`LevelR/G/B`). Gamma jest odwzorowana w ćwierciach, połowie i trzech czwartych tonów (zakres 0.3..3; powyżej 1 rozjaśnia). `rgb` ustawia jednakowo R, G i B. |
 
-`get_state` podaje też geometrię (`geometry`), włączone pluginy (`plugins_on`) i maski (`masks`, we współrzędnych
-kadru). Przed turą aplikacja zamyka tryb kadrowania i edycję maski, żeby zmiany asystenta nie mieszały się
+`get_state` podaje też geometrię (`geometry`), włączone pluginy (`plugins_on`), maski (`masks`, we współrzędnych
+kadru) i krzywe z punktami (`curves`: `rgb`, `red`, `green`, `blue`, `levels_red`, `levels_green`, `levels_blue`).
+Krzywa kamery RAW (`ToneCurve`) nie jest dostępna dla modelu. Przed turą aplikacja zamyka tryb kadrowania i edycję maski, żeby zmiany asystenta nie mieszały się
 z otwartym narzędziem.
 
 Katalog jest generowany z `CoreParams` i z deskryptorów pluginów, więc nowy suwak albo plugin trafia do asystenta
