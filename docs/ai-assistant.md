@@ -170,7 +170,7 @@ serwer, z etykietami kategorii.
 - Środek: przebieg rozmowy. Wiadomości użytkownika, odpowiedzi asystenta i wyszarzone linie kroków („Exposure +0.30,
   Contrast +15”).
 - Szybkie polecenia: „Album rodzinny”, „Reportaż”, „Czarno-białe artystyczne”.
-- Dół: pole polecenia (Enter wysyła, Shift+Enter nowa linia), Wyślij, Stop, Nowa rozmowa, licznik kontekstu i zużycia.
+- Dół: pole polecenia (Enter wysyła, Shift+Enter nowa linia, strzałki Góra/Dół przywołują wcześniejsze polecenia — ostatnie 50, ze wszystkich zdjęć, zapisane w settings.json; za najnowszym wraca niedokończony tekst), Wyślij, Stop, Nowa rozmowa, licznik kontekstu i zużycia.
 - Rozmowa należy do zdjęcia. Po zmianie zdjęcia pokazuje się rozmowa tego zdjęcia albo pusta. Rozmowa trafia do
   pliku `.eye` (pole `Assistant`, tylko w stanie głównym, nigdy w krokach historii) przy autozapisie i przy Save Photo.
   Zapisywane są wiadomości użytkownika i podsumowania tur, przebieg widoczny w oknie oraz liczniki tokenów. Nie są

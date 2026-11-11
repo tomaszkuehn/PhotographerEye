@@ -1,4 +1,4 @@
-<#
+﻿<#
   UI test of the AI assistant against a fake Ollama server (no real model, nothing leaves this computer).
 
     powershell -ExecutionPolicy Bypass -File tools\UiAiTest\run.ps1 [-Exe <PhotographerEye.exe>] [-Port <n>]
@@ -396,6 +396,29 @@ Invoke-Id 'AiNew'
 $e = Wait-Eye { param($x) -not $x.Assistant }
 Check ([bool]$e) 'New conversation: the .eye file drops it'
 Check (-not ((Transcript) -match 'Done basic')) 'New conversation: the transcript is cleared'
+
+# ------------------------------------------------------------------ 6. Up / Down recall earlier requests
+# Keys go only to the test's own input: they are sent only when that element has the keyboard focus.
+Add-Type -AssemblyName System.Windows.Forms
+function Input-Value { (Find-Id 'AiInput').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }
+function Send-Key([string]$k) {
+  $in = Find-Id 'AiInput'
+  $in.SetFocus()
+  Start-Sleep -Milliseconds 200
+  $f = [System.Windows.Automation.AutomationElement]::FocusedElement
+  if (-not $f -or $f.Current.ProcessId -ne $Script:proc.Id -or $f.Current.AutomationId -ne 'AiInput') { throw 'the chat input has no keyboard focus - keys not sent' }
+  [System.Windows.Forms.SendKeys]::SendWait($k)
+  Start-Sleep -Milliseconds 250
+}
+(Find-Id 'AiInput').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('draft')
+Send-Key '{UP}'
+Check ((Input-Value) -match '^TEST-STAGES') 'Up: the newest request' (Input-Value)
+Send-Key '{UP}'
+Check ((Input-Value) -match '^TEST-BASIC') 'Up again: the older request' (Input-Value)
+Send-Key '{DOWN}'
+Check ((Input-Value) -match '^TEST-STAGES') 'Down: back to the newer request' (Input-Value)
+Send-Key '{DOWN}'
+Check ((Input-Value) -eq 'draft') 'Down past the newest: the unfinished text returns' (Input-Value)
 
 $fp = @([FakeOllama]::Problems)
 Check ($fp.Count -eq 0) 'fake server had no problems' ($fp -join '; ')

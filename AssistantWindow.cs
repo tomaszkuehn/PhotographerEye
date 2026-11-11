@@ -566,8 +566,44 @@ public sealed class AssistantWindow : Window
         UpdateUsage();
     }
 
+    // Up / Down in the input walk through the requests sent before (all photos, newest last).
+    // _histIdx = index of the shown entry, -1 = the user's own text (_histDraft, kept while browsing).
+    private int _histIdx = -1;
+    private string _histDraft = "";
+
+    private bool RecallPrompt(int dir)
+    {
+        var h = _s.PromptHistory;
+        if (h is null || h.Count == 0) return false;
+        // only from the first line (Up) / the last line (Down), so moving inside a multi-line text still works
+        int line = _input.GetLineIndexFromCharacterIndex(_input.CaretIndex);
+        if (dir < 0 && line > 0) return false;
+        if (dir > 0 && line >= 0 && line < _input.LineCount - 1) return false;
+        int next;
+        if (dir < 0)
+        {
+            if (_histIdx == -1) { _histDraft = _input.Text; next = h.Count - 1; }
+            else if (_histIdx > 0) next = _histIdx - 1;
+            else return true; // the oldest one is shown: stay
+        }
+        else
+        {
+            if (_histIdx == -1) return false;
+            next = _histIdx + 1 < h.Count ? _histIdx + 1 : -1;
+        }
+        _histIdx = Math.Min(next, h.Count - 1);
+        _input.Text = _histIdx == -1 ? _histDraft : h[_histIdx];
+        _input.CaretIndex = _input.Text.Length;
+        return true;
+    }
+
     private void OnInputKey(object sender, KeyEventArgs e)
     {
+        if (e.Key is Key.Up or Key.Down && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            if (RecallPrompt(e.Key == Key.Up ? -1 : 1)) e.Handled = true;
+            return;
+        }
         if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
         {
             e.Handled = true;
@@ -631,6 +667,9 @@ public sealed class AssistantWindow : Window
             return;
         }
         if (_transcript.Children.Count == 1 && session.Transcript.Count == 0) _transcript.Children.Clear();
+        Save(_s.WithPrompt(text));
+        _histIdx = -1;
+        _histDraft = "";
         _input.Clear();
         SetBusy(true);
         var cts = _turnCts = new CancellationTokenSource();

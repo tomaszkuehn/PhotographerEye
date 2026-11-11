@@ -244,6 +244,15 @@ internal static partial class Program
         var json = System.Text.Json.JsonSerializer.Serialize(s);
         Check(!json.Contains("sk-test") && !json.Contains("IsCloud") && !json.Contains("BaseUrl"), "ai: settings JSON holds no plain key nor computed values");
 
+        // prompt history (Up / Down in the chat input)
+        var ph = new AiSettings().WithPrompt("a").WithPrompt("b").WithPrompt("a");
+        Check(ph.PromptHistory!.SequenceEqual(new[] { "b", "a" }), "ai: prompt history keeps one copy, newest last");
+        for (int i = 0; i < 60; i++) ph = ph.WithPrompt("p" + i);
+        Check(ph.PromptHistory!.Count == AiSettings.PromptHistoryMax && ph.PromptHistory[^1] == "p59" && ph.PromptHistory[0] == "p10",
+            "ai: prompt history is capped, the oldest go first");
+        var phJson = System.Text.Json.JsonSerializer.Serialize(ph);
+        Check(System.Text.Json.JsonSerializer.Deserialize<AiSettings>(phJson)!.PromptHistory!.SequenceEqual(ph.PromptHistory), "ai: prompt history survives settings.json");
+
         TestAiAssistantStages();
     }
 

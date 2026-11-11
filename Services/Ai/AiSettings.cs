@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -25,6 +27,20 @@ public sealed record AiSettings
 
     /// <summary>Most model calls in one assistant turn (1..<see cref="MaxMaxSteps"/>); above the default the window warns.</summary>
     public int MaxSteps { get; init; } = DefaultMaxSteps;
+
+    public const int PromptHistoryMax = 50;
+
+    /// <summary>Requests sent to the assistant, oldest first (all photos; Up/Down in the input recalls them).</summary>
+    public List<string>? PromptHistory { get; init; }
+
+    /// <summary><paramref name="text"/> appended as the newest entry (an earlier equal entry moves up), at most <see cref="PromptHistoryMax"/>.</summary>
+    public AiSettings WithPrompt(string text)
+    {
+        var list = (PromptHistory ?? new List<string>()).Where(p => p != text).ToList();
+        list.Add(text);
+        if (list.Count > PromptHistoryMax) list.RemoveRange(0, list.Count - PromptHistoryMax);
+        return this with { PromptHistory = list };
+    }
     /// <summary>Context window asked from Ollama (num_ctx); 0 = the server's default (often only 4k, too small with a preview).</summary>
     public int ContextTokens { get; init; } = 16384;
     /// <summary>Most tokens (read + written, all calls) one photo's conversation may use; 0 = no limit.</summary>
