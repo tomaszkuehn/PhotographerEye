@@ -103,11 +103,11 @@ public sealed class OllamaClient : IAiChat, IDisposable
         var body = new JsonObject
         {
             ["model"] = model,
-            ["messages"] = Json.Clone(messages),
+            ["messages"] = messages.DeepClone(),
             ["stream"] = false,
             ["options"] = options
         };
-        if (tools.Count > 0) body["tools"] = Json.Clone(tools);
+        if (tools.Count > 0) body["tools"] = tools.DeepClone();
         var res = await PostJsonAsync("/api/chat", body, ct).ConfigureAwait(false);
         return ParseChat(res);
     }

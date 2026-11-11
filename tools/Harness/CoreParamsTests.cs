@@ -34,7 +34,7 @@ internal static partial class Program
         Check(!CoreParams.ValuesEqual(s, changed) && CoreParams.ValuesEqual(s, s with { }), "coreparams: ValuesEqual");
 
         // Every EyeState property is described (a new field without an entry would get a raw name in the history).
-        string[] unlisted = { "Version", "PluginValues", "PluginText", "PluginMasks", "History", "HistoryPos" };
+        string[] unlisted = { "Version", "PluginValues", "PluginText", "PluginMasks", "History", "HistoryPos", "Assistant" };
         var missing = typeof(EyeState).GetProperties().Select(p => p.Name)
             .Where(n => !unlisted.Contains(n) && CoreParams.FieldLabel(n) == n && CoreParams.Find(n) is null).ToList();
         Check(missing.Count == 0, $"coreparams: every EyeState field has a label ({string.Join(", ", missing)})");

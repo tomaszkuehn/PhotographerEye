@@ -1,14 +1,11 @@
 using System;
-#if !PHOTOGRAPHEREYE_NO_GPU
 using ComputeSharp;
-#endif
 
 namespace ImgViewer.Imaging;
 
-/// <summary>GPU services exposed to plugins (IImagingServices). Falls back to CPU in the Win7 build.</summary>
+/// <summary>GPU services exposed to plugins (IImagingServices). Callers fall back to CPU when no GPU is usable.</summary>
 public static partial class Adjust16
 {
-#if !PHOTOGRAPHEREYE_NO_GPU
     /// <summary>Repeated box blurs (one H+V pass per radius) of a float plane on the GPU. Returns false when no GPU is usable.</summary>
     public static bool TryBoxBlurGpu(float[] plane, int w, int h, int[] radii, out float[]? result)
     {
@@ -43,11 +40,4 @@ public static partial class Adjust16
             }
         }
     }
-#else
-    public static bool TryBoxBlurGpu(float[] plane, int w, int h, int[] radii, out float[]? result)
-    {
-        result = null;
-        return false;
-    }
-#endif
 }

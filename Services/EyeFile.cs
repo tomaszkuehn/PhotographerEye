@@ -49,6 +49,9 @@ public sealed record EyeState
     public Dictionary<string, MaskSpec>? PluginMasks { get; init; }
     public List<EyeState>? History { get; init; }
     public int? HistoryPos { get; init; }
+    /// <summary>The AI assistant conversation about this photo (the top-level state only; never in history steps).</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public Ai.AiSavedSession? Assistant { get; init; }
 }
 
 /// <summary>Local mask attached to a plugin filter. Coordinates are fractions of the un-rotated, un-cropped photo.</summary>

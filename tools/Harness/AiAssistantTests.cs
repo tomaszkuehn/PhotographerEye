@@ -42,7 +42,8 @@ internal static partial class Program
         // ---- catalogue ----
         var cat = AiTools.Catalog(vision: false);
         var names = cat.Select(t => t!["function"]!["name"]!.ToString()).ToList();
-        Check(names.SequenceEqual(new[] { "get_state", "analyze_image", "set_core", "reset_core" }), "ai: text-only catalogue");
+        Check(names.Take(4).SequenceEqual(new[] { "get_state", "analyze_image", "set_core", "reset_core" }) && !names.Contains("get_preview"), "ai: text-only catalogue");
+        int textTools = cat.Count;
         Check(AiTools.Catalog(vision: true).Any(t => t!["function"]!["name"]!.ToString() == "get_preview"), "ai: vision catalogue has get_preview");
         var props = (JsonObject)cat.First(t => t!["function"]!["name"]!.ToString() == "set_core")!["function"]!["parameters"]!["properties"]!;
         Check(CoreParams.All.All(p => props[p.Key] is JsonObject o && (double)o["minimum"]! == p.Min && (double)o["maximum"]! == p.Max),
@@ -74,7 +75,7 @@ internal static partial class Program
             Check(toolMsgs[4]["content"]!.ToString().Contains("unknown function"), "ai: unknown function becomes an error result");
             Check(events.First().Kind == AiEventKind.User && events.Last().Kind == AiEventKind.Assistant &&
                   events.Any(e => e.Kind == AiEventKind.Step && e.Text.Contains("→")), "ai: transcript has the request, steps and the answer");
-            Check(chat.ToolCounts.All(c => c == 4) && !chat.AnyImage, "ai: text-only model gets no images");
+            Check(chat.ToolCounts.All(c => c == textTools) && !chat.AnyImage, "ai: text-only model gets no images");
             Check(session.Messages[0]!["role"]!.ToString() == "system", "ai: system prompt first");
 
             // compaction: system, the plain request, one summary with the changes and the answer
@@ -86,9 +87,11 @@ internal static partial class Program
             int fullCtx = AiSession.EstimateTokens(chat.LastMessages!);
             Check(AiSession.EstimateTokens(session.Messages) < fullCtx, $"ai: compaction shrinks the history ({fullCtx} -> {AiSession.EstimateTokens(session.Messages)} est. tokens)");
 
-            // token counters from the server's counts (scripted: 100 read + 10 written per call)
-            Check(session.TotalCalls == 5 && session.TotalPromptTokens == 500 && session.TotalOutputTokens == 50 &&
-                  session.LastPromptTokens == 100 && !session.Estimated, "ai: token counters add up the reported counts");
+            // token counters from the server's counts (scripted: 100k read + 10 written per call)
+            Check(session.TotalCalls == 5 && session.TotalPromptTokens == 500_000 && session.TotalOutputTokens == 50 &&
+                  session.LastPromptTokens == 100_000 && !session.Estimated && !session.LastPromptEstimated,
+                  "ai: token counters add up the reported counts");
+            Check(session.ImagesSent == 0 && !session.Transcript.Any(e => e.Text.Contains("📷")), "ai: text-only model: no preview sent or noted");
 
             // a follow-up turn builds on the short history
             var chat2 = new ScriptedChat(Final("Cieplej."));
@@ -101,16 +104,22 @@ internal static partial class Program
             var ed = new FakeEditor();
             var session = new AiSession();
             var loop = Enumerable.Range(0, 10).Select(_ => Call(("analyze_image", new JsonObject()))).ToArray();
-            var res = session.RunTurnAsync(new ScriptedChat(loop), ed, "m", false, "x", new AiTurnOptions(8, TokenBudget: 250), null, CancellationToken.None)
+            var res = session.RunTurnAsync(new ScriptedChat(loop), ed, "m", false, "x", new AiTurnOptions(8, TokenBudget: 250_000), null, CancellationToken.None)
                 .GetAwaiter().GetResult();
-            Check(res.StoppedAtBudget && res.ModelCalls == 3 && session.OverBudget(250) && !session.OverBudget(0),
+            Check(res.StoppedAtBudget && res.ModelCalls == 3 && session.OverBudget(250_000) && !session.OverBudget(0),
                 "ai: the token budget stops the turn before the next call");
             Check(session.Messages.OfType<JsonObject>().Last()["content"]!.ToString().Contains("token budget"), "ai: budget stop noted in the history");
             // no counts from the server: estimated from the request size
             var s2 = new AiSession();
             s2.RunTurnAsync(new ScriptedChat(Final("ok")) { NoCounts = true }, ed, "m", false, "x", new AiTurnOptions(), null, CancellationToken.None)
                 .GetAwaiter().GetResult();
-            Check(s2.Estimated && s2.LastPromptTokens > 500 && s2.TotalOutputTokens > 0, "ai: missing counts are estimated");
+            Check(s2.Estimated && s2.LastPromptEstimated && s2.LastPromptTokens > 500 && s2.TotalOutputTokens > 0, "ai: missing counts are estimated");
+            // a count below what the request holds (cached prefix left out) is raised to the estimate
+            var s3 = new AiSession();
+            s3.RunTurnAsync(new ScriptedChat(Final("ok")) { PromptCount = 100 }, ed, "m", false, "x", new AiTurnOptions(), null, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Check(s3.LastPromptEstimated && s3.LastPromptTokens > 500 && s3.TotalPromptTokens == s3.LastPromptTokens,
+                $"ai: an undercounted context is raised to the estimate ({s3.LastPromptTokens})");
             Check(AiSession.Fmt(950) == "950" && AiSession.Fmt(12345) == "12.3k" && AiSession.Fmt(2_500_000) == "2.5M", "ai: token formatting");
             Check(ImgViewer.AssistantWindow.ParseTokens("200k") == 200_000 && ImgViewer.AssistantWindow.ParseTokens("1,5M") == 1_500_000 &&
                   ImgViewer.AssistantWindow.ParseTokens("16384") == 16384 && ImgViewer.AssistantWindow.ParseTokens("abc") is null, "ai: token input parsing");
@@ -126,8 +135,10 @@ internal static partial class Program
             int images = sent.Count(m => m["images"] is not null);
             Check(images == 1 && sent.Last(m => m["images"] is not null)["role"]!.ToString() == "user" &&
                   chat.LastMessages!.ToJsonString().Contains("older preview removed"), "ai: only the newest preview is kept");
-            Check(chat.ToolCounts.All(c => c == 5) && chat.FirstUserHadImage, "ai: vision model gets get_preview and the photo with the request");
+            Check(chat.ToolCounts.All(c => c == textTools + 1) && chat.FirstUserHadImage, "ai: vision model gets get_preview and the photo with the request");
             Check(!session.Messages.ToJsonString().Contains("\"images\""), "ai: no image stays in the history after the turn");
+            int noted = session.Transcript.Count(e => e.Kind == AiEventKind.Step && e.Text == AiSession.ImageSentNote);
+            Check(session.ImagesSent >= 2 && noted == session.ImagesSent, $"ai: every preview sent is noted ({session.ImagesSent})");
         }
 
         // ---- step limit and follow-up turn ----
@@ -232,6 +243,8 @@ internal static partial class Program
             "ai: settings per mode, no key sent locally");
         var json = System.Text.Json.JsonSerializer.Serialize(s);
         Check(!json.Contains("sk-test") && !json.Contains("IsCloud") && !json.Contains("BaseUrl"), "ai: settings JSON holds no plain key nor computed values");
+
+        TestAiAssistantStages();
     }
 
     private static PluginImage Solid(int w, int h, float r, float g, float b)
@@ -260,6 +273,7 @@ internal static partial class Program
         private readonly Queue<JsonObject> _replies;
         public readonly List<int> ToolCounts = new();
         public bool FirstUserHadImage, AnyImage, NoCounts;
+        public int PromptCount = 100_000;
         public JsonArray? LastMessages;
         public Action<int>? OnCall;
         private int _n;
@@ -278,7 +292,7 @@ internal static partial class Program
                 FirstUserHadImage = messages.OfType<JsonObject>().Last(m => m["role"]?.ToString() == "user")["images"] is not null;
             if (_replies.Count == 0) throw new InvalidOperationException("model unavailable");
             var msg = (JsonObject)_replies.Dequeue().DeepClone();
-            return Task.FromResult(NoCounts ? new AiChatReply(msg) : new AiChatReply(msg, 100, 10));
+            return Task.FromResult(NoCounts ? new AiChatReply(msg) : new AiChatReply(msg, PromptCount, 10));
         }
     }
 
@@ -310,6 +324,238 @@ internal static partial class Program
 
         public string PreviewJpegBase64(int maxLongSide) => "AAAA";
 
-        public JsonObject PhotoInfo() => new() { ["type"] = "JPG", ["width"] = 8, ["height"] = 8 };
+        public JsonObject PhotoInfo() => new() { ["type"] = "JPG", ["width"] = 3000, ["height"] = 2000 };
+
+        // ---- stage 2: one panel filter (every parameter kind) and one toolbar filter ----
+        public readonly Dictionary<string, double> Vals = new() { ["amount"] = 0, ["soft"] = 0 };
+        public readonly Dictionary<string, string> Texts = new() { ["mode"] = "a", ["tint"] = "#808080", ["curve"] = "0,0;1,1" };
+        public bool FrameOn;
+        public string? AppliedPreset;
+
+        public IReadOnlyList<AiFilter> Filters() => new[]
+        {
+            new AiFilter("fx:tone", "Tone", "Looks", "Tones the photo.", false, true,
+                Vals["amount"] != 0 || Vals["soft"] != 0 || Texts["mode"] != "a" || Texts["tint"] != "#808080", ToolMask.GetValueOrDefault("fx:tone"),
+                new[]
+                {
+                    new AiParam("amount", "Amount", "slider", -100, 100, 0, Vals["amount"]),
+                    new AiParam("soft", "Soft", "toggle", 0, 1, 0, Vals["soft"]),
+                    new AiParam("mode", "Mode", "choice", 0, 0, 0, 0, Texts["mode"], new[] { "a", "b" }),
+                    new AiParam("tint", "Tint", "color", 0, 0, 0, 0, Texts["tint"]),
+                    new AiParam("curve", "Curve", "curve", 0, 0, 0, 0, Texts["curve"])
+                }),
+            new AiFilter("fx:frame", "Frame", "Effects", "", true, false, FrameOn, null, Array.Empty<AiParam>())
+        };
+
+        public void SetFilter(string id, IReadOnlyDictionary<string, double> values, IReadOnlyDictionary<string, string> text)
+        {
+            foreach (var kv in values) Vals[kv.Key] = kv.Value;
+            foreach (var kv in text) Texts[kv.Key] = kv.Value;
+        }
+
+        public void SetFilterActive(string id, bool active) => FrameOn = active;
+
+        public void ResetFilter(string id)
+        {
+            if (id == "fx:frame") { FrameOn = false; return; }
+            Vals["amount"] = 0; Vals["soft"] = 0; Texts["mode"] = "a"; Texts["tint"] = "#808080";
+        }
+
+        public IReadOnlyList<AiPreset> Presets() => new[] { new AiPreset("user:Warm", "Warm", "My presets"), new AiPreset("fx:mono", "Mono look", "Tone") };
+
+        public void ApplyPreset(string id)
+        {
+            AppliedPreset = id;
+            if (id == "user:Warm") Core["Temperature"] = 20;
+        }
+
+        // ---- stage 3: a 3000 x 2000 photo, crop only (no straighten in the mapping) ----
+        public AiGeometry Geo = new(0, 0, 0, 1, 1, "original", 1.5);
+        public AiGeometry GetGeometry() => Geo;
+        public void SetGeometry(AiGeometry g) => Geo = g with { Angle = Math.Clamp(g.Angle, -45, 45) };
+
+        // ---- stage 4 ----
+        public readonly Dictionary<string, AiMask> MaskSet = new();
+        public readonly Dictionary<string, string> ToolMask = new();
+        private int _maskN;
+
+        public IReadOnlyList<AiMask> Masks() => MaskSet.Values
+            .Select(m => m with { UsedBy = ToolMask.Where(t => t.Value == m.Key).Select(t => t.Key).ToList() }).ToList();
+
+        public (double X, double Y) ViewToPhoto(double x, double y) => (Geo.CropX + x * Geo.CropW, Geo.CropY + y * Geo.CropH);
+        public (double X, double Y) PhotoToView(double x, double y) => ((x - Geo.CropX) / Geo.CropW, (y - Geo.CropY) / Geo.CropH);
+        public (int W, int H) PhotoPixelSize() => (3000, 2000);
+
+        public string CreateMask(string kind, double[] p, bool invert)
+        {
+            var key = "mask:" + ++_maskN;
+            MaskSet[key] = new AiMask(key, kind, p, invert, null, Array.Empty<string>());
+            return key;
+        }
+
+        public void UpdateMask(string key, string kind, double[] p, bool invert) => MaskSet[key] = MaskSet[key] with { Kind = kind, P = p, Invert = invert };
+
+        public void DeleteMask(string key)
+        {
+            MaskSet.Remove(key);
+            foreach (var t in ToolMask.Where(t => t.Value == key).Select(t => t.Key).ToList()) ToolMask.Remove(t);
+        }
+
+        public void SetMaskValues(string key, IReadOnlyDictionary<string, double> values) =>
+            MaskSet[key] = MaskSet[key] with { Values = values.Count > 0 ? new Dictionary<string, double>(values) : null };
+
+        public void SetToolMask(string filterId, string? maskKey)
+        {
+            if (maskKey is null) ToolMask.Remove(filterId);
+            else ToolMask[filterId] = maskKey;
+        }
+    }
+
+    private static AiToolResult Run(IAiEditor ed, string name, JsonNode? args) =>
+        AiTools.ExecuteAsync(ed, name, args, false, CancellationToken.None).GetAwaiter().GetResult();
+
+    /// <summary>Stages 2-4: plugins and presets, crop and straighten, local masks; the conversation stored in the .eye file.</summary>
+    private static void TestAiAssistantStages()
+    {
+        const double E = 1e-6;
+        var names = AiTools.Catalog(false).Select(t => t!["function"]!["name"]!.ToString()).ToList();
+        Check(new[] { "list_plugins", "set_plugin", "set_plugin_active", "reset_plugin", "apply_preset", "set_crop", "straighten",
+                  "create_mask", "set_mask_values", "link_tool_to_mask", "delete_mask" }.All(names.Contains), "ai: catalogue has the stage 2-4 tools");
+        int catTokens = AiSession.EstimateTokens(AiTools.Catalog(true));
+        Check(catTokens < 4500, $"ai: the function catalogue stays small ({catTokens} est. tokens)");
+
+        // ---- stage 2: plugins ----
+        {
+            var ed = new FakeEditor();
+            var r = Run(ed, "list_plugins", null);
+            var lj = JsonNode.Parse(r.Content)!;
+            var tone = lj["filters"]!.AsArray().First(f => f!["id"]!.ToString() == "fx:tone")!;
+            Check(!r.Error && tone["params"]!["amount"]!["max"]!.GetValue<double>() == 100 && tone["params"]!["mode"]!["choices"]!.AsArray().Count == 2 &&
+                  lj["presets"]!.AsArray().Count == 2 && lj["filters"]!.AsArray().Any(f => f!["toolbar"]?.GetValue<bool>() == true) &&
+                  tone["no_mask"] is null && lj["filters"]!.AsArray().Any(f => f!["no_mask"]?.GetValue<bool>() == true),
+                "ai: list_plugins gives filters, parameters and presets");
+            r = Run(ed, "set_plugin", new JsonObject
+            {
+                ["filter"] = "tone",
+                ["values"] = new JsonObject { ["amount"] = 500, ["soft"] = true, ["mode"] = "B", ["tint"] = "ff8800", ["curve"] = "0,0;1,1", ["nope"] = 1 }
+            });
+            Check(r.Changed && ed.Vals["amount"] == 100 && ed.Vals["soft"] == 1 && ed.Texts["mode"] == "b" && ed.Texts["tint"] == "#FF8800" &&
+                  ed.Texts["curve"] == "0,0;1,1" && r.Content.Contains("curve: not settable") && r.Content.Contains("nope: unknown") &&
+                  r.StepNote!.StartsWith("Tone: Amount 0 → 100"),
+                "ai: set_plugin clamps, checks choices and colours, refuses curves, accepts a bare filter id");
+            r = Run(ed, "set_plugin", new JsonObject { ["filter"] = "fx:tone", ["values"] = new JsonObject { ["mode"] = "zzz", ["tint"] = "red" } });
+            Check(r.Error && !r.Changed && ed.Texts["mode"] == "b", "ai: set_plugin with only invalid values is an error");
+            Check(Run(ed, "set_plugin", new JsonObject { ["filter"] = "fx:missing", ["values"] = new JsonObject { ["a"] = 1 } }).Error, "ai: unknown filter is an error");
+            r = Run(ed, "set_plugin_active", new JsonObject { ["filter"] = "fx:tone", ["active"] = true });
+            Check(r.Error, "ai: a panel filter is not switched with set_plugin_active");
+            r = Run(ed, "set_plugin_active", new JsonObject { ["filter"] = "Frame", ["active"] = true });
+            Check(r.Changed && ed.FrameOn, "ai: set_plugin_active switches a toolbar filter (by label)");
+            r = Run(ed, "reset_plugin", new JsonObject { ["filter"] = "fx:tone" });
+            Check(r.Changed && ed.Vals["amount"] == 0 && ed.Texts["mode"] == "a", "ai: reset_plugin");
+            r = Run(ed, "apply_preset", new JsonObject { ["preset"] = "warm" });
+            Check(r.Changed && ed.AppliedPreset == "user:Warm" && ed.Core["Temperature"] == 20, "ai: apply_preset by name");
+            Check(Run(ed, "apply_preset", new JsonObject { ["preset"] = "nope" }).Error, "ai: unknown preset is an error");
+            var gs = JsonNode.Parse(Run(ed, "get_state", null).Content)!;
+            Check(gs["plugins_on"]!.AsArray().Count == 1 && gs["geometry"]!["frame_aspect"]!.GetValue<double>() == 1.5 && gs["masks"] is JsonArray,
+                "ai: get_state lists the plugins on, the geometry and the masks");
+        }
+
+        // ---- stage 3: crop and straighten ----
+        {
+            var ed = new FakeEditor();
+            var r = Run(ed, "set_crop", new JsonObject { ["aspect"] = "1:1" });
+            var g = ed.Geo;
+            Check(r.Changed && Math.Abs(g.CropW - 2.0 / 3) < E && Math.Abs(g.CropH - 1) < E && Math.Abs(g.CropX - 1.0 / 6) < E && g.CropY == 0 && g.Aspect == "original",
+                "ai: square crop of a 3:2 frame is centred and full height");
+            r = Run(ed, "set_crop", new JsonObject { ["aspect"] = "3:2" });
+            Check(ed.Geo.CropW == 1 && ed.Geo.CropH == 1 && ed.Geo.Aspect == "3:2", "ai: 3:2 of a 3:2 frame is the whole frame, labelled");
+            r = Run(ed, "set_crop", new JsonObject { ["aspect"] = "2:3", ["size"] = 0.5, ["center_x"] = 0.05, ["center_y"] = 0.9 });
+            g = ed.Geo;
+            Check(Math.Abs(g.CropW - 2.0 / 9) < E && Math.Abs(g.CropH - 0.5) < E && g.CropX == 0 && Math.Abs(g.CropY - 0.5) < E,
+                $"ai: portrait crop, half size, kept inside the frame ({g.CropX:0.###},{g.CropY:0.###} {g.CropW:0.###}x{g.CropH:0.###})");
+            r = Run(ed, "set_crop", new JsonObject { ["aspect"] = "free", ["x"] = 0.1, ["y"] = 0.2, ["w"] = 2, ["h"] = 0.5 });
+            g = ed.Geo;
+            Check(g.CropX == 0.1 && g.CropY == 0.2 && Math.Abs(g.CropW - 0.9) < E && g.CropH == 0.5, "ai: free crop rectangle clamped to the frame");
+            Check(Run(ed, "set_crop", new JsonObject { ["aspect"] = "wide" }).Error, "ai: unknown aspect is an error");
+            r = Run(ed, "set_crop", new JsonObject { ["reset"] = true });
+            Check(ed.Geo.CropW == 1 && ed.Geo.CropX == 0 && ed.Geo.Aspect == "original", "ai: crop reset");
+            r = Run(ed, "straighten", new JsonObject { ["angle"] = "-2.5" });
+            Check(r.Changed && ed.Geo.Angle == -2.5 && r.Content.Contains("\"angle\":-2.5"), "ai: straighten");
+            Run(ed, "straighten", new JsonObject { ["angle"] = 90 });
+            Check(ed.Geo.Angle == 45, "ai: straighten clamped to 45°");
+            Check(Run(ed, "straighten", new JsonObject()).Error, "ai: straighten without an angle is an error");
+        }
+
+        // ---- stage 4: masks ----
+        {
+            var ed = new FakeEditor();
+            Run(ed, "set_crop", new JsonObject { ["aspect"] = "1:1" }); // view x 0..1 = photo x 1/6..5/6
+            var r = Run(ed, "create_mask", new JsonObject { ["kind"] = "radial", ["center_x"] = 0.5, ["center_y"] = 0.25, ["radius_x"] = 0.3, ["radius_y"] = 0.2 });
+            var m = ed.MaskSet.Values.Single();
+            Check(r.Changed && m.Key == "mask:1" && m.Kind == "radial" && Math.Abs(m.P[0] - 0.5) < E && Math.Abs(m.P[1] - 0.25) < E &&
+                  Math.Abs(m.P[2] - 0.2) < E && Math.Abs(m.P[3] - 0.2) < E && m.P[4] == 0.5 && r.Content.Contains("changes nothing yet"),
+                "ai: radial mask placed in view coordinates (mapped through the crop)");
+            var gm = JsonNode.Parse(Run(ed, "get_state", null).Content)!["masks"]!.AsArray()[0]!;
+            Check(Math.Abs(gm["center_x"]!.GetValue<double>() - 0.5) < 1e-3 && Math.Abs(gm["radius_x"]!.GetValue<double>() - 0.3) < 1e-3 &&
+                  Math.Abs(gm["radius_y"]!.GetValue<double>() - 0.2) < 1e-3, "ai: get_state shows the mask in view coordinates");
+            r = Run(ed, "set_mask_values", new JsonObject { ["mask"] = "1", ["values"] = new JsonObject { ["exposure"] = 0.5, ["Shadows"] = 20, ["Clarity"] = 0 } });
+            m = ed.MaskSet["mask:1"];
+            Check(r.Changed && m.Values!.Count == 1 && m.Values["Exposure"] == 0.5 && r.Content.Contains("Shadows") && r.StepNote!.Contains("+0.5"),
+                "ai: set_mask_values (maskable keys only, zero dropped, short key accepted)");
+            r = Run(ed, "set_mask_values", new JsonObject { ["mask"] = "mask:1", ["values"] = new JsonObject() });
+            Check(r.Changed && ed.MaskSet["mask:1"].Values is null, "ai: set_mask_values {} removes the values");
+            r = Run(ed, "link_tool_to_mask", new JsonObject { ["filter"] = "fx:tone", ["mask"] = "mask:1" });
+            Check(r.Changed && ed.ToolMask["fx:tone"] == "mask:1" && ed.Masks()[0].UsedBy.Contains("fx:tone"), "ai: a filter limited to a mask");
+            Check(Run(ed, "link_tool_to_mask", new JsonObject { ["filter"] = "fx:frame", ["mask"] = "mask:1" }).Error, "ai: a filter without mask support refused");
+            Check(Run(ed, "link_tool_to_mask", new JsonObject { ["filter"] = "fx:tone", ["mask"] = "mask:9" }).Error, "ai: unknown mask refused");
+            r = Run(ed, "create_mask", new JsonObject { ["mask"] = "mask:1", ["kind"] = "linear", ["x1"] = 0, ["y1"] = 0, ["x2"] = 0, ["y2"] = 0.5, ["invert"] = true });
+            m = ed.MaskSet["mask:1"];
+            Check(r.Changed && ed.MaskSet.Count == 1 && m.Kind == "linear" && m.Invert && Math.Abs(m.P[0] - 1.0 / 6) < E && m.P[3] == 0.5,
+                "ai: create_mask with mask reshapes it");
+            Check(Run(ed, "create_mask", new JsonObject { ["kind"] = "linear", ["x1"] = 0.5, ["y1"] = 0.5, ["x2"] = 0.5, ["y2"] = 0.5 }).Error,
+                "ai: a linear mask needs two points apart");
+            r = Run(ed, "create_mask", new JsonObject { ["kind"] = "luma", ["low"] = 0.9, ["high"] = 0.6 });
+            Check(r.Changed && ed.MaskSet["mask:2"].P.SequenceEqual(new[] { 0.6, 0.9, 0.1 }), "ai: luma mask (range ordered)");
+            Check(Run(ed, "create_mask", new JsonObject { ["kind"] = "blob" }).Error, "ai: unknown mask kind refused");
+            r = Run(ed, "link_tool_to_mask", new JsonObject { ["filter"] = "fx:tone", ["mask"] = "none" });
+            Check(r.Changed && !ed.ToolMask.ContainsKey("fx:tone"), "ai: back to the whole photo");
+            r = Run(ed, "delete_mask", new JsonObject { ["mask"] = "mask:2" });
+            Check(r.Changed && !ed.MaskSet.ContainsKey("mask:2"), "ai: delete_mask");
+            Check(Run(ed, "delete_mask", new JsonObject { ["mask"] = "mask:2" }).Error, "ai: deleting a missing mask is an error");
+        }
+
+        // ---- a whole turn with the new tools, folded into the summary ----
+        {
+            var ed = new FakeEditor();
+            var chat = new ScriptedChat(
+                Call(("straighten", new JsonObject { ["angle"] = 1.5 }), ("set_crop", new JsonObject { ["aspect"] = "4:5" })),
+                Call(("create_mask", new JsonObject { ["kind"] = "radial", ["center_x"] = 0.5, ["center_y"] = 0.4, ["radius_x"] = 0.2, ["radius_y"] = 0.25 })),
+                Call(("set_mask_values", new JsonObject { ["mask"] = "mask:1", ["values"] = new JsonObject { ["Exposure"] = 0.4 } })),
+                Final("Wyprostowałem, wykadrowałem 4:5 i rozjaśniłem twarz."));
+            var session = new AiSession();
+            var res = session.RunTurnAsync(chat, ed, "m", false, "portret do druku", new AiTurnOptions(8), null, CancellationToken.None).GetAwaiter().GetResult();
+            var sum = session.Messages.OfType<JsonObject>().Last()["content"]!.ToString();
+            Check(res.Changed && sum.Contains("straighten") && sum.Contains("crop 4:5") && sum.Contains("created mask:1") && sum.Contains("Exposure +0.4"),
+                "ai: stage 2-4 steps are folded into the turn summary");
+
+            // ---- the conversation in the .eye file ----
+            var saved = session.Export()!;
+            var eye = new EyeState { Exposure = 0.3, Assistant = saved };
+            var json = EyeFile.Serialize(eye);
+            var back = System.Text.Json.JsonSerializer.Deserialize<EyeState>(json)!;
+            var again = AiSession.Import(back.Assistant!);
+            var a = session.Messages.OfType<JsonObject>().Select(x => x["role"] + "|" + x["content"]).ToList();
+            var b = again.Messages.OfType<JsonObject>().Select(x => x["role"] + "|" + x["content"]).ToList();
+            Check(a.SequenceEqual(b) && again.Transcript.Select(e => e.Kind + e.Text).SequenceEqual(session.Transcript.Select(e => e.Kind + e.Text)) &&
+                  again.TotalPromptTokens == session.TotalPromptTokens && again.TotalOutputTokens == session.TotalOutputTokens &&
+                  again.TotalCalls == session.TotalCalls, "ai: the conversation survives the .eye file (history, transcript, counters)");
+            Check(!json.Contains("\"images\"") && !json.Contains("system") && !EyeFile.Serialize(new EyeState()).Contains("Assistant"),
+                "ai: .eye holds no previews nor the system prompt; no conversation, no field");
+            Check(new AiSession().Export() is null, "ai: an empty conversation is not stored");
+            // the restored conversation continues
+            var chat2 = new ScriptedChat(Final("ok"));
+            again.RunTurnAsync(chat2, ed, "m", false, "dalej", new AiTurnOptions(8), null, CancellationToken.None).GetAwaiter().GetResult();
+            Check(chat2.LastMessages!.Count == 4 && chat2.LastMessages[0]!["role"]!.ToString() == "system", "ai: a restored conversation continues with the system prompt");
+        }
     }
 }

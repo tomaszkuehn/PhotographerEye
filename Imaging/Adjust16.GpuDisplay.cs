@@ -1,4 +1,3 @@
-#if !PHOTOGRAPHEREYE_NO_GPU
 using System;
 using System.Buffers;
 using System.Threading;
@@ -265,4 +264,3 @@ public readonly partial struct PackKernel(ReadWriteBuffer<int> pr, ReadWriteBuff
         Hlsl.InterlockedAdd(ref hist[768 + (b >> 8)], 1);
     }
 }
-#endif

@@ -19,6 +19,22 @@ public enum AiEventKind
 
 public sealed record AiEvent(AiEventKind Kind, string Text);
 
+/// <summary>One line of a stored conversation: a message (Kind "user" / "assistant") or a transcript line (an <see cref="AiEventKind"/> name).</summary>
+public sealed record AiSavedLine(string Kind, string Text);
+
+/// <summary>An assistant conversation stored in the photo's .eye file (never the API key or any preview).</summary>
+public sealed record AiSavedSession
+{
+    public int Version { get; init; } = 1;
+    public List<AiSavedLine> Messages { get; init; } = new();
+    public List<AiSavedLine> Transcript { get; init; } = new();
+    public long PromptTokens { get; init; }
+    public long OutputTokens { get; init; }
+    public int Calls { get; init; }
+    public int ImagesSent { get; init; }
+    public bool Estimated { get; init; }
+}
+
 public sealed record AiTurnResult(string FinalText, int ModelCalls, bool Changed, bool StoppedAtLimit, bool StoppedAtBudget = false);
 
 /// <summary>Limits of one turn: model calls, and the token budget of the whole conversation (0 = none).</summary>
@@ -49,8 +65,17 @@ How to work:
 4. Keep it natural unless asked otherwise: avoid blown highlights (clipped_highlights_pct above ~0.5) and blocked shadows
    unless they are part of the style; skin tones must stay believable.
 5. Finish with a short answer in the language of the user's request: what you changed and why (2-4 sentences).
-   Do not list raw JSON. If something cannot be done with the available functions (cropping, masks, plugins are not
-   available yet), say so briefly.
+   Do not list raw JSON. If something cannot be done with the available functions, say so briefly.
+
+Beyond the basic settings:
+- Plugins and presets: list_plugins once when the request calls for an effect the basic settings do not have (film
+  looks, split toning, vignette, grain, B&W profiles); then set_plugin / set_plugin_active / reset_plugin, or apply_preset.
+- Crop and straighten: set_crop (aspect, centre, size) and straighten (degrees, positive = clockwise). Crop only when
+  asked or clearly needed (a tilted horizon, distracting edges, a requested format such as square or 4:5).
+- Local edits: create_mask (radial around a subject, linear for a sky or foreground, luma for highlights or shadows), then
+  set_mask_values (values added inside the mask, e.g. Exposure 0.4 to brighten a face) or link_tool_to_mask to limit a
+  filter to it. Mask coordinates are fractions of the photo as it is shown now (after any crop); look at the preview or
+  the 3x3 zones to place them. A mask without values or a linked filter changes nothing.
 
 Earlier requests appear in short form ("[changes: …]"); the settings may also have been changed by hand since, so call
 get_state before building on them.
@@ -89,10 +114,63 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
     public long TotalOutputTokens { get; private set; }
     public long TotalTokens => TotalPromptTokens + TotalOutputTokens;
     public int TotalCalls { get; private set; }
-    /// <summary>True when the server did not report token counts and the totals are estimated.</summary>
+    /// <summary>True when any call's read count came from the estimate (the server gave none, or fewer than the request holds).</summary>
     public bool Estimated { get; private set; }
+    /// <summary>True when the last call's context size is the estimate rather than the server's count.</summary>
+    public bool LastPromptEstimated { get; private set; }
+    /// <summary>Photo previews sent to the model in this conversation (vision models only).</summary>
+    public int ImagesSent { get; private set; }
+
+    /// <summary>Transcript line shown whenever a preview of the photo goes to the model.</summary>
+    public static string ImageSentNote => $"📷 photo preview ({AiTools.PreviewLongSide} px JPEG, ~{Fmt(ImageTokens)} tokens) sent to the model";
 
     public bool OverBudget(long budget) => budget > 0 && TotalTokens >= budget;
+
+    /// <summary>
+    /// The conversation as stored in the photo's .eye file: the compacted history (the system prompt, function calls and
+    /// previews are left out — the system prompt comes from the app version that continues it), the transcript and the
+    /// counters. Null when nothing was asked yet.
+    /// </summary>
+    public AiSavedSession? Export()
+    {
+        if (_transcript.Count == 0) return null;
+        var msgs = new List<AiSavedLine>();
+        foreach (var m in _messages.OfType<JsonObject>())
+        {
+            var role = m["role"]?.ToString();
+            if (role is not ("user" or "assistant") || m["tool_calls"] is not null) continue;
+            msgs.Add(new AiSavedLine(role, m["content"]?.ToString() ?? ""));
+        }
+        return new AiSavedSession
+        {
+            Messages = msgs,
+            Transcript = _transcript.Select(e => new AiSavedLine(e.Kind.ToString(), e.Text)).ToList(),
+            PromptTokens = TotalPromptTokens,
+            OutputTokens = TotalOutputTokens,
+            Calls = TotalCalls,
+            ImagesSent = ImagesSent,
+            Estimated = Estimated
+        };
+    }
+
+    /// <summary>A conversation stored in a .eye file (see <see cref="Export"/>).</summary>
+    public static AiSession Import(AiSavedSession s)
+    {
+        var a = new AiSession();
+        foreach (var m in s.Messages ?? new())
+        {
+            if (m.Kind is not ("user" or "assistant")) continue;
+            a._messages.Add(new JsonObject { ["role"] = m.Kind, ["content"] = m.Text ?? "" });
+        }
+        foreach (var e in s.Transcript ?? new())
+            if (Enum.TryParse<AiEventKind>(e.Kind, out var k)) a._transcript.Add(new AiEvent(k, e.Text ?? ""));
+        a.TotalPromptTokens = Math.Max(0, s.PromptTokens);
+        a.TotalOutputTokens = Math.Max(0, s.OutputTokens);
+        a.TotalCalls = Math.Max(0, s.Calls);
+        a.ImagesSent = Math.Max(0, s.ImagesSent);
+        a.Estimated = s.Estimated;
+        return a;
+    }
 
     public void Note(AiEvent e) => _transcript.Add(e);
 
@@ -181,6 +259,8 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
                 DropOldImages();
                 user["images"] = new JsonArray(jpg);
                 user["content"] = userText + "\n\n(The attached image is the photo as it looks now.)";
+                ImagesSent++;
+                Emit(AiEventKind.Step, ImageSentNote);
             }
         }
         _messages.Add(user);
@@ -188,7 +268,7 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
         var tools = AiTools.Catalog(vision);
         bool changed = false;
         int calls = 0;
-        int maxSteps = Math.Clamp(options.MaxSteps, 1, 30);
+        int maxSteps = Math.Clamp(options.MaxSteps, 1, AiSettings.MaxMaxSteps);
         while (calls < maxSteps)
         {
             ct.ThrowIfCancellationRequested();
@@ -207,7 +287,7 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
             var toolCalls = (reply.Message["tool_calls"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
 
             var stored = new JsonObject { ["role"] = "assistant", ["content"] = content };
-            if (toolCalls.Count > 0) stored["tool_calls"] = new JsonArray(toolCalls.Select(t => Json.Clone(t)).ToArray());
+            if (toolCalls.Count > 0) stored["tool_calls"] = new JsonArray(toolCalls.Select(t => t.DeepClone()).ToArray());
             _messages.Add(stored);
 
             if (toolCalls.Count == 0)
@@ -240,10 +320,13 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
                     ["content"] = "Preview of the photo now (requested with get_preview).",
                     ["images"] = new JsonArray(image)
                 });
+                ImagesSent++;
+                Emit(AiEventKind.Step, ImageSentNote);
             }
         }
 
-        const string limit = "Step limit reached — the changes so far are applied (undo removes them). Ask me to continue if needed.";
+        string limit = $"Step limit reached ({maxSteps} model calls) — the changes so far are applied (undo removes them). " +
+                       "Ask me to continue, or raise \"Most model calls per request\" in ⚙.";
         Emit(AiEventKind.Info, limit);
         return new AiTurnResult(limit, calls, changed, StoppedAtLimit: true);
     }
@@ -251,9 +334,12 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
     private void Count(AiChatReply reply, int estimate)
     {
         TotalCalls++;
-        int prompt = reply.PromptTokens;
+        // the larger of the server's count and the estimate: a local Ollama may report only the part it had to evaluate
+        // (a cached prefix is left out), which would understate both the context and the budget use
+        int prompt = Math.Max(reply.PromptTokens, 0);
         int output = reply.OutputTokens;
-        if (prompt <= 0)
+        LastPromptEstimated = prompt < estimate;
+        if (LastPromptEstimated)
         {
             prompt = estimate;
             Estimated = true;

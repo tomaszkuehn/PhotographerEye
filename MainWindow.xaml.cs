@@ -317,6 +317,7 @@ public partial class MainWindow : Window
         }
         else if (EyeFile.TryLoad(path, out var st))
         {
+            st = TakeAssistant(path, st);
             ApplyEyeStateSuppressed(st);
             _histPendingSt = st;
         }
@@ -887,7 +888,8 @@ public partial class MainWindow : Window
         _session[_currentPath] = withHist;
         // Edits reach the .eye file at once (history has more than the opening state once anything changed).
         string? prevErr = _eyeAutoSave.LastError;
-        if (!_eyeAutoSave.Save(_currentPath, withHist, edited: _hist.Count > 1) && _eyeAutoSave.LastError is { } err && err != prevErr)
+        if (!_eyeAutoSave.Save(_currentPath, WithAssistant(withHist), edited: _hist.Count > 1 || HasAssistantConversation)
+            && _eyeAutoSave.LastError is { } err && err != prevErr)
             SetStatus($"Edits not saved to .eye: {err}", error: true);
     }
 
@@ -1623,7 +1625,7 @@ public partial class MainWindow : Window
         bool tiff = dialog.FilterIndex == 2;
         string dest = dialog.FileName;
         CommitHistNow();
-        var eyeState = CaptureEyeState() with { History = new List<EyeState>(_hist), HistoryPos = _histPos };
+        var eyeState = WithAssistant(CaptureEyeState() with { History = new List<EyeState>(_hist), HistoryPos = _histPos });
         string fmt = tiff ? "tiff16" : "jpg";
         string? cancel = null;
         try { cancel = PluginManager.Instance.RaiseBeforeSave(path, dest, fmt); }
@@ -2227,7 +2229,7 @@ public partial class MainWindow : Window
     private void ApplyEyeFile(string path)
     {
         if (!EyeFile.TryLoad(path, out var st)) return;
-        ApplyEyeState(st);
+        ApplyEyeState(st with { Assistant = null });
     }
 
     private static CameraToneCurve? ParseCurve(double[][]? knots)

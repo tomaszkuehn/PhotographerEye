@@ -20,8 +20,11 @@ public sealed record AiSettings
     public string? CloudModel { get; init; }
     /// <summary>API key encrypted with DPAPI for the current Windows user (base64), see <see cref="AiKeyProtector"/>.</summary>
     public string? ApiKeyProtected { get; init; }
-    /// <summary>Most model calls in one assistant turn.</summary>
-    public int MaxSteps { get; init; } = 8;
+    public const int DefaultMaxSteps = 8;
+    public const int MaxMaxSteps = 30;
+
+    /// <summary>Most model calls in one assistant turn (1..<see cref="MaxMaxSteps"/>); above the default the window warns.</summary>
+    public int MaxSteps { get; init; } = DefaultMaxSteps;
     /// <summary>Context window asked from Ollama (num_ctx); 0 = the server's default (often only 4k, too small with a preview).</summary>
     public int ContextTokens { get; init; } = 16384;
     /// <summary>Most tokens (read + written, all calls) one photo's conversation may use; 0 = no limit.</summary>

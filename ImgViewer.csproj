@@ -2,8 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework Condition="'$(Win7)' != 'true'">net8.0-windows</TargetFramework>
-    <TargetFramework Condition="'$(Win7)' == 'true'">net6.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -16,11 +15,10 @@
     <Version>1.00</Version>
     <NeutralLanguage>pl-PL</NeutralLanguage>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants Condition="'$(Win7)' == 'true'">$(DefineConstants);PHOTOGRAPHEREYE_NO_GPU</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ComputeSharp" Version="3.2.0" Condition="'$(Win7)' != 'true'" />
+    <PackageReference Include="ComputeSharp" Version="3.2.0" />
     <PackageReference Include="LibHeif.Native.win-x64" Version="1.15.1" />
     <PackageReference Include="LibHeifSharp" Version="3.2.0" />
     <PackageReference Include="Sdcb.LibRaw" Version="0.21.1.7" />

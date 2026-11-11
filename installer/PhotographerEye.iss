@@ -1,7 +1,6 @@
 ; PhotographerEye installer.
-; Build (Win10/11): iscc installer\PhotographerEye.iss
-; Build (Win7):     iscc installer\PhotographerEye.iss /DWin7
-; Expects publish output in dist (Win10/11, net8) or dist-win7 (net6, no GPU)
+; Build: iscc installer\PhotographerEye.iss
+; Expects publish output in dist (Windows 10/11, net8)
 ; produced by installer\build.ps1. Everything is packed into the installer,
 ; nothing is downloaded during installation.
 
@@ -10,13 +9,8 @@
 #define AppId "{5540f35b-a8c9-4f5a-8093-641f77030569}"
 #define RootDir RemoveBackslash(AddBackslash(SourcePath) + "..")
 
-#ifndef Win7
 #define DistDir "dist"
 #define SetupName AppName + "-Setup-Win10-11-" + AppVersion
-#else
-#define DistDir "dist-win7"
-#define SetupName AppName + "-Setup-Win7-" + AppVersion
-#endif
 
 [Setup]
 AppId={{#AppId}
@@ -32,15 +26,11 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
-ArchitecturesAllowed={#ifndef Win7}x64compatible{#else}x64{#endif}
-ArchitecturesInstallIn64BitMode={#ifndef Win7}x64compatible{#else}x64{#endif}
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppName}.exe
 ChangesAssociations=yes
-#ifndef Win7
 MinVersion=10.0.14393
-#else
-MinVersion=6.1sp1
-#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

@@ -1,6 +1,6 @@
 # Asystent AI (Ollama): dokument projektowy
 
-Status: etap 1 jest zaimplementowany. Etapy 2–5 są zaplanowane.
+Status: etapy 1–4 są zaimplementowane. Etap 5 (testy z prawdziwymi modelami) jest otwarty.
 
 ## 1. Cel
 
@@ -90,14 +90,27 @@ Każde wywołanie modelu wysyła całą historię, więc koszt rośnie z długo�
   nie zacznie, dopóki użytkownik nie podniesie limitu albo nie zacznie nowej rozmowy.
 - **`num_ctx`** (domyślnie 16384): rozmiar okna kontekstu wysyłany do Ollamy; wyświetlany limit to mniejsza z wartości
   `num_ctx` i długości kontekstu modelu z `/api/show`.
-- **Limit kroków** na polecenie (domyślnie 8).
+- **Limit kroków** na polecenie: ⚙ → „Most model calls per request”, zakres 1–30, domyślnie 8. Krok to jedno
+  wywołanie modelu, które może zmienić kilka ustawień naraz. Powyżej 8 okno pokazuje ostrzeżenie:
+  - każde wywołanie czyta całą rozmowę od nowa (u modeli wizyjnych także podgląd), więc jedno polecenie zużywa do
+    około kroki × kontekst tokenów i trwa dłużej;
+  - pogubiony model może się zapętlić i zmieniać te same ustawienia w tę i z powrotem;
+  - przy modelu chmurowym to realny koszt.
+
+  Budżet tokenów na zdjęcie nadal przerywa pracę. Komunikat o osiągnięciu limitu podaje jego wartość i miejsce,
+  w którym można go zmienić.
 - **Licznik w oknie:** „Context: ~3.1k / 16k tokens · used for this photo: 42k / 200k in N calls”. Czerwone
-  ostrzeżenie przy 90% kontekstu albo 80% budżetu. Liczby pochodzą z `prompt_eval_count`/`eval_count`; gdy serwer ich
-  nie poda, są szacowane (znaki/4, ~1000 na obraz) i oznaczane „~”.
+  ostrzeżenie przy 90% kontekstu albo 80% budżetu. Liczby pochodzą z `prompt_eval_count`/`eval_count`, ale liczy się
+  większa z dwóch wartości: licznik serwera albo szacunek (znaki/4, ~1000 na obraz). Lokalna Ollama może podać tylko
+  tokeny spoza bufora (ponownie użyty początek rozmowy pomija), co zaniżałoby kontekst i budżet. Wartości szacowane
+  są oznaczone „~”.
+- **Widoczność zdjęcia:** licznik mówi, czy model widzi zdjęcie („model sees the photo (N preview(s) sent)”) czy
+  pracuje tylko na statystykach („text only: the photo is not sent”), a każdy wysłany podgląd ma w rozmowie
+  wyszarzoną linię „📷 photo preview (1024 px JPEG, ~1k tokens) sent to the model”.
 
 Rozmowy są trzymane w oknie głównym (słownik ścieżka → sesja), więc zamknięcie i ponowne otwarcie okna czatu albo
-powrót do zdjęcia kontynuuje tę samą rozmowę z licznikami, do zamknięcia aplikacji. „Nowa rozmowa” zeruje historię
-i liczniki.
+powrót do zdjęcia kontynuuje tę samą rozmowę z licznikami. Rozmowa jest też zapisywana w `.eye` (sekcja 7), więc
+przetrwa zamknięcie aplikacji. „Nowa rozmowa” zeruje historię i liczniki.
 
 ## 4. Narzędzia (katalog funkcji)
 
@@ -108,9 +121,19 @@ i liczniki.
 | 1 | `get_preview` | Podgląd JPEG (tylko modele wizyjne). |
 | 1 | `set_core` | Obiekt `{Exposure, Contrast, Highlights, Shadows, Whites, Blacks, Temperature, Tint, Saturation, Clarity, Dehaze, Sharpen, Denoise, ColorNoise, Gamma, Mono}`. Ustawia tylko podane klucze; wartości są przycinane. |
 | 1 | `reset_core` | Przywraca wartości domyślne podanych kluczy (albo wszystkich). |
-| 2 | `list_plugins`, `set_plugin`, `set_plugin_active`, `apply_preset` | Pluginy (B&W profiles, split tone, color balance, vignette…). Parametry są opisane z deskryptorów `ParamDef`. |
-| 3 | `set_crop`, `straighten` | Proporcje (`4:5`, `3:2`…), prostokąt kadru 0..1, kąt. Korzysta z `SetGeometry`. |
-| 4 | `create_mask`, `set_mask_values`, `link_tool_to_mask` | Maski radialne i liniowe we współrzędnych 0..1 (model zna je z podglądu) oraz wartości wewnątrz maski. |
+| 2 | `list_plugins` | Filtry pluginów z parametrami (zakres, domyślna, bieżąca wartość, wybory), flagami `toolbar`, `no_mask`, `mask` oraz lista presetów (użytkownika `user:Nazwa` i pluginów `pluginId:presetId`). Opis filtra jest przycinany do 120 znaków. |
+| 2 | `set_plugin` | `{filter, values}`: suwak jest przycinany do zakresu, przełącznik przyjmuje 0/1 albo true/false, wybór musi być jednym z id, kolor ma postać `#RRGGBB`. Krzywe i inne rodzaje są odrzucane. Filtr można wskazać pełnym id, końcówką po `:` albo etykietą. |
+| 2 | `set_plugin_active`, `reset_plugin` | Włącza i wyłącza filtr paska narzędzi; przywraca wartości domyślne filtra (maska zostaje). |
+| 2 | `apply_preset` | Stosuje preset (po id albo nazwie) jako część tej samej tury. |
+| 3 | `set_crop` | `aspect` (`original`, `free`, `W:H`, także pionowe `4:5`), `size` 0.2..1, `center_x/center_y`; przy `free` prostokąt `x,y,w,h`; `reset`. Kadr mieści się w ramie. Proporcje spoza listy UI (1:1, pionowe) są zapisywane jako `original`, bo etykieta wpływa tylko na późniejsze przeciąganie. |
+| 3 | `straighten` | Kąt −45..45°, reszta geometrii bez zmian. |
+| 4 | `create_mask` | `radial` (środek, promienie, feather), `linear` (x1,y1 → x2,y2), `luma` (low, high, feather). Współrzędne 0..1 są w kadrze, tak jak model widzi podgląd. Aplikacja przelicza je na zdjęcie źródłowe (kadr, prostowanie, obrót). Z `mask` zmienia kształt istniejącej maski. |
+| 4 | `set_mask_values` | Wartości podstawowych suwaków dodawane wewnątrz maski. Zera są pomijane, `{}` usuwa wartości. |
+| 4 | `link_tool_to_mask`, `delete_mask` | Ogranicza filtr do maski (`none` przywraca całe zdjęcie). Usunięcie maski przywraca całe zdjęcie powiązanym filtrom. |
+
+`get_state` podaje też geometrię (`geometry`), włączone pluginy (`plugins_on`) i maski (`masks`, we współrzędnych
+kadru). Przed turą aplikacja zamyka tryb kadrowania i edycję maski, żeby zmiany asystenta nie mieszały się
+z otwartym narzędziem.
 
 Katalog jest generowany z `CoreParams` i z deskryptorów pluginów, więc nowy suwak albo plugin trafia do asystenta
 bez ręcznych zmian.
@@ -148,8 +171,11 @@ serwer, z etykietami kategorii.
   Contrast +15”).
 - Szybkie polecenia: „Album rodzinny”, „Reportaż”, „Czarno-białe artystyczne”.
 - Dół: pole polecenia (Enter wysyła, Shift+Enter nowa linia), Wyślij, Stop, Nowa rozmowa, licznik kontekstu i zużycia.
-- Rozmowa należy do zdjęcia. Po zmianie zdjęcia zaczyna się nowa, a historia poprzednich (także po zamknięciu okna
-  czatu) zostaje w pamięci do zamknięcia aplikacji. Zapis w `.eye` jest planowany w etapie 2.
+- Rozmowa należy do zdjęcia. Po zmianie zdjęcia pokazuje się rozmowa tego zdjęcia albo pusta. Rozmowa trafia do
+  pliku `.eye` (pole `Assistant`, tylko w stanie głównym, nigdy w krokach historii) przy autozapisie i przy Save Photo.
+  Zapisywane są wiadomości użytkownika i podsumowania tur, przebieg widoczny w oknie oraz liczniki tokenów. Nie są
+  zapisywane podglądy ani prompt systemowy. Po ponownym otwarciu zdjęcia rozmowa jest kontynuowana. „Nowa rozmowa”
+  usuwa ją także z `.eye`.
 
 ## 8. Etapy
 
@@ -157,10 +183,11 @@ serwer, z etykietami kategorii.
    `get_preview`, `set_core`, `reset_core`, jedna tura równa jednemu undo, testy harness (`--ai`).
    Nie sprawdzone jeszcze z prawdziwym modelem (podczas budowy Ollama nie działała); do zrobienia: rozmowa na żywo
    z modelem ★ i dostrojenie promptu systemowego.
-2. Pluginy i presety, zapis rozmowy w `.eye`.
-3. Kadrowanie i prostowanie.
-4. Maski lokalne.
-5. Rozszerzone testy: nagrane rozmowy, testy UI okna asystenta.
+2. **Pluginy i presety, zapis rozmowy w `.eye` (zrobione).**
+3. **Kadrowanie i prostowanie (zrobione).**
+4. **Maski lokalne (zrobione):** radialne, liniowe, jasnościowe. Maski pędzla zostają w rękach użytkownika.
+5. Rozszerzone testy: test UI okna asystenta jest gotowy (`tools/UiAiTest/run.ps1`). Do zrobienia: nagrane rozmowy
+   z prawdziwymi modelami i dostrojenie promptu.
 
 ## 9. Testy
 
@@ -180,3 +207,28 @@ serwer, z etykietami kategorii.
 - Parsowanie odpowiedzi `/api/tags`, `/api/show` (capabilities, długość kontekstu) i `/api/chat` (liczniki, błąd),
   klasyfikacja modeli.
 - Szyfrowanie klucza DPAPI (zaszyfrowanie i odszyfrowanie).
+- Etapy 2–4 na atrapie edytora:
+  - `set_plugin`: przycinanie, przełączniki, wybory, kolory, odrzucanie krzywych;
+  - przełączanie filtrów paska, reset, presety;
+  - kadry `1:1`, `2:3` przy brzegu, `free`, reset; prostowanie z limitem ±45°;
+  - maski w kadrze (przeliczanie współrzędnych w obie strony), zmiana kształtu, wartości, powiązania, usuwanie;
+  - kroki w podsumowaniu tury;
+  - rozmowa w `.eye`: zapis i odczyt, brak podglądów i promptu systemowego, kontynuacja po wczytaniu.
+
+### Test UI
+
+`powershell -ExecutionPolicy Bypass -File tools\UiAiTest\run.ps1 [-Exe <ścieżka>]` (domyślnie build Debug):
+
+- uruchamia w skrypcie atrapę serwera Ollama (`localhost`, model `fake-vl` z tools i vision) i własny proces
+  aplikacji z odizolowanymi ustawieniami (`PHOTOGRAPHEREYE_APPDATA`);
+- steruje wyłącznie tym procesem przez UI Automation, bez myszy i klawiatury;
+- sprawdza:
+  - otwarcie okna i listę modeli;
+  - turę z `set_core`: przebieg, notatkę 📷, licznik tokenów;
+  - zachowanie rozmowy po zamknięciu okna czatu;
+  - turę etapów 2–4 bez błędów narzędzi i jej zapis w `.eye` (kąt, kadr, maska z Exposure, wartość pluginu,
+    powiązanie z maską, rozmowa);
+  - jedno Undo, które cofa całą turę;
+  - „Nową rozmowę”, która usuwa rozmowę z `.eye`.
+
+Żadne zapytanie nie trafia do prawdziwego modelu.

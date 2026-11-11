@@ -46,6 +46,7 @@ public sealed class AssistantWindow : Window
     private readonly PasswordBox _key = new() { Margin = new Thickness(0, 2, 6, 0), MinWidth = 220 };
     private readonly TextBlock _keyState = new() { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBox _steps = new() { Width = 50, Margin = new Thickness(6, 0, 0, 0) };
+    private readonly TextBlock _stepsWarn = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0), Visibility = Visibility.Collapsed };
     private readonly TextBox _ctxTokens = new() { Width = 70, Margin = new Thickness(6, 0, 0, 0) };
     private readonly TextBox _budget = new() { Width = 80, Margin = new Thickness(6, 0, 0, 0) };
     private readonly TextBlock _usage = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 4) };
@@ -98,7 +99,10 @@ public sealed class AssistantWindow : Window
         Id(_usage, "AiUsage");
         _usage.ToolTip = "Context: what the model reads in one call (the conversation so far, the function list and at most one preview).\n" +
                          "Used: all tokens of this photo's conversation, read + written, against the budget set in ⚙.\n" +
-                         "After each request its working steps are folded into one short line, so follow-ups stay small.";
+                         "After each request its working steps are folded into one short line, so follow-ups stay small.\n" +
+                         "~ marks an estimate (about 4 characters per token, ~1k per preview); it is used whenever the server reports\n" +
+                         "nothing or less (a local Ollama may count only the part it did not have cached).\n" +
+                         "Only models that see images get the photo, as a reduced preview; each one sent is noted in the conversation.";
         _meta.Foreground = _fg;
 
         Id(_mode, "AiMode");
@@ -137,6 +141,7 @@ public sealed class AssistantWindow : Window
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Padding = new Thickness(8)
         };
+        Id(_scroll, "AiTranscript");
         var transcriptBorder = new Border
         {
             Child = _scroll,
@@ -234,8 +239,11 @@ public sealed class AssistantWindow : Window
         keyRow.Children.Add(_keyState);
         _settingsPanel.Children.Add(keyRow);
 
-        NumberRow(_steps, "Most model calls per request:", "",
-            n => Save(_s with { MaxSteps = (int)Math.Clamp(n, 1, 30) }), () => _s.MaxSteps);
+        NumberRow(_steps, "Most model calls per request:",
+            $"1-30, default {AiSettings.DefaultMaxSteps}. Each call is one model answer (it may change several settings at once); the request stops at the limit and the changes made so far stay.",
+            n => Save(_s with { MaxSteps = (int)Math.Clamp(n, 1, AiSettings.MaxMaxSteps) }), () => _s.MaxSteps);
+        _stepsWarn.Foreground = Brushes.IndianRed;
+        _settingsPanel.Children.Add(_stepsWarn);
         NumberRow(_ctxTokens, "Context window (num_ctx, tokens):", "0 = server default (often 4k: too small with a preview); local models use more memory for larger values",
             n => Save(_s with { ContextTokens = (int)(n <= 0 ? 0 : Math.Clamp(n, 2048, 262144)) }), () => _s.ContextTokens);
         NumberRow(_budget, "Token budget per photo:", "all calls of one photo's conversation, read + written; 0 = no limit",
@@ -261,6 +269,7 @@ public sealed class AssistantWindow : Window
                 UpdateUsage();
             }
             box.Text = current().ToString(CultureInfo.InvariantCulture);
+            UpdateStepsWarning();
         };
         _settingsPanel.Children.Add(row);
     }
@@ -276,6 +285,24 @@ public sealed class AssistantWindow : Window
             : null;
     }
 
+    /// <summary>Shown while the step limit is above the default: what a longer request costs and risks.</summary>
+    private void UpdateStepsWarning()
+    {
+        int n = _s.MaxSteps;
+        if (n <= AiSettings.DefaultMaxSteps)
+        {
+            _stepsWarn.Visibility = Visibility.Collapsed;
+            return;
+        }
+        int ctx = _s.ContextTokens > 0 ? _s.ContextTokens : 16384;
+        _stepsWarn.Text =
+            $"⚠ {n} calls per request: every call re-reads the whole conversation (plus a preview for models that see the photo), " +
+            $"so one request can use up to ~{AiSession.Fmt((long)n * ctx)} tokens (calls × context) and run much longer. " +
+            "A confused model may loop, changing the same settings back and forth; on a cloud model this costs real money. " +
+            (_s.TokenBudget > 0 ? $"The token budget per photo ({AiSession.Fmt(_s.TokenBudget)}) still stops it." : "There is no token budget set to stop it.");
+        _stepsWarn.Visibility = Visibility.Visible;
+    }
+
     private TextBlock Muted(string text) => new() { Text = text, Foreground = _muted, FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
 
     private void LoadSettingsUi()
@@ -286,6 +313,7 @@ public sealed class AssistantWindow : Window
         _ctxTokens.Text = _s.ContextTokens.ToString(CultureInfo.InvariantCulture);
         _budget.Text = _s.TokenBudget.ToString(CultureInfo.InvariantCulture);
         _meta.IsChecked = _s.SendMetadata;
+        UpdateStepsWarning();
         bool stored = !string.IsNullOrEmpty(AiKeyProtector.Unprotect(_s.ApiKeyProtected));
         bool env = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OLLAMA_API_KEY"));
         _keyState.Text = stored ? "key saved" : env ? "using OLLAMA_API_KEY" : "no key";
@@ -444,12 +472,15 @@ public sealed class AssistantWindow : Window
         var c = CurrentChoice();
         int ctxMax = EffectiveContext();
         int ctxNow = s is { LastPromptTokens: > 0 } ? s.LastPromptTokens : (s ?? new AiSession()).EstimateNextContext(c?.Vision ?? false) + (c?.Vision == true ? AiSession.ImageTokens : 0);
-        bool measured = s is { LastPromptTokens: > 0 } && !s.Estimated;
+        bool measured = s is { LastPromptTokens: > 0 } && !s.LastPromptEstimated;
         string ctx = $"Context: {(measured ? "" : "~")}{AiSession.Fmt(ctxNow)}" + (ctxMax > 0 ? $" / {AiSession.Fmt(ctxMax)}" : "");
         long used = s?.TotalTokens ?? 0;
         string budget = _s.TokenBudget > 0 ? $" / {AiSession.Fmt(_s.TokenBudget)}" : " (no limit)";
         string calls = s is { TotalCalls: > 0 } ? $" in {s.TotalCalls} call(s)" : "";
-        string text = $"{ctx} tokens · used for this photo: {(s?.Estimated == true ? "~" : "")}{AiSession.Fmt(used)}{budget}{calls}";
+        string sight = c is null ? ""
+            : c.Vision ? " · model sees the photo" + (s is { ImagesSent: > 0 } ? $" ({s.ImagesSent} preview(s) sent)" : "")
+            : " · text only: the photo is not sent, only its statistics";
+        string text = $"{ctx} tokens · used for this photo: {(s?.Estimated == true ? "~" : "")}{AiSession.Fmt(used)}{budget}{calls}{sight}";
         bool warn = false;
         if (ctxMax > 0 && ctxNow >= ctxMax * 0.9)
         {
@@ -500,6 +531,7 @@ public sealed class AssistantWindow : Window
         if (_busy) return;
         var path = _main.AiPhotoPath;
         if (path is not null) _sessions.Remove(path);
+        _main.AiConversationChanged(); // the .eye file drops the old conversation too
         ShowSession();
         SetStatus("New conversation (the photo keeps its settings).");
     }

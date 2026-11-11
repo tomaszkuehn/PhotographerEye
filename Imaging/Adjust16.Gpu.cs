@@ -1,4 +1,3 @@
-#if !PHOTOGRAPHEREYE_NO_GPU
 using System;
 using System.Buffers;
 using System.Threading;
@@ -1025,4 +1024,3 @@ public readonly partial struct GrainKernel(ReadWriteBuffer<int> pr, ReadWriteBuf
         pb[i] = v;
     }
 }
-#endif
