@@ -303,7 +303,9 @@ public partial class MainWindow
         if (_pluginState.Masks.ContainsKey(key)) return false;
         if (key == AdjustMask.Key) return true;
         var f = _pluginReg.FindFilter(key);
-        return f is not null && f.D.SupportsMask && f.D.Stage != FilterStage.Output && !IsFaulted(f);
+        // post-crop (Output) tools included: their scope menu already links them, and the pipeline maps a geometric
+        // mask onto the cropped frame (MaskRender.RenderMapped)
+        return f is not null && f.D.SupportsMask && !IsFaulted(f);
     }
 
     /// <summary>Visible, explicit replacement of the old silent auto-scope: a button in the tool's Mask row while another mask is edited.</summary>
@@ -341,7 +343,7 @@ public partial class MainWindow
     {
         if (PluginPanelHost is null || AdjMaskHost is null) return;
         foreach (var f in _pluginReg.Filters)
-            if (f.D.SupportsMask && f.D.Stage != FilterStage.Output)
+            if (f.D.SupportsMask)
                 RefreshMaskBox(f.FullId);
         RefreshMaskBox(AdjustMask.Key);
     }

@@ -102,7 +102,7 @@ PhotographerEye loads .NET plugins that target `netstandard2.0` and reference `I
 - **Placement**: a filter goes either on the toolbar (a toggle button) or in the Adjustments panel (a collapsible section per `Group`, with a reset button). The run order is set in **PLUGINS ▸ Order…**: a window that lists the filters used on the photo grouped by stage (before tone / after tone and colour / after crop; "Show all filters" adds the unused ones), with up/down only inside a stage that has two or more of them, and "Default order". Filters run top to bottom, each on the result of the one before; the built-in adjustments always run at a fixed place between the stages, whatever order you used them in. The order is stored in `.eye`.
 - **Parameter kinds**: `Slider`, `Toggle`, `Choice`, `Color` (hex, with an HSL picker), `Curve` (`x,y;...`, with a curve editor), `Point` (pick on the image), `File` (browse). Optional `IsIdentity` skips a filter while it would have no effect.
 - **IDs are namespaced**: `pluginId:filterId`, and parameter values are stored as `pluginId:filterId/paramId`. Values that belong to plugins which are not installed are kept untouched in `.eye`, so a photo survives a round-trip through a machine without the plugin.
-- **Masks**: any filter with `SupportsMask` (in every stage; masks of Output filters are mapped through crop and rotation) can be limited by one of:
+- **Masks**: any filter with `SupportsMask` (in every stage; masks of Output filters are mapped through crop and rotation) can be limited by one of the shapes below. While another mask is edited, the tool's Mask row offers *Work inside* to link the tool to that mask (`CanApplyInsideEdited`). This includes post-crop (Output) tools such as Post-crop vignette. The shapes:
   - a linear gradient (both handles on one point give no effect, not the whole photo)
   - a radial gradient (an ellipse that can be rotated: orange handle on the photo or the Rotation slider; `P[5]` in degrees). A new one is a circle in the middle of the part of the photo visible in the viewer (the photo centre when it fits; `MaskOverlay.VisibleCenterSrc`), 15% of the image height across whatever the aspect ratio (`MaskRender.RadialDefaultDiameter`, rx corrected by the aspect). The **Feather** slider (0–100, double-click resets to 50) sets `P[4]`, the soft fade from (1 − feather)·radius to the edge; the dashed inner ring on the photo follows it
   - a brush
@@ -222,6 +222,22 @@ Pointer tools (`TestPointerTools`: press sessions, one step per press, Hover, Ca
 Basic-adjustment table (`TestCoreParams`: keys and aliases, Get/Set, ranges against the sliders in `MainWindow.xaml`, labels, EditChanged keys, coalescing groups, every `EyeState` field listed): `--coreparams`.
 
 E2E UIA (requires a running app): `scripts\uia-e2e.ps1 <pid>`
+
+Mask correctness UI test (UIA, Release build, test photo `tools\test.jpg`): `powershell -ExecutionPolicy Bypass -File tools\UiMaskTest\run.ps1`. It closes any running PhotographerEye, starts it with an isolated app-data dir and `PHOTOGRAPHEREYE_DEBUG=1`, and writes `UI-TEST.md` (IN/OUT pixel deltas and a verdict per core slider and plugin parameter).
+- Phases:
+  - Mask 1: radial, upper left (30 %/25 %).
+  - Mask 2: radial, lower right (70 %/62 %).
+  - Pin-click re-entry of Mask 1.
+  - Invert outside Mask 1.
+  - Brush: band in the lower left.
+- Each new radial is created at the centre and dragged to its position. Points inside the mask measure IN; points in the other masks and the image corners measure OUT.
+- Verdicts:
+  - PASS: IN ≥ 8 and OUT ≤ 4 (0-255).
+  - FAIL-NOEFFECT, FAIL-LEAK, FAIL-NOLINK: no effect, a leak outside the mask, or the tool could not be linked to the mask.
+  - FAIL-STATE: after a tool is reset and unlinked, the photo does not return to its pre-tool reference shot (for example it stays B&W). That would contaminate the following tools.
+- Waiting is render-aware: after each change the script waits for the next render line in the debug log (`APPLY:` / `FIT:` / `CLAMP:`) instead of fixed sleeps. Slider values are clamped to the slider range.
+- Excluded from the mask test (`$Script:excludeTools`): Auto enhance, B&W classic, B&W profiles, Heal, Post-crop vignette.
+- The app is left open after the run for inspection.
 
 Single-file diagnostics (harness modes): `--dump <file>` (decode/logic), `--meta <file>` (metadata), `--raworient <file>` (orientation: EXIF, header vs full-decode dimensions, preview, `AlignToPreview`), `--raw22 <file>` / `--rawhe <file>` (decoder fallback, resulting JPG), `--heif-probe` / `--heif-diag` (HEIC/HEIF/AVIF), `--sh <file> <out.png> <highlights> <shadows>` (renders Shadows/Highlights at slider values -100..100 to PNG), `--sh-raw <dir> <outDir>` (Shadows/Highlights on every RAW in a folder: CPU vs GPU diff, timings, clipping, PNG previews), `--nr-raw <dir> <outDir> [pushEv]` (noise reduction 0/50/100 on every RAW in a folder: CPU vs GPU diff, timings, 100% crops of a dark area as PNG).
 

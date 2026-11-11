@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
@@ -24,6 +24,7 @@ public static class U {
   public static void Down(int x, int y) { SetCursorPos(x, y); System.Threading.Thread.Sleep(70); mouse_event(2, 0, 0, 0, UIntPtr.Zero); System.Threading.Thread.Sleep(90); }
   public static void Move(int x, int y) { SetCursorPos(x, y); System.Threading.Thread.Sleep(35); }
   public static void Up() { mouse_event(4, 0, 0, 0, UIntPtr.Zero); System.Threading.Thread.Sleep(80); }
+  public static void Wheel(int x, int y, int delta) { SetCursorPos(x, y); System.Threading.Thread.Sleep(40); mouse_event(0x0800, 0, 0, delta, UIntPtr.Zero); System.Threading.Thread.Sleep(90); }
   public static void Key(byte vk, int count) {
     for (int i = 0; i < count; i++) { keybd_event(vk, 0, 0, UIntPtr.Zero); keybd_event(vk, 0, 2, UIntPtr.Zero); System.Threading.Thread.Sleep(120); }
   }
@@ -37,6 +38,13 @@ $td = Join-Path $env:TEMP 'imgviewertest'
 $iso = Join-Path $td 'appdata'
 $debugLog = Join-Path $env:TEMP 'photographereye-debug.log'
 $report = Join-Path $repo 'UI-TEST.md'
+
+# Any unhandled error: report it and close the app so a failed run never leaves a frozen-looking window.
+trap {
+  Write-Host ('[FATAL] ' + $_.Exception.Message + ' @ line ' + $_.InvocationInfo.ScriptLineNumber)
+  Get-Process PhotographerEye -ErrorAction SilentlyContinue | Stop-Process -Force
+  exit 1
+}
 
 $Script:results = New-Object System.Collections.Generic.List[object]
 $Script:debugShots = New-Object System.Collections.Generic.List[string]
@@ -56,6 +64,9 @@ Start-Sleep -Milliseconds 700
 New-Item -ItemType Directory -Force -Path $iso, $td, $repo | Out-Null
 Remove-Item (Join-Path $iso '*') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $td '*') -Filter '*.png' -Force -ErrorAction SilentlyContinue
+# the app keeps each photo's edit (masks, links, values) in _eye_\<photo>.eye next to the photo;
+# a leftover edit from an earlier run would start the test with its masks and tool links
+Remove-Item (Join-Path $td '_eye_') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $debugLog -Force -ErrorAction SilentlyContinue
 (@{ ShadowLift = 0.0; Gamma = 1.0; ShowMaskMarkers = $false } | ConvertTo-Json) | Set-Content (Join-Path $iso 'settings.json') -Encoding UTF8
 
@@ -109,7 +120,21 @@ function New-TestPhoto {
   $bmp.Save($photo, [System.Drawing.Imaging.ImageFormat]::Png)
   $bmp.Dispose()
 }
-New-TestPhoto
+$userPhoto = Join-Path $repo 'tools\test.jpg'
+$Script:framed = $true
+if (Test-Path $userPhoto) {
+  $photo = Join-Path $td 'test.jpg'
+  Copy-Item $userPhoto $photo -Force
+  $Script:framed = $false
+  $pimg = [System.Drawing.Image]::FromFile($photo)
+  $Script:photoAspect = $pimg.Height / [double]$pimg.Width
+  $Script:photoSize = ('' + $pimg.Width + 'x' + $pimg.Height)
+  $pimg.Dispose()
+} else {
+  New-TestPhoto
+  $Script:photoAspect = 1000 / 1400.0
+  $Script:photoSize = '1400x1000'
+}
 Info ('photo: ' + $photo)
 
 # --------------------------------------------------------------- launch
@@ -160,18 +185,46 @@ function Find-ById([string]$id, [int]$timeoutMs = 6000) {
   }
 }
 
+# Render-aware wait. The app logs 'APPLY:' when a render finishes and 'CLAMP:'/'FIT:' when the
+# new frame is laid out on screen. $Script:logMark is the log length at the end of the previous
+# wait, so whatever appears after it was caused by the action in between.
+#  - quietSec >= 1.0 ('after an action'): wait until a render-done line shows up after the mark,
+#    then 150 ms of log silence; when no render line arrives within 2.5 s of the last log
+#    growth (the action did not re-render), return.
+#  - quietSec < 1.0 ('settle'): return after 250 ms of log silence.
+$Script:logMark = 0
+function Log-Len { if (Test-Path $debugLog) { return (Get-Item $debugLog).Length } else { return 0 } }
+function Log-Since([long]$from) {
+  try {
+    $fs = [System.IO.File]::Open($debugLog, 'Open', 'Read', 'ReadWrite')
+    try {
+      if ($from -gt $fs.Length) { $from = 0 }
+      [void]$fs.Seek($from, 'Begin')
+      $sr = New-Object System.IO.StreamReader($fs)
+      return $sr.ReadToEnd()
+    } finally { $fs.Dispose() }
+  } catch { return '' }
+}
 function Wait-Idle([double]$quietSec = 1.0, [int]$maxMs = 12000) {
-  $end = (Get-Date).AddMilliseconds($maxMs)
-  $lastLen = -1
-  $lastChange = Get-Date
+  $start = Get-Date
+  $end = $start.AddMilliseconds($maxMs)
+  $render = ($quietSec -ge 1.0)
+  $lastLen = Log-Len
+  $lastChange = $start
+  $seen = $false
   while ((Get-Date) -lt $end) {
-    Start-Sleep -Milliseconds 170
-    $len = 0
-    if (Test-Path $debugLog) { $len = (Get-Item $debugLog).Length }
+    Start-Sleep -Milliseconds 50
+    $len = Log-Len
     if ($len -ne $lastLen) { $lastLen = $len; $lastChange = Get-Date }
-    elseif (((Get-Date) - $lastChange).TotalMilliseconds -gt ($quietSec * 1000)) { break }
+    $quietMs = ((Get-Date) - $lastChange).TotalMilliseconds
+    if (-not $render) { if ($quietMs -ge 250) { break } else { continue } }
+    if (-not $seen -and $len -gt $Script:logMark) {
+      if ((Log-Since $Script:logMark) -match '(APPLY|FIT|CLAMP):') { $seen = $true }
+    }
+    if ($seen -and $quietMs -ge 150) { break }
+    if (-not $seen -and $quietMs -ge 2500) { break }
   }
-  Start-Sleep -Milliseconds 300
+  $Script:logMark = Log-Len
 }
 
 function ScreenShot([string]$file) {
@@ -185,7 +238,35 @@ function ScreenShot([string]$file) {
   return $bmp
 }
 
+function Get-ImageRectPlain($shot) {
+  # Real photo (no magenta frame): the viewer background is a flat dark colour. Measure the
+  # photo's horizontal extent along the viewer's middle row and its bottom edge along the
+  # middle column; the height then follows from the photo's known aspect ratio (the top of a
+  # photo can be as dark as the background, the bottom/sides are found reliably).
+  $data = Buf-Of $shot
+  $px = { param($x, $y) $i = $y * $data.stride + $x * 4; @($data.buf[$i + 2], $data.buf[$i + 1], $data.buf[$i]) }
+  $bg = & $px 6 ([int]($data.h / 2))
+  $diff = { param($x, $y) $c = & $px $x $y; [math]::Max([math]::Max([math]::Abs($c[0] - $bg[0]), [math]::Abs($c[1] - $bg[1])), [math]::Abs($c[2] - $bg[2])) }
+  # viewer spans from x=0 to the right panel; find the panel edge as the first long run of non-bg
+  # pixels on the far right is unreliable, so scan the middle row from both ends of the left 82%
+  $yMid = [int]($data.h / 2)
+  $xLimit = [int]($data.w * 0.80)
+  $xCentre = [int]($xLimit * 0.5)
+  $x0 = -1; $x1 = -1
+  for ($x = 90; $x -lt $xLimit; $x++) { if ((& $diff $x $yMid) -gt 30) { $x0 = $x; break } }
+  for ($x = $xLimit; $x -gt 90; $x--) { if ((& $diff $x $yMid) -gt 30) { $x1 = $x; break } }
+  if ($x0 -lt 0 -or $x1 -le $x0 + 50) { throw 'photo not detected' }
+  $xc = [int](($x0 + $x1) / 2)
+  $y1 = -1
+  for ($y = $data.h - 40; $y -gt $yMid; $y--) { if ((& $diff $xc $y) -gt 30) { $y1 = $y; break } }
+  if ($y1 -lt 0) { throw 'photo bottom not detected' }
+  $w = $x1 - $x0
+  $h = [int][math]::Round($w * $Script:photoAspect)
+  return @{ L = $x0; T = ($y1 - $h); R = $x1; B = $y1; W = $w; H = $h }
+}
+
 function Get-ImageRect($shot) {
+  if (-not $Script:framed) { return (Get-ImageRectPlain $shot) }
   $bmp = $shot
   $r = New-Object System.Drawing.Rectangle(0, 0, $bmp.Width, $bmp.Height)
   $d = $bmp.LockBits($r, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
@@ -235,7 +316,7 @@ function Mean-At-Buf($data, [double]$u, [double]$v, [int]$r = 6) {
     }
   }
   if ($n -eq 0) { return @(0.0, 0.0, 0.0) }
-  return @($sr / $n, $sg / $n, $sb / $n)
+  return @(($sr / $n), ($sg / $n), ($sb / $n))
 }
 
 function Patch-Delta($a, $b) {
@@ -244,11 +325,12 @@ function Patch-Delta($a, $b) {
   return $d
 }
 function Ring-Points([double]$cu, [double]$cv, [double]$du, [double]$dv) {
-  return @(@($cu - $du, $cv - $dv), @($cu + $du, $cv - $dv), @($cu - $du, $cv + $dv), @($cu + $du, $cv + $dv))
+  # NB: in PowerShell ',' binds tighter than '-'/'+', so each coordinate needs its own parentheses
+  $a = $cu - $du; $b = $cv - $dv; $c = $cu + $du; $d = $cv + $dv
+  return @(@($a, $b), @($c, $b), @($a, $d), @($c, $d))
 }
 
 function Verify($phase, $target, $shot, $base, $ins, $outs, [string]$expect) {
-  Wait-Idle 1.0 12000
   $sd = Buf-Of $shot
   $bd = Buf-Of $base
   $shot.Dispose(); $base.Dispose()
@@ -282,9 +364,7 @@ function Verify($phase, $target, $shot, $base, $ins, $outs, [string]$expect) {
     else { $v = 'FAIL-NOEFFECT' }
   }
   if ($v -ne 'PASS' -and $v -ne 'PASS-GLOBAL-BY-DESIGN') {
-    $shotFile = Join-Path $td (('dbg_' + $phase + '_' + $target) -replace '[^\w\-]', '_') + '.png'
-    $bmp = New-Object System.Drawing.Bitmap 1, 1
-    $bmp.Dispose()
+    $shotFile = Join-Path $td ((('dbg_' + $phase + '_' + $target) -replace '[^\w\-]', '_') + '.png')
     try {
       $save = New-Object System.Drawing.Bitmap $sd.w, $sd.h
       $sdv = $sd.buf
@@ -301,10 +381,40 @@ function Verify($phase, $target, $shot, $base, $ins, $outs, [string]$expect) {
   return ($v -like 'PASS*')
 }
 
+# Elements of the right panel can sit outside its ScrollViewer's viewport; their bounding rect
+# then points outside the panel and a click lands on something else. Wheel the panel until the
+# element is inside the panel's visible band.
+function Scroll-IntoView($el) {
+  if ($null -eq $Script:panelTitle) { $Script:panelTitle = Find-TitleText 'Adjustments' -Exact }
+  $pt = $Script:panelTitle
+  if (-not $pt) { return }
+  $pr = $pt.Current.BoundingRectangle
+  $top = $pr.Y + $pr.Height + 8
+  $bottom = $Script:winRect.B - 40
+  $wx = [int]($pr.X + 120); $wy = [int](($top + $bottom) / 2)
+  for ($i = 0; $i -lt 160; $i++) {
+    $r = $el.Current.BoundingRectangle
+    if ($r.X -lt ($pr.X - 30)) { return }          # not a panel element
+    $off = $false; try { $off = $el.Current.IsOffscreen } catch { }
+    if (-not $off -and $r.Y -ge $top -and ($r.Y + $r.Height) -le $bottom) { return }
+    $far = [math]::Abs($r.Y - $wy) -gt 600
+    $step = 120; if ($far) { $step = 360 }
+    if ($r.Y -lt $top) { [U]::Wheel($wx, $wy, $step) } else { [U]::Wheel($wx, $wy, -$step) }
+    Start-Sleep -Milliseconds 90
+  }
+}
+
 function Click-El($el) {
+  Scroll-IntoView $el
   $rr = $el.Current.BoundingRectangle
+  $cx = $rr.X + $rr.Width / 2; $cy = $rr.Y + $rr.Height / 2
+  # never click outside the app window (a stray click on the taskbar/desktop opens other apps)
+  if ($cx -lt ($Script:winRect.L + 4) -or $cx -gt ($Script:winRect.R - 4) -or $cy -lt ($Script:winRect.T + 30) -or $cy -gt ($Script:winRect.B - 28)) {
+    Write-Host ('[WARN] click skipped, element outside the window: ' + $el.Current.AutomationId + ' "' + $el.Current.Name + '" at ' + [int]$cx + ',' + [int]$cy)
+    return
+  }
   [U]::Click([int]($rr.X + $rr.Width / 2), [int]($rr.Y + $rr.Height / 2))
-  Start-Sleep -Milliseconds 280
+  Start-Sleep -Milliseconds 150
 }
 function Abs-Pt([double]$u, [double]$v) {
   return @([int]([math]::Round($Script:winRect.L + $Script:ir.L + $u * $Script:ir.W)), [int]([math]::Round($Script:winRect.T + $Script:ir.T + $v * $Script:ir.H)))
@@ -319,8 +429,9 @@ function Set-Range([string]$id, [double]$v) {
   if (-not $el) { return $null }
   $rv = RangeValue $el
   $cur = $rv.Current.Value
-  $rv.SetValue($v)
-  Start-Sleep -Milliseconds 200
+  $v = [math]::Max($rv.Current.Minimum, [math]::Min($rv.Current.Maximum, $v))
+  try { $rv.SetValue($v) } catch { Write-Host ('[WARN] SetValue ' + $id + '=' + $v + ': ' + $_.Exception.Message); return $null }
+  Start-Sleep -Milliseconds 60
   return $cur
 }
 function Get-Range($el) { $rv = RangeValue $el; return $rv.Current.Value }
@@ -382,38 +493,91 @@ function Open-Choice([string]$id, [int]$targetIndex) {
   Start-Sleep -Milliseconds 260
 }
 function Close-ChoiceDefault([string]$id) { Open-Choice $id 0 }
+function Get-ChoiceSel([string]$id) {
+  $el = Find-ById $id 1500
+  if (-not $el) { return '' }
+  try { return (($el.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection() | ForEach-Object { $_.Current.Name }) -join ',') } catch { return '' }
+}
 
 # --------------------------------------------------------------- open panel + expand sections
-$btnPanel = Find-ById 'BtnPanel'
-if (-not $btnPanel) { throw 'BtnPanel not found' }
-Click-El $btnPanel
-Wait-Idle 0.9 9000
-
-function Click-HeaderByTitle([string]$title) {
+# Section headers are plain WPF Borders (no automation peer), so their AutomationId is not in the
+# UIA tree; the header's title TextBlock is. Find it by its visible text instead.
+function Find-TitleText([string]$title, [switch]$Exact, [switch]$InPanel) {
   $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
   $texts = $Script:win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
+  $minX = -100000
+  if ($InPanel) {
+    if ($null -eq $Script:panelTitle) { $Script:panelTitle = Find-TitleText 'Adjustments' -Exact }
+    if ($Script:panelTitle) { $minX = $Script:panelTitle.Current.BoundingRectangle.X - 30 } else { return $null }
+  }
   foreach ($t in $texts) {
     $nm = $t.Current.Name
-    if ($nm -and $nm.StartsWith($title)) {
+    if ($nm -and (($Exact -and $nm -ceq $title) -or (-not $Exact -and $nm.StartsWith($title)))) {
       $r = $t.Current.BoundingRectangle
-      if ($r.Width -gt 2 -and $r.Height -gt 2) {
-        [U]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
-        Start-Sleep -Milliseconds 260
-        return $true
-      }
+      if ($r.X -lt $minX) { continue }
+      if ($r.Width -gt 2 -and $r.Height -gt 2) { return $t }
     }
   }
-  return $false
+  return $null
 }
 
-if (-not (Click-HeaderByTitle 'MASK')) { throw 'MASK section header not clickable' }
-if (-not (Find-ById 'BtnMaskNew')) { throw 'BtnMaskNew not found after expanding MASK' }
+$btnPanel = Find-ById 'BtnPanel'
+if (-not $btnPanel) { throw 'BtnPanel not found' }
+# BtnPanel is a toggle and the app may still be settling: click, then confirm the panel is
+# really open (its MASK header has a visible rect); retry if a click was lost or closed it.
+$panelOk = $false
+for ($t = 0; $t -lt 4 -and -not $panelOk; $t++) {
+  [void][U]::SetForegroundWindow($hwnd)
+  Click-El $btnPanel
+  Wait-Idle 1.0 9000
+  if (Find-TitleText 'MASK') { $panelOk = $true }
+  else { Info ('panel not open yet (try ' + ($t + 1) + ')') }
+}
+if (-not $panelOk) { throw 'adjustments panel did not open' }
+
+function Click-HeaderByTitle([string]$title) {
+  $t = Find-TitleText $title -InPanel
+  if (-not $t) { return $false }
+  Click-El $t
+  return $true
+}
+function Count-PluginBodies {
+  $n = 0
+  foreach ($a in $Script:win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+    $id = $a.Current.AutomationId
+    if ($id -and ($id.StartsWith('PluginBody_') -or $id.StartsWith('PluginList_'))) { $n++ }
+  }
+  return $n
+}
+# Expand a plugin section without toggling an open one shut: a click that lowers the number of
+# plugin bodies in the UIA tree closed the section, so click once more to reopen it.
+function Expand-Section([string]$title) {
+  $before = Count-PluginBodies
+  if (-not (Click-HeaderByTitle $title)) { return }
+  Start-Sleep -Milliseconds 250
+  if ((Count-PluginBodies) -lt $before) { [void](Click-HeaderByTitle $title); Start-Sleep -Milliseconds 250 }
+}
+
+# Expand MASK by its header's state (HelpText 'expanded'/'collapsed'), never a blind toggle:
+# a blind click collapses the section when the app already opened it.
+$maskOk = $false
+for ($t = 0; $t -lt 4 -and -not $maskOk; $t++) {
+  # collapsed body is not in the UIA tree, so BtnMaskNew present == MASK expanded
+  if (Find-ById 'BtnMaskNew' 1200) { $maskOk = $true; break }
+  $mh = Find-TitleText 'MASK'
+  if (-not $mh) { throw 'MASK section header not found' }
+  Click-El $mh; Start-Sleep -Milliseconds 450
+  if (Find-ById 'BtnMaskNew' 2500) { $maskOk = $true }
+}
+if (-not $maskOk) { throw 'BtnMaskNew not found after expanding MASK' }
 Info 'mask section open'
-foreach ($nm in @('Built-in', 'Color balance', 'Post-crop vignette', 'Split-tone grade', 'B&W classic', 'B&W red mix', 'B&W profiles', 'Sky mask', 'Experimental trans-noise', 'Negative', 'Auto enhance', 'Heal', 'Web export', 'History', 'Event log', 'Exposure info', 'Netpbm import')) {
-  [void](Click-HeaderByTitle $nm)
+# Sections of the excluded tools (Auto enhance, B&W classic, B&W profiles, Heal, Post-crop vignette)
+# stay collapsed: they are not tested for masks, and a shorter panel scrolls less.
+foreach ($nm in @('Built-in', 'Color balance', 'Split-tone grade', 'B&W red mix', 'Sky mask', 'Experimental trans-noise', 'Negative', 'Web export', 'History', 'Event log', 'Exposure info', 'Netpbm import')) {
+  Expand-Section $nm
 }
 Wait-Idle 1.2
-Info 'all sections expanded'
+Info ('all sections expanded; plugin bodies in tree: ' + (Count-PluginBodies))
 
 # --------------------------------------------------------------- calibration (image rect; retried until painted)
 $Script:ir = $null
@@ -427,44 +591,76 @@ if (-not $Script:ir) { throw 'image frame never detected' }
 Info ('image ' + $Script:ir.W + 'x' + $Script:ir.H + ' at ' + $Script:ir.L + ',' + $Script:ir.T)
 $du = 10.0 / $Script:ir.W
 $dv = 10.0 / $Script:ir.H
-$OL = @(0.09, 0.09)
-$BL = @(0.09, 0.86)
-$MB = @(0.40, 0.86)
-$C1 = @(0.5, 0.5)
-$C2 = @(0.8, 0.5)
+# Every mask sits in its own place on the photo (a new radial appears at the centre and is
+# dragged there; the brush paints a band near the bottom-left):
+#   Mask 1 (radial) upper-left, Mask 2 (radial) lower-right, Mask 3 (brush) bottom-left band.
+$M1 = @(0.30, 0.25)
+$M2 = @(0.70, 0.62)
+$BR = @(0.25, 0.81)          # middle of the brush band
+# outside probes, away from all three masks
+$OL = @(0.88, 0.08)          # top-right corner
+$BL = @(0.08, 0.55)          # left edge, middle
+$MB = @(0.88, 0.92)          # bottom-right corner
+$MC = @(0.50, 0.44)          # centre (no mask lives there)
 
 function In-Set($phase) {
-  if ($phase -eq 'mask2') { return (Ring-Points 0.8 0.5 $du $dv) }
-  if ($phase -eq 'brush') { return @(@(0.27, 0.29), @(0.30, 0.31), @(0.33, 0.33)) }
-  return (Ring-Points 0.5 0.5 $du $dv)
+  if ($phase -eq 'mask2') { return (Ring-Points $M2[0] $M2[1] $du $dv) }
+  if ($phase -eq 'brush') { return @(@(0.22, 0.79), @(0.25, 0.81), @(0.28, 0.83)) }
+  return (Ring-Points $M1[0] $M1[1] $du $dv)
 }
 function Out-Set($phase) {
-  if ($phase -eq 'mask1') { return @($OL, $BL, $MB, $C2) }
-  if ($phase -eq 'mask2') { return @($OL, $BL, $MB, $C1) }
-  if ($phase -eq 'pin') { return @($OL, $BL, $C2) }
-  if ($phase -eq 'invert') { return @($OL, $BL, $C2, $MB) }
-  if ($phase -eq 'brush') { return @($OL, $C1, $C2) }
+  if ($phase -eq 'mask1') { return @($OL, $BL, $MB, $MC, $M2, $BR) }
+  if ($phase -eq 'mask2') { return @($OL, $BL, $MB, $MC, $M1, $BR) }
+  if ($phase -eq 'pin') { return @($OL, $BL, $MC, $M2) }
+  if ($phase -eq 'invert') { return @($OL, $BL, $MB, $MC, $M2) }
+  if ($phase -eq 'brush') { return @($OL, $MB, $MC, $M1, $M2) }
   return @($OL, $BL, $MB)
 }
 
+# Drag the just-created radial (always born at the photo centre) to (u, v).
+function Move-NewRadial([double]$u, [double]$v) {
+  $p1 = Abs-Pt 0.5 0.5
+  $p2 = Abs-Pt $u $v
+  [U]::Down($p1[0], $p1[1])
+  for ($i = 1; $i -le 14; $i++) { [U]::Move($p1[0] + [int](($p2[0] - $p1[0]) * $i / 14), $p1[1] + [int](($p2[1] - $p1[1]) * $i / 14)) }
+  [U]::Up()
+  Wait-Idle 1.0
+}
+
 # --------------------------------------------------------------- mask helpers
+function Ensure-MaskSection {
+  # BtnMaskNew present == panel open and MASK expanded (collapsed content leaves the UIA tree).
+  if (Find-ById 'BtnMaskNew' 1200) { return }
+  # (1) panel closed (no MASK title visible) - open it (BtnPanel toggles, so only when closed)
+  if (-not (Find-TitleText 'MASK')) {
+    $btnP = Find-ById 'BtnPanel' 2000
+    if ($btnP) { Click-El $btnP; Wait-Idle 1.0 9000 }
+  }
+  # (2) MASK collapsed - expand it via its title text
+  if (-not (Find-ById 'BtnMaskNew' 1200)) {
+    $hdr = Find-TitleText 'MASK'
+    if ($hdr) { Click-El $hdr; Start-Sleep -Milliseconds 420 }
+  }
+}
+
 function Create-Mask([string]$kind) {
+  Ensure-MaskSection
   $new = Find-ById 'BtnMaskNew'
   if (-not $new) { throw 'BtnMaskNew missing' }
+  # Ensure app has focus so keyboard events land in the popup
+  [void][U]::SetForegroundWindow($hwnd)
+  Start-Sleep -Milliseconds 120
   Click-El $new
-  Start-Sleep -Milliseconds 550
-  $condId = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, ('BtnMaskNew_' + $kind))
-  $el = $rootEl.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condId)
-  for ($i = 0; $i -lt 10 -and -not $el; $i++) { Start-Sleep -Milliseconds 220; $el = $rootEl.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condId) }
-  if (-not $el) { throw ('menu item BtnMaskNew_' + $kind + ' not found') }
-  $ok = $false
-  try { $ip = $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern); $ip.Invoke(); $ok = $true } catch { }
-  if (-not $ok) {
-    $rr = $el.Current.BoundingRectangle
-    [U]::Click([int]($rr.X + $rr.Width / 2), [int]($rr.Y + $rr.Height / 2))
-  }
+  Start-Sleep -Milliseconds 650
+  # WPF ContextMenu popups are not reliably found via UIA AutomationId search from the
+  # desktop root; navigate by keyboard: first Down focuses item 0 (Radial), subsequent
+  # Downs advance through the list, then Enter invokes.
+  $kinds = @('radial', 'linear', 'brush', 'luma')
+  $idx = [array]::IndexOf($kinds, $kind)
+  if ($idx -lt 0) { throw ('unknown mask kind: ' + $kind) }
+  for ($d = 0; $d -le $idx; $d++) { [U]::Key(0x28, 1) }  # VK_DOWN
+  [U]::Key(0x0D, 1)  # VK_RETURN
   Wait-Idle 1.1 9000
-  Start-Sleep -Milliseconds 500
 }
 function Tint-Off {
   $t = Find-ById 'BtnMaskTint' 2500
@@ -506,40 +702,58 @@ function Run-CoreSliders($phase) {
     $shot = ScreenShot $null
     Verify $phase ('core/' + $c.id) $shot $base $ins $outs 'mask' > $null
     Set-Range $c.id 0.0
-    Wait-Idle 0.8
+    Wait-Idle 1.0
   }
 }
 
+# Plugins NOT tested for masks (by the user's decision): Auto enhance, B&W classic, B&W profiles,
+# Heal, Post-crop vignette. Matched against the tool's full id (panel params and toolbar buttons).
+$Script:excludeTools = 'autoenhance|bwclassic|bwprofiles|heal|vignette'
+
 function Get-FilterList($onlyIds) {
+  # PluginBody_/PluginMaskBox_ are StackPanels (no automation peer) and never reach the UIA tree;
+  # the param controls (PluginParam_<fullId>_<param>) and the scope button (PluginMaskScope_<fullId>)
+  # do. Maskable = has a Mask scope button. Params are grouped by the longest matching fullId.
   $maskable = @{}
-  $bodies = @()
+  $params = New-Object System.Collections.Generic.List[object]
   $walk = $Script:win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
   foreach ($a in $walk) {
     $aid = $a.Current.AutomationId
     if (-not $aid) { continue }
-    if ($aid.StartsWith('PluginMaskBox_')) { $maskable[$aid.Substring(14)] = $true }
-    if ($aid.StartsWith('PluginBody_')) { $bodies += $aid.Substring(11) }
+    if ($aid.StartsWith('PluginMaskScope_') -and -not $aid.StartsWith('PluginMaskScope_core:adjustments')) { $maskable[$aid.Substring(16)] = $true }
+    if ($aid.StartsWith('PluginParam_')) { $params.Add($a) }
+  }
+  $groups = [ordered]@{}
+  foreach ($p in $params) {
+    $rest = $p.Current.AutomationId.Substring(12)
+    $fid = $null
+    foreach ($k in $maskable.Keys) { if ($rest.StartsWith($k + '_') -and (-not $fid -or $k.Length -gt $fid.Length)) { $fid = $k } }
+    if (-not $fid) {
+      $colon = $rest.IndexOf(':')
+      $us = $rest.IndexOf('_', [math]::Max(0, $colon))
+      if ($us -lt 0) { continue }
+      $fid = $rest.Substring(0, $us)
+    }
+    if (-not $groups.Contains($fid)) { $groups[$fid] = New-Object System.Collections.Generic.List[object] }
+    $groups[$fid].Add($p)
   }
   $list = New-Object System.Collections.Generic.List[object]
-  foreach ($fullId in $bodies) {
+  foreach ($fullId in $groups.Keys) {
     if ($onlyIds -and -not ($onlyIds -contains $fullId)) { continue }
+    if ($fullId -match $Script:excludeTools) { continue }
     if ($fullId -like '*heal*') {
       $list.Add([pscustomobject]@{ FullId = $fullId; Maskable = $false; Skips = 'point-based tool (spots added by clicking the photo)'; Sliders = @(); Toggles = @(); Choices = @() })
       continue
     }
     $sliders = @(); $toggles = @(); $choices = @(); $skips = @()
-    $bodyEl = Find-ById ('PluginBody_' + $fullId) 2000
-    if (-not $bodyEl) { continue }
-    $children = $bodyEl.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-    foreach ($ch in $children) {
+    foreach ($ch in $groups[$fullId]) {
       $chid = $ch.Current.AutomationId
-      if (-not $chid -or -not $chid.StartsWith('PluginParam_')) { continue }
       $ct = $ch.Current.ControlType
-      $pid = $chid.Substring(('PluginParam_' + $fullId + '_').Length)
-      if ($ct -eq [System.Windows.Automation.ControlType]::Slider) { $sliders += @($pid, $chid) }
-      elseif ($ct -eq [System.Windows.Automation.ControlType]::CheckBox -or $ct -eq [System.Windows.Automation.ControlType]::ToggleButton) { $toggles += @($pid, $chid) }
-      elseif ($ct -eq [System.Windows.Automation.ControlType]::ComboBox) { $choices += @($pid, $chid) }
-      else { $skips += $pid }
+      $prmId = $chid.Substring(('PluginParam_' + $fullId + '_').Length)
+      if ($ct -eq [System.Windows.Automation.ControlType]::Slider) { $sliders += @($prmId, $chid) }
+      elseif ($ct -eq [System.Windows.Automation.ControlType]::CheckBox -or $ct -eq [System.Windows.Automation.ControlType]::ToggleButton) { $toggles += @($prmId, $chid) }
+      elseif ($ct -eq [System.Windows.Automation.ControlType]::ComboBox) { $choices += @($prmId, $chid) }
+      else { $skips += $prmId }
     }
     $noteSkips = ''
     if ($skips.Count -gt 0) { $noteSkips = ($skips -join ',') + ' (not editable params)' }
@@ -548,10 +762,49 @@ function Get-FilterList($onlyIds) {
   return $list
 }
 
-function Run-Filters($phase, $onlyIds = $null) {
+# A tool works on the whole photo until it is pointed at a mask. While a mask is edited, a tool
+# without a mask shows 'Work inside Mask N' (PluginMaskInsideEdited_<key>) - that links it.
+function Link-ToEditedMask([string]$key) {
+  $b = Find-ById ('PluginMaskInsideEdited_' + $key) 1500
+  if (-not $b) { return $false }
+  Click-El $b
+  Wait-Idle 1.0 9000
+  return $true
+}
+# Back to the whole photo: the scope menu's first item is 'Whole photo' (keyboard; WPF popups
+# are not reliably reachable through UIA).
+function Unlink-Tool([string]$key) {
+  $b = Find-ById ('PluginMaskScope_' + $key) 1500
+  if (-not $b) { return }
+  if ($b.Current.Name -like '*Whole photo*') { return }
+  [void][U]::SetForegroundWindow($hwnd)
+  Click-El $b
+  Start-Sleep -Milliseconds 550
+  [U]::Key(0x28, 1); [U]::Key(0x0D, 1)
+  Wait-Idle 1.0 9000
+}
+
+# After a tool: the photo must look as before it (every in/out probe within 4/255). A leftover is
+# reported as FAIL-STATE (with a debug screenshot) so the following results can be read with it in mind.
+function Check-Restored($phase, [string]$fullId, $refBuf, $points) {
+  Wait-Idle 1.0
+  $now = ScreenShot $null
+  $nb = Buf-Of $now
+  $worst = 0.0
+  foreach ($p in $points) { $d = Patch-Delta (Mean-At-Buf $nb $p[0] $p[1]) (Mean-At-Buf $refBuf $p[0] $p[1]); if ($d -gt $worst) { $worst = $d } }
+  if ($worst -gt 4) {
+    $file = Join-Path $td ((('dbg_' + $phase + '_restore_' + $fullId) -replace '[^\w\-]', '_') + '.png')
+    try { $now.Save($file, [System.Drawing.Imaging.ImageFormat]::Png); $Script:debugShots.Add($file) } catch { }
+    Add-Result $phase ('tool/' + $fullId + '/restore') $worst 0 'FAIL-STATE' 'photo did not return to its look before the tool - later results of this phase may be affected'
+  }
+  $now.Dispose()
+}
+
+function Run-Filters($phase, $onlyIds = $null, [switch]$KeepLink) {
   $ins = In-Set $phase
   $outs = Out-Set $phase
   $filters = Get-FilterList $onlyIds
+  Info ('[' + $phase + '] tools found: ' + $filters.Count)
   foreach ($f in $filters) {
     $expect = 'mask'
     $note = ''
@@ -566,12 +819,29 @@ function Run-Filters($phase, $onlyIds = $null) {
       Add-Result $phase ('tool/' + $f.FullId) 0 0 'SKIPPED' $f.Skips
       continue
     }
+    # reference of the photo before the tool is touched: after the tool every probe must be back here,
+    # otherwise a leftover (e.g. a choice that did not reset) would spoil all the following tests
+    Wait-Idle 0.7
+    $refShot = ScreenShot $null
+    $refBuf = Buf-Of $refShot
+    $refShot.Dispose()
+    $linked = $false
+    if ($f.Maskable) {
+      $linked = Link-ToEditedMask $f.FullId
+      if (-not $linked) {
+        $sb = Find-ById ('PluginMaskScope_' + $f.FullId) 800
+        if (-not ($sb -and $sb.Current.Name -like '*Inside*')) {
+          Add-Result $phase ('tool/' + $f.FullId) 0 0 'FAIL-NOLINK' 'Work inside button missing - tool could not be pointed at the edited mask'
+          continue
+        }
+      }
+    }
     for ($k = 0; $k -lt $f.Sliders.Count; $k += 2) {
-      $pid = $f.Sliders[$k]; $chid = $f.Sliders[$k + 1]
+      $prmId = $f.Sliders[$k]; $chid = $f.Sliders[$k + 1]
       Wait-Idle 0.7
       $base = ScreenShot $null
       $before = Set-Range $chid 0 2>$null
-      if ($null -eq $before) { Add-Result $phase ('tool/' + $f.FullId + '/' + $pid) 0 0 'FAIL-NOTFOUND' ''; continue }
+      if ($null -eq $before) { Add-Result $phase ('tool/' + $f.FullId + '/' + $prmId) 0 0 'FAIL-NOTFOUND' ''; continue }
       $el = Find-ById $chid 1500
       if (-not $el) { continue }
       $rv = RangeValue $el
@@ -583,49 +853,58 @@ function Run-Filters($phase, $onlyIds = $null) {
       Wait-Idle 1.0 14000
       $shot = ScreenShot $null
       $t = $expect
-      if ($t -eq 'none') { Add-Result $phase ('tool/' + $f.FullId + '/' + $pid) 0 0 'SKIPPED' 'no mask row: point-based'; continue }
-      Verify $phase ('tool/' + $f.FullId + '/' + $pid) $shot $base $ins $outs $t > $null
+      if ($t -eq 'none') { Add-Result $phase ('tool/' + $f.FullId + '/' + $prmId) 0 0 'SKIPPED' 'no mask row: point-based'; continue }
+      Verify $phase ('tool/' + $f.FullId + '/' + $prmId) $shot $base $ins $outs $t > $null
       Set-Range $chid $cur
-      Wait-Idle 0.8
+      Wait-Idle 1.0
     }
     for ($k = 0; $k -lt $f.Toggles.Count; $k += 2) {
-      $pid = $f.Toggles[$k]; $chid = $f.Toggles[$k + 1]
+      $prmId = $f.Toggles[$k]; $chid = $f.Toggles[$k + 1]
       $el = Find-ById $chid 1500
       if (-not $el) { continue }
-      if (On-State $el) { Add-Result $phase ('tool/' + $f.FullId + '/' + $pid) 0 0 'SKIPPED' 'default ON: switching off has no visual effect'; continue }
+      if (On-State $el) { Add-Result $phase ('tool/' + $f.FullId + '/' + $prmId) 0 0 'SKIPPED' 'default ON: switching off has no visual effect'; continue }
       Wait-Idle 0.7
       $base = ScreenShot $null
       Click-El $el
       Wait-Idle 1.0 14000
       $shot = ScreenShot $null
       $t = $expect
-      if ($t -ne 'none') { Verify $phase ('tool/' + $f.FullId + '/' + $pid + '=on') $shot $base $ins $outs $t > $null } else { $shot.Dispose(); $base.Dispose(); Add-Result $phase ('tool/' + $f.FullId + '/' + $pid) 0 0 'SKIPPED' 'point-based' }
+      if ($t -ne 'none') { Verify $phase ('tool/' + $f.FullId + '/' + $prmId + '=on') $shot $base $ins $outs $t > $null } else { $shot.Dispose(); $base.Dispose(); Add-Result $phase ('tool/' + $f.FullId + '/' + $prmId) 0 0 'SKIPPED' 'point-based' }
       $el2 = Find-ById $chid 1500
       if ($el2 -and (On-State $el2)) { Click-El $el2 }
-      Wait-Idle 0.8
+      Wait-Idle 1.0
     }
     for ($k = 0; $k -lt $f.Choices.Count; $k += 2) {
-      $pid = $f.Choices[$k]; $chid = $f.Choices[$k + 1]
+      $prmId = $f.Choices[$k]; $chid = $f.Choices[$k + 1]
       Wait-Idle 0.7
+      $origSel = Get-ChoiceSel $chid
       $base = ScreenShot $null
       Open-Choice $chid -1
       Wait-Idle 1.0 14000
       $shot = ScreenShot $null
       $t = $expect
-      if ($t -ne 'none') { Verify $phase ('tool/' + $f.FullId + '/' + $pid + '#alt') $shot $base $ins $outs $t > $null } else { $shot.Dispose(); $base.Dispose(); Add-Result $phase ('tool/' + $f.FullId + '/' + $pid) 0 0 'SKIPPED' 'point-based' }
+      if ($t -ne 'none') { Verify $phase ('tool/' + $f.FullId + '/' + $prmId + '#alt') $shot $base $ins $outs $t > $null } else { $shot.Dispose(); $base.Dispose(); Add-Result $phase ('tool/' + $f.FullId + '/' + $prmId) 0 0 'SKIPPED' 'point-based' }
       Open-Choice $chid 0
-      Wait-Idle 0.8
+      Wait-Idle 1.0
+      # the reset must really land on the original item (a missed reset left the photo B&W before)
+      for ($r = 0; $r -lt 2 -and (Get-ChoiceSel $chid) -ne $origSel; $r++) {
+        Write-Host ('[WARN] ' + $chid + ' still "' + (Get-ChoiceSel $chid) + '", resetting to "' + $origSel + '" again')
+        Open-Choice $chid 0
+        Wait-Idle 1.0
+      }
     }
     if ($f.Skips -and $f.Skips -ne '') {
       Add-Result $phase ('tool/' + $f.FullId) 0 0 'SKIPPED-PART' ('not driven: ' + $f.Skips)
     }
+    if ($f.Maskable -and -not $KeepLink) { Unlink-Tool $f.FullId }
+    Check-Restored $phase $f.FullId $refBuf ($ins + $outs)
   }
   if ($phase -ne 'pin' -and $phase -ne 'invert') {
     $allEls = $Script:win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
     $tbIds = @()
     foreach ($t in $allEls) {
       $tid = $t.Current.AutomationId
-      if ($tid -and $tid.StartsWith('PluginBtn_')) { $tbIds += $tid }
+      if ($tid -and $tid.StartsWith('PluginBtn_') -and -not ($tid -match $Script:excludeTools)) { $tbIds += $tid }
     }
     foreach ($tid in $tbIds) {
       $fullId = $tid.Substring(10)
@@ -640,43 +919,37 @@ function Run-Filters($phase, $onlyIds = $null) {
       Verify $phase ('toolbar/' + $fullId + '=on') $shot $base $ins $outs 'mask' > $null
       $el2 = Find-ById $tid
       if ($el2 -and (On-State $el2)) { Click-El $el2 }
-      Wait-Idle 0.8
+      Wait-Idle 1.0
     }
   }
 }
 
 # --------------------------------------------------------------- mask 1
 Create-Mask 'radial'
+Move-NewRadial $M1[0] $M1[1]
 Tint-Off
-Start-Sleep -Milliseconds 350
+Wait-Idle 0.5
 Run-CoreSliders 'mask1'
 Run-Filters 'mask1'
 Mask-Done
-Wait-Idle 1.0
 
-# --------------------------------------------------------------- mask 2 (moved right)
+# --------------------------------------------------------------- mask 2 (lower-right)
 Create-Mask 'radial'
-$p1 = Abs-Pt 0.5 0.5
-$p2 = Abs-Pt 0.8 0.5
-[U]::Down($p1[0], $p1[1])
-for ($i = 1; $i -le 14; $i++) { [U]::Move($p1[0] + [int](($p2[0] - $p1[0]) * $i / 14), $p1[1]) }
-[U]::Up()
-Wait-Idle 1.6
+Move-NewRadial $M2[0] $M2[1]
 Tint-Off
-Start-Sleep -Milliseconds 350
+Wait-Idle 0.5
 Run-CoreSliders 'mask2'
 Run-Filters 'mask2'
 Mask-Done
-Wait-Idle 1.0
 
 # --------------------------------------------------------------- pin click (mask 1)
 $mk = Find-ById 'BtnMaskMarkers' 3000
 if ($mk -and -not (On-State $mk)) { Click-El $mk }
 Wait-Idle 1.0
-$pp = Abs-Pt 0.5 0.5
+$pp = Abs-Pt $M1[0] $M1[1]
 [U]::Click($pp[0], $pp[1])
-Wait-Idle 1.4
-Start-Sleep -Milliseconds 500
+Wait-Idle 1.0
+if (-not (Find-ById 'BtnMaskDone' 2500)) { Add-Result 'pin' 'pin-click' 0 0 'FAIL-NOTFOUND' 'clicking the Mask 1 pin did not enter mask editing' }
 foreach ($sid in @('SliderExposure', 'SliderContrast', 'SliderSaturation')) {
   $v = 0.0
   foreach ($c in $CORE) { if ($c.id -eq $sid) { $v = $c.v } }
@@ -687,27 +960,35 @@ foreach ($sid in @('SliderExposure', 'SliderContrast', 'SliderSaturation')) {
   $shot = ScreenShot $null
   Verify 'pin' ('core/' + $sid) $shot $base (In-Set 'mask1') (Out-Set 'pin') 'mask' > $null
   Set-Range $sid 0.0
-  Wait-Idle 0.8
+  Wait-Idle 1.0
 }
-Run-Filters 'pin' @('photographereye.colorbalance:midtones')
+Run-Filters 'pin' @('photographereye.colorbalance:midtones') -KeepLink
 Wait-Idle 1.0
 
 # --------------------------------------------------------------- invert
 function Get-InvertCheckbox([string]$fullId) {
-  $box = Find-ById ('PluginMaskBox_' + $fullId)
-  if (-not $box) { throw ('mask box not found: ' + $fullId) }
-  $cbs = $box.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-  foreach ($cb in $cbs) {
-    if ($cb.Current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and $cb.Current.Name -eq 'Invert') { return $cb }
+  # the mask box is a StackPanel (not in the UIA tree): take the 'Invert' checkbox that sits
+  # closest below the tool's Mask scope button
+  $sb = Find-ById ('PluginMaskScope_' + $fullId)
+  if (-not $sb) { throw ('mask scope button not found: ' + $fullId) }
+  Scroll-IntoView $sb
+  $sy = $sb.Current.BoundingRectangle.Y
+  $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::CheckBox)
+  $best = $null; $bestDy = 1e9
+  foreach ($cb in $Script:win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+    if ($cb.Current.Name -ne 'Invert') { continue }
+    $dy = $cb.Current.BoundingRectangle.Y - $sy
+    if ($dy -ge 0 -and $dy -lt $bestDy) { $best = $cb; $bestDy = $dy }
   }
-  throw ('Invert checkbox not found in ' + $fullId)
+  if (-not $best -or $bestDy -gt 200) { throw ('Invert checkbox not found under ' + $fullId) }
+  return $best
 }
 $invTool = 'photographereye.colorbalance:midtones'
 $invEl = Get-InvertCheckbox $invTool
 if (-not (On-State $invEl)) { Click-El $invEl }
 Wait-Idle 1.2
 Add-Result 'invert' ('link-invert/' + $invTool) 0 0 'STEP' 'Invert ON: the tool now works outside Mask 1'
-Wait-Idle 0.8
+Wait-Idle 1.0
 $base = ScreenShot $null
 $inv = Set-Range 'PluginParam_photographereye.colorbalance:midtones_cr' -90
 if ($null -eq $inv) { Add-Result 'invert' 'missing param' 0 0 'FAIL-NOTFOUND' '' }
@@ -717,7 +998,7 @@ else {
   Verify 'invert' ('tool/' + $invTool + '/cr-outside') $shot $base (In-Set 'mask1') (Out-Set 'invert') 'inverted' > $null
   Set-Range 'PluginParam_photographereye.colorbalance:midtones_cr' 0.0
 }
-Wait-Idle 0.8
+Wait-Idle 1.0
 $invEl2 = Get-InvertCheckbox $invTool
 if (On-State $invEl2) { Click-El $invEl2 }
 Wait-Idle 1.0
@@ -727,15 +1008,16 @@ Wait-Idle 1.0 14000
 $shot = ScreenShot $null
 Verify 'invert' 'core/SliderExposure-inside' $shot $base (In-Set 'mask1') (Out-Set 'invert') 'mask' > $null
 Set-Range 'SliderExposure' 0.0
-Wait-Idle 0.8
+Wait-Idle 1.0
+Unlink-Tool $invTool    # back to the whole photo, so the brush phase links it afresh
 Mask-Done
 Wait-Idle 1.0
 
 # --------------------------------------------------------------- brush mask
 Create-Mask 'brush'
-$bp = Abs-Pt 0.14 0.26
+$bp = Abs-Pt 0.10 0.75
 $bx = $bp[0]
-$bw = [int](0.28 * $Script:ir.W)
+$bw = [int](0.30 * $Script:ir.W)
 $brpx = [int](0.04 * $Script:ir.W)
 $byBase = $bp[1]
 for ($k = 0; $k -lt 4; $k++) {
@@ -763,9 +1045,11 @@ $md.Add('# UI-TEST - Maski w PhotographerEye' + $nl)
 $md.Add('Data: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + $nl)
 $md.Add('Exe: ' + $exe + $nl)
 $md.Add('APPDATA (izolowany): ' + $iso + $nl)
-$md.Add('Zdjecie: ' + $photo + ' (1400x1000; gradient + rampy tonalno-kolorowe + noise + ramka magenta)' + $nl)
-$md.Add('Metoda: UIA (klik/drag/suwaki RangeValue); weryfikacja = srednia RGB z patcha 6px przed/po czynnosci (kropka = 5x5 probek co 2px). IN = ring 10px wokol srodka maski (4 punkty) lub wnetrze polecia szczotki; OUT = punkty kontrolne (rog, dole, srodki pozostalych masek). Progi: PASS gdy IN >= 8 i OUT <= 4 (0-255).' + $nl)
-$labels = @{ mask1 = '1) Maska radial Mask 1 (srodek) - wszystkie regulacje i efekty'; mask2 = '2) Druga maska radial Mask 2 (przesunieta do 80% szerokosci) - wszystkie regulacje i efekty'; pin = '3) Klik w pin Mask 1 na zdjeciu - przykladowe operacje'; invert = '4) Invert - czynnosc narzedzia na zewnatrz Mask 1, srodek bez zmian'; brush = '5) Maska brush - ustawienia tylko w wymalowanym obszarze' }
+if ($Script:framed) { $md.Add('Zdjecie: ' + $photo + ' (1400x1000; gradient + rampy tonalno-kolorowe + noise + ramka magenta)' + $nl) }
+else { $md.Add('Zdjecie: ' + $userPhoto + ' (' + $Script:photoSize + '; prawdziwe zdjecie, ramka wykrywana z tla)' + $nl) }
+$md.Add('Metoda: UIA (klik/drag/suwaki RangeValue); weryfikacja = srednia RGB z patcha 6px przed/po czynnosci (kropka = 5x5 probek co 2px). IN = ring 10px wokol srodka maski (4 punkty) lub wnetrze polecia szczotki; OUT = punkty kontrolne (rog, dole, srodki pozostalych masek). Progi: PASS gdy IN >= 8 i OUT <= 4 (0-255). FAIL-STATE = po narzedziu zdjecie nie wrocilo do wygladu sprzed niego.' + $nl)
+$md.Add('Pominiete (nie testowane dla masek): Auto enhance, B&W classic, B&W profiles, Heal, Post-crop vignette.' + $nl)
+$labels = @{ mask1 = '1) Maska radial Mask 1 (lewa gora, 30%/25%) - wszystkie regulacje i efekty'; mask2 = '2) Druga maska radial Mask 2 (prawy dol, 70%/62%) - wszystkie regulacje i efekty'; pin = '3) Klik w pin Mask 1 na zdjeciu - przykladowe operacje'; invert = '4) Invert - czynnosc narzedzia na zewnatrz Mask 1, srodek bez zmian'; brush = '5) Maska brush (pas u dolu po lewej) - ustawienia tylko w wymalowanym obszarze' }
 foreach ($pn in @('mask1', 'mask2', 'pin', 'invert', 'brush')) {
   $rows = $Script:results | Where-Object { $_.Phase -eq $pn }
   if ($rows.Count -eq 0) { continue }
