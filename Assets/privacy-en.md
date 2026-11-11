@@ -1,6 +1,6 @@
 # PhotographerEye Privacy Policy
 
-Version of 11 November 2026
+Version of 12 November 2026
 
 ## 1. Who is responsible
 
@@ -16,7 +16,7 @@ PhotographerEye is written by Tomasz Kuehn (contact: tomasz.kuehn@gmail.com). Th
 
 The app keeps data only on your computer. The author has no access to it, and you can delete it at any time.
 
-- **Settings**, in `%APPDATA%\PhotographerEye\settings.json`. This file holds view options, recently opened folders and the AI assistant settings. It also holds the last 50 requests sent to the assistant and the date you accepted this policy. It also contains your Ollama API key, encrypted with Windows DPAPI so that only your Windows account can read it.
+- **Settings**, in `%APPDATA%\PhotographerEye\settings.json`. This file holds view options, recently opened folders and the AI assistant settings. It also holds the last 50 requests sent to the assistant, your styles (named descriptions of the look you want) and the date you accepted this policy. It also contains your Ollama API key, encrypted with Windows DPAPI so that only your Windows account can read it.
 - **Plugins, presets, LUTs and plugin data**, in `%APPDATA%\PhotographerEye`.
 - **Remembered previews**, in `%LOCALAPPDATA%\PhotographerEye\previews`. Switch them off with *Remember previews* and delete them with *Clear preview cache*.
 - **.eye files**, in the `_eye_` subfolder next to your photos. They hold edit settings, masks and the AI assistant conversation: requests, answers, change summaries and token counters. They hold no photo previews. *New conversation* removes the conversation, and you can delete the whole file.
@@ -32,7 +32,7 @@ The assistant connects to a network only when you open its window, to read the l
 
 The model receives:
 
-- Your requests and the earlier conversation about this photo.
+- Your requests and the earlier conversation about this photo, and with the first request of a conversation the text of the chosen style.
 - The current edit settings, active plugins, crop and masks.
 - Image statistics, such as the histogram and brightness, and the photo's dimensions.
 - A JPEG preview of the photo, 1024 px on the long side. It goes only to models that can see images.

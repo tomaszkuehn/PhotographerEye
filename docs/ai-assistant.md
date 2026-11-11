@@ -173,6 +173,14 @@ serwer, z etykietami kategorii.
 - Środek: przebieg rozmowy. Wiadomości użytkownika, odpowiedzi asystenta i wyszarzone linie kroków („Exposure +0.30,
   Contrast +15”).
 - Szybkie polecenia: „Album rodzinny”, „Reportaż”, „Czarno-białe artystyczne”.
+- Styl użytkownika (wiersz „Style:” nad szybkimi poleceniami): własne, nazwane opisy wyglądu, do którego użytkownik
+  dąży (np. „stonowane kolory filmowe, podniesione czernie, ciepła skóra”). „Edit styles…” otwiera edytor: nowy styl,
+  zmiana nazwy i treści (do 2000 znaków), usuwanie. Na liście wybiera się styl w użyciu albo „(no style)”; wybór
+  zapisuje się od razu w `settings.json` (`StylePrompts`, `ActiveStyle`). Wybrany styl jest dopisywany do **pierwszego**
+  polecenia rozmowy — wpisanego albo z przycisku szybkiego polecenia — z prośbą, by model trzymał się go w całej
+  rozmowie. Zostaje w historii rozmowy (także po zwinięciu tury i w pliku `.eye`), więc kolejne polecenia idą bez
+  powtarzania go. W przebiegu rozmowy widać polecenie w brzmieniu użytkownika i linię „🎨 style "…" added”. Zmiana
+  stylu w trakcie rozmowy działa od następnej („New conversation”); informuje o tym linia pod listą.
 - Dół: pole polecenia (Enter wysyła, Shift+Enter nowa linia, strzałki Góra/Dół przywołują wcześniejsze polecenia — ostatnie 50, ze wszystkich zdjęć, zapisane w settings.json; za najnowszym wraca niedokończony tekst), Wyślij, Stop, Nowa rozmowa, licznik kontekstu i zużycia.
 - Rozmowa należy do zdjęcia. Po zmianie zdjęcia pokazuje się rozmowa tego zdjęcia albo pusta. Rozmowa trafia do
   pliku `.eye` (pole `Assistant`, tylko w stanie głównym, nigdy w krokach historii) przy autozapisie i przy Save Photo.

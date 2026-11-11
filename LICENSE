@@ -1,67 +1,85 @@
-Licencja PhotographerEye
-==================
+PhotographerEye License
+=======================
 
 Copyright (c) 2026 Tomasz Kuehn
 
-Zastrzeżenia ogólne
--------------------
-Oprogramowanie PhotographerEye oraz jego kod źródłowy są chronione prawem autorskim
-i traktatami międzynarodowymi. Autor zastrzega wszystkie prawa, które nie są
-wyraźnie udzielone niniejszą licencją.
+General
+-------
+The PhotographerEye software and its source code are protected by copyright law
+and international treaties. The author reserves all rights not expressly granted
+by this license.
 
-1. Udzielenie licencji
-----------------------
-Na warunkach niniejszej licencji udziela się nieodpłatnie, niewyłącznego i
-nieprzenoszalnego prawa do korzystania z oprogramowania PhotographerEye wyłącznie w
-celach prywatnych i niekomercyjnych.
+1. License grant
+----------------
+This license is granted free of charge. Subject to its terms, you are granted a
+non-exclusive and non-transferable right to use the PhotographerEye software for private,
+non-commercial purposes only.
 
-Dozwolone:
-- instalowanie i uruchamianie oprogramowania na urządzeniach użytkownika
-  prywatnego,
-- korzystanie z wszystkich funkcji oprogramowania do własnych, prywatnych
-  potrzeb.
+You may:
+- install and run the software on devices of a private user,
+- use all functions of the software for your own private needs,
+- redistribute unmodified copies of the software (the published executable
+  files and, where published, the source code), free of charge and for
+  non-commercial purposes only, provided that each copy includes this license
+  file and keeps all copyright notices intact. Every recipient receives the
+  software under this license only.
 
-2. Ograniczenia
+2. Restrictions
 ---------------
-Zabronione jest:
-a) modyfikowanie, adaptowanie, tłumaczenie lub tworzenie utworów zależnych
-   (w tym modyfikacja kodu źródłowego i plików wykonywalnych),
-b) komercyjne wykorzystywanie oprogramowania w jakiejkolwiek formie,
-   obejmujące m.in. używanie w działalności gospodarczej, sprzedaż,
-   wynajem, licencjonowanie, dystrybucję z tytułem odpłatności oraz
-   wykorzystywanie w produktach lub usługach komercyjnych,
-c) redystrybucja, odsprzedaż lub udostępnianie oprogramowania (w tym kodu
-   źródłowego) osobom trzecim,
-d) usuwanie, maskowanie lub zmienianie jakichkolwiek informacji o prawach
-   autorskich, znaków towarowych lub oznaczeń własności zawartych w
-   oprogramowaniu,
-e) inżynieria wsteczna w celu stworzenia produktu konkurencyjnego lub
-   pochodnego.
+You may not:
+a) modify, adapt, translate or create derivative works of the software
+   (including modifying the source code and the executable files),
+b) use the software commercially in any form, including use in a business,
+   sale, rental, licensing, distribution for a fee, and use in commercial
+   products or services,
+c) redistribute or make the software (including the source code) available to
+   third parties in any way other than permitted in section 1, in particular
+   for a fee, as part of a paid product, service or bundle, or in a modified
+   form; sell or resell the software,
+d) remove, obscure or alter any copyright notices, trademarks or proprietary
+   markings contained in the software,
+e) reverse engineer the software in order to create a competing or derivative
+   product.
 
-3. Kod źródłowy
----------------
-Niniejsza licencja nie obejmuje udzielenia żadnych praw do kodu źródłowego w
-zakresie jego modyfikacji i rozpowszechniania. Podgląd kodu źródłowego na
-własne, prywatne potrzeby edukacyjne jest dozwolony, pod warunkiem przestrzegania
-ograniczeń z punktu 2.
+3. Source code
+--------------
+This license grants no right to modify the source code. The source code may be
+redistributed only unmodified and only as permitted in section 1. Viewing the
+source code for your own private, educational purposes is permitted, provided
+that the restrictions in section 2 are observed.
 
-4. Brak gwarancji
------------------
-OPROGRAMOWANIE JEST DOSTARCZANE „W OBECNYM STANIE", BEZ JAKIEJKOLWIEK
-GWARANCJI, WYRAŹNEJ LUB DOROZUMIANEJ, W TYM BEZ GWARANCJI PRZYDATNOŚCI
-HANDLOWEJ, PRZYDATNOŚCI DO OKREŚLONEGO CELU ORAZ NIENARUSZANIA PRAW OSÓB
-TRZECICH. W ŻADNYM WYPADKU AUTOR NIE ODPOWIADA ZA JAKIEKOLWIEK SZKODY,
-BEZPOŚREDNIE LUB POŚREDNIE, WYNIKŁE Z UŻYCIA OPROGRAMOWANIA.
+4. No warranty
+--------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. TO THE FULLEST EXTENT PERMITTED BY
+APPLICABLE LAW, THE AUTHOR IS NOT LIABLE FOR ANY DAMAGES, DIRECT OR INDIRECT,
+ARISING FROM THE USE OF THE SOFTWARE. NOTHING IN THIS LICENSE LIMITS LIABILITY
+WHERE THE APPLICABLE LAW DOES NOT ALLOW IT TO BE LIMITED, IN PARTICULAR FOR
+DAMAGE CAUSED INTENTIONALLY.
 
-5. Zakończenie licencji
-----------------------
-Niniejsza licencja wygasa automatycznie z chwilą naruszenia któregokolwiek z
-jej warunków. Po zakończeniu licencji użytkownik ma obowiązek usunąć wszystkie
-kopie oprogramowania.
+5. Termination
+--------------
+This license terminates automatically if you breach any of its terms. After
+termination you must delete all copies of the software.
 
-6. Prawo właściwe
------------------
-Niniejsza licencja podlega prawu polskiemu. Wszelkie spory podlegają jurysdykcji
-sądów właściwych dla siedziby autora.
+6. Governing law and jurisdiction
+---------------------------------
+This license is governed by the law of the Republic of Poland, excluding its
+conflict-of-law rules and the United Nations Convention on Contracts for the
+International Sale of Goods. If you use the software as a consumer, you also keep
+the protection of the mandatory provisions of the law of the country where you
+habitually reside.
 
-Wersja: 1.0, data: 11 października 2026
+Disputes arising from this license will be settled by the Polish common court
+having jurisdiction over the author's place of residence. If you are a consumer,
+you may also bring proceedings in the courts of the country where you habitually
+reside, and proceedings against you may be brought only there, where mandatory
+law so requires.
+
+If any provision of this license is held invalid or unenforceable, the remaining
+provisions stay in effect.
+
+This license is drafted in English; the English text is binding.
+
+Version: 1.1, date: 12 November 2026

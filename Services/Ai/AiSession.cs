@@ -38,7 +38,8 @@ public sealed record AiSavedSession
 public sealed record AiTurnResult(string FinalText, int ModelCalls, bool Changed, bool StoppedAtLimit, bool StoppedAtBudget = false);
 
 /// <summary>Limits of one turn: model calls, and the token budget of the whole conversation (0 = none).</summary>
-public sealed record AiTurnOptions(int MaxSteps = 8, long TokenBudget = 0);
+/// <param name="Style">The user's style prompt; added to the conversation's first request only (it stays in the history after that).</param>
+public sealed record AiTurnOptions(int MaxSteps = 8, long TokenBudget = 0, AiStylePrompt? Style = null);
 
 /// <summary>
 /// One conversation about one photo: the message history and the agent loop (model → tools → render → model ...).
@@ -214,17 +215,19 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
     {
         int userIdx = _messages.Count;
         _turnChanges.Clear();
+        var style = IsFirstRequest && options.Style is { } st && !string.IsNullOrWhiteSpace(st.Text) ? st : null;
+        string modelText = WithStyle(userText, style);
         try
         {
-            var res = await RunTurnCoreAsync(chat, editor, model, vision, userText, options, onEvent, ct);
-            Compact(userIdx, userText, res.StoppedAtBudget ? "(Stopped: the token budget of this conversation was reached.)"
+            var res = await RunTurnCoreAsync(chat, editor, model, vision, userText, modelText, style, options, onEvent, ct);
+            Compact(userIdx, modelText, res.StoppedAtBudget ? "(Stopped: the token budget of this conversation was reached.)"
                 : res.StoppedAtLimit ? "(Stopped: the step limit of one request was reached.)"
                 : res.FinalText);
             return res;
         }
         catch (Exception ex)
         {
-            Compact(userIdx, userText, ex is OperationCanceledException ? "(The user stopped this request.)" : "(This request failed: " + ex.Message + ")");
+            Compact(userIdx, modelText, ex is OperationCanceledException ? "(The user stopped this request.)" : "(This request failed: " + ex.Message + ")");
             throw;
         }
     }
@@ -243,8 +246,18 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
         _turnChanges.Clear();
     }
 
+    /// <summary>No request has been sent in this conversation yet (the style prompt goes with the next one).</summary>
+    public bool IsFirstRequest => !_messages.OfType<JsonObject>().Any(m => (string?)m["role"] == "user");
+
+    /// <summary>The request as the model reads it: with the style prompt appended when there is one.</summary>
+    public static string WithStyle(string userText, AiStylePrompt? style) =>
+        style is null || string.IsNullOrWhiteSpace(style.Text)
+            ? userText
+            : userText + "\n\nThe user's preferred style \"" + style.Name.Trim() + "\" (follow it in this request and in later ones of this " +
+              "conversation, unless a request asks otherwise):\n" + style.Text.Trim();
+
     private async Task<AiTurnResult> RunTurnCoreAsync(IAiChat chat, IAiEditor editor, string model, bool vision, string userText,
-        AiTurnOptions options, Action<AiEvent>? onEvent, CancellationToken ct)
+        string modelText, AiStylePrompt? style, AiTurnOptions options, Action<AiEvent>? onEvent, CancellationToken ct)
     {
         void Emit(AiEventKind k, string t)
         {
@@ -254,7 +267,8 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
         }
 
         Emit(AiEventKind.User, userText);
-        var user = new JsonObject { ["role"] = "user", ["content"] = userText };
+        if (style is not null) Emit(AiEventKind.Step, "🎨 style \"" + style.Name + "\" added to the request");
+        var user = new JsonObject { ["role"] = "user", ["content"] = modelText };
         if (vision)
         {
             await editor.WaitRenderedAsync(ct);
@@ -262,7 +276,7 @@ Follow-up requests ("warmer", "less contrast", "undo the B&W") start from the cu
             {
                 DropOldImages();
                 user["images"] = new JsonArray(jpg);
-                user["content"] = userText + "\n\n(The attached image is the photo as it looks now.)";
+                user["content"] = modelText + "\n\n(The attached image is the photo as it looks now.)";
                 ImagesSent++;
                 Emit(AiEventKind.Step, ImageSentNote);
             }

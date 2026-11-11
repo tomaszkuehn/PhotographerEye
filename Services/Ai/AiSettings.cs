@@ -50,6 +50,44 @@ public sealed record AiSettings
     /// <summary>The user agreed to send the preview of the photo to ollama.com.</summary>
     public bool CloudConsent { get; init; }
 
+    public const int StyleTextMax = 2000;
+
+    /// <summary>The user's named style prompts (the look they want); the active one is added to a conversation's first request.</summary>
+    public List<AiStylePrompt>? StylePrompts { get; init; }
+    /// <summary>Name of the style prompt in use; null or unknown = none.</summary>
+    public string? ActiveStyle { get; init; }
+
+    /// <summary>The style prompt in use, or null (none chosen, or it has no text).</summary>
+    [JsonIgnore]
+    public AiStylePrompt? Style => ActiveStyle is { Length: > 0 } n
+        ? StylePrompts?.FirstOrDefault(p => string.Equals(p.Name, n, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(p.Text))
+        : null;
+
+    /// <summary>Adds or replaces (same name, any case) the style prompt <paramref name="name"/> and makes it the active one.</summary>
+    public AiSettings WithStyle(string name, string text, string? replacing = null)
+    {
+        name = name.Trim();
+        text = text.Trim();
+        if (text.Length > StyleTextMax) text = text[..StyleTextMax];
+        var list = (StylePrompts ?? new List<AiStylePrompt>())
+            .Where(p => !string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase) &&
+                        (replacing is null || !string.Equals(p.Name, replacing, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        int at = replacing is null ? -1 : (StylePrompts ?? new()).FindIndex(p => string.Equals(p.Name, replacing, StringComparison.OrdinalIgnoreCase));
+        var item = new AiStylePrompt(name, text);
+        if (at >= 0 && at <= list.Count) list.Insert(at, item);
+        else list.Add(item);
+        return this with { StylePrompts = list, ActiveStyle = name };
+    }
+
+    /// <summary>Removes the style prompt <paramref name="name"/>; if it was active, no style is used.</summary>
+    public AiSettings WithoutStyle(string name)
+    {
+        var list = (StylePrompts ?? new List<AiStylePrompt>()).Where(p => !string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)).ToList();
+        bool active = string.Equals(ActiveStyle, name, StringComparison.OrdinalIgnoreCase);
+        return this with { StylePrompts = list, ActiveStyle = active ? null : ActiveStyle };
+    }
+
     [JsonIgnore] public bool IsCloud => string.Equals(Mode, "cloud", StringComparison.OrdinalIgnoreCase);
     [JsonIgnore] public string BaseUrl => (IsCloud ? CloudUrl : LocalUrl) is { Length: > 0 } u ? u.TrimEnd('/') : IsCloud ? CloudDefault : LocalDefault;
     [JsonIgnore] public string? Model => IsCloud ? CloudModel : LocalModel;
@@ -65,6 +103,9 @@ public sealed record AiSettings
         return string.IsNullOrWhiteSpace(env) ? null : env.Trim();
     }
 }
+
+/// <summary>A named style prompt: how the user wants their photos to look, in their own words.</summary>
+public sealed record AiStylePrompt(string Name, string Text);
 
 /// <summary>Encrypts the API key for the current Windows user (DPAPI, CryptProtectData) without extra packages.</summary>
 public static class AiKeyProtector

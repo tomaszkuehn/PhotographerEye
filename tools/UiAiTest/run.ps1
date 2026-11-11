@@ -117,6 +117,9 @@ public static class FakeOllama
         var msgs = ((object[])req["messages"]).Cast<Dictionary<string, object>>().ToList();
         int lastUser = msgs.FindLastIndex(m => Role(m) == "user");
         string text = lastUser >= 0 ? Str(msgs[lastUser], "content") : "";
+        int firstUser = msgs.FindIndex(m => Role(m) == "user");
+        LastUser = text;
+        FirstUser = firstUser >= 0 ? Str(msgs[firstUser], "content") : "";
         foreach (var m in msgs)
         {
             object im;
@@ -185,6 +188,7 @@ public static class FakeOllama
 
     static double PluginValue;
     public static string CurvesState = "";
+    public static string LastUser = "", FirstUser = "";
 
     // the first panel filter with a slider: set it 60% of the way from its default towards an end
     static void PickPlugin(string json)
@@ -344,13 +348,9 @@ if (-not $acc) { throw 'privacy window not found' }
 Check (-not (Find-Id 'BtnAssistant')) 'first start: the main window waits for the acceptance'
 Check ([bool](Find-Id 'PrivacyDecline')) 'first start: the policy can be declined'
 # the first text of the policy window is its heading (the document panel itself is not in the UIA tree)
-function Policy-Heading { $c = New-Object System.Windows.Automation.PropertyCondition($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text); foreach ($w in Our-Windows) { foreach ($e in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $c)) { if ($e.Current.Name -match '^(Polityka prywatno|PhotographerEye Privacy)') { return $e.Current.Name } } }; return '' }
-Invoke-Id 'PrivacyLangPl'
-Start-Sleep -Milliseconds 300
-Check ((Policy-Heading) -match 'Polityka prywatno') 'policy in Polish' (Policy-Heading)
-Invoke-Id 'PrivacyLangEn'
-Start-Sleep -Milliseconds 300
+function Policy-Heading { $c = New-Object System.Windows.Automation.PropertyCondition($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text); foreach ($w in Our-Windows) { foreach ($e in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $c)) { if ($e.Current.Name -match '^PhotographerEye Privacy') { return $e.Current.Name } } }; return '' }
 Check ((Policy-Heading) -match 'Privacy Policy') 'policy in English' (Policy-Heading)
+Check (-not (Find-Id 'PrivacyLangPl')) 'policy: no language switch (English only)'
 Invoke-Id 'PrivacyAccept'
 
 if (-not (Wait-Until { Find-Id 'BtnAssistant' } 30000)) { throw 'main window not found' }
@@ -478,6 +478,54 @@ Send-Key '{DOWN}'
 Check ((Input-Value) -match '^TEST-CURVES') 'Down: back to the newer request' (Input-Value)
 Send-Key '{DOWN}'
 Check ((Input-Value) -eq 'draft') 'Down past the newest: the unfinished text returns' (Input-Value)
+(Find-Id 'AiInput').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('')
+
+# ------------------------------------------------------------------ 7. style prompts
+function Set-Text([string]$id, [string]$v) { (Wait-Id $id).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($v) }
+function Read-Settings { Get-Content (Join-Path $iso 'settings.json') -Raw -Encoding UTF8 | ConvertFrom-Json }
+function Pick-Combo([string]$id, [string]$item) {
+  $cb = Wait-Id $id
+  $cb.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+  Start-Sleep -Milliseconds 300
+  $nc = New-Object System.Windows.Automation.PropertyCondition($AE::NameProperty, $item)
+  $it = Wait-Until { $cb.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $nc) } 5000
+  if (-not $it) { throw "combo $id has no item $item" }
+  $it.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+  try { $cb.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse() } catch { }
+  Start-Sleep -Milliseconds 300
+}
+function Click-And-Wait([string]$id) {
+  $finals = [FakeOllama]::Finals
+  Invoke-Id $id
+  if (-not (Wait-Until { ([FakeOllama]::Finals -gt $finals) -and (Find-Id 'AiSend').Current.IsEnabled } 60000)) { throw "the request from $id did not finish" }
+  Start-Sleep -Milliseconds 600
+}
+Invoke-Id 'AiStyleEdit'
+Set-Text 'AiStyleName' 'TestFilm'
+Set-Text 'AiStyleText' 'STYLE-MARKER muted film colours, lifted blacks'
+Invoke-Id 'AiStyleSave'
+Start-Sleep -Milliseconds 400
+$st = Read-Settings
+Check ($st.Ai.ActiveStyle -eq 'TestFilm' -and @($st.Ai.StylePrompts).Count -eq 1 -and $st.Ai.StylePrompts[0].Text -match 'STYLE-MARKER') 'style: saved in settings.json and active' (($st.Ai | ConvertTo-Json -Compress -Depth 4))
+$sel = (Find-Id 'AiStyle').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
+Check (@($sel).Count -eq 1 -and $sel[0].Current.Name -eq 'TestFilm') 'style: the combo shows the active style'
+Check ((Find-Id 'AiStyleNote').Current.Name -match 'first request of this conversation') 'style: the note says it goes with the first request' (Find-Id 'AiStyleNote').Current.Name
+
+Click-And-Wait 'AiQuick_Familyalbum'
+Check ([FakeOllama]::LastUser -match 'family album' -and [FakeOllama]::LastUser -match 'STYLE-MARKER' -and [FakeOllama]::LastUser -match 'TestFilm') 'style: a quick prompt as the first request carries the style' ([FakeOllama]::LastUser)
+$tr = Transcript
+Check (($tr -match 'style "TestFilm" added') -and -not ($tr -match 'STYLE-MARKER')) 'style: the transcript notes it, the user line stays as typed' $tr
+Check ((Find-Id 'AiStyleNote').Current.Name -match 'next conversation') 'style: after the first request the note points to the next conversation' (Find-Id 'AiStyleNote').Current.Name
+Ask 'TEST-BASIC once more'
+Check (-not ([FakeOllama]::LastUser -match 'STYLE-MARKER') -and [FakeOllama]::FirstUser -match 'STYLE-MARKER') 'style: the second request goes as typed, the first one keeps the style' ([FakeOllama]::LastUser + ' || ' + [FakeOllama]::FirstUser)
+
+Pick-Combo 'AiStyle' '(no style)'
+$st = Read-Settings
+Check (-not $st.Ai.ActiveStyle -and @($st.Ai.StylePrompts).Count -eq 1) 'style: "(no style)" is stored, the style is kept' (($st.Ai | ConvertTo-Json -Compress -Depth 4))
+Invoke-Id 'AiNew'
+Start-Sleep -Milliseconds 400
+Ask 'TEST-BASIC without style'
+Check (-not ([FakeOllama]::FirstUser -match 'STYLE-MARKER')) 'style: none chosen, nothing added' ([FakeOllama]::FirstUser)
 
 $fp = @([FakeOllama]::Problems)
 Check ($fp.Count -eq 0) 'fake server had no problems' ($fp -join '; ')

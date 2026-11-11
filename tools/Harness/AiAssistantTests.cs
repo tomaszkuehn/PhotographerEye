@@ -257,6 +257,55 @@ internal static partial class Program
         TestPrivacyPolicy();
         TestAiAssistantStages();
         TestAiCurves();
+        TestAiStyles();
+    }
+
+    /// <summary>Style prompts: the active one goes with the first request of a conversation only, and stays in its history.</summary>
+    private static void TestAiStyles()
+    {
+        var s = new AiSettings();
+        Check(s.Style is null, "ai style: none by default");
+        s = s.WithStyle("Film", "muted colours, lifted blacks").WithStyle("Crisp", "punchy contrast");
+        Check(s.StylePrompts!.Count == 2 && s.ActiveStyle == "Crisp" && s.Style!.Text == "punchy contrast", "ai style: saving makes it active");
+        s = s with { ActiveStyle = "film" };
+        Check(s.Style?.Name == "Film", "ai style: the name is matched in any case");
+        s = s.WithStyle("Film 2", "muted colours, warm", replacing: "Film");
+        Check(s.StylePrompts!.Select(p => p.Name).SequenceEqual(new[] { "Film 2", "Crisp" }) && s.ActiveStyle == "Film 2",
+            "ai style: renaming keeps the place in the list");
+        Check(s.WithStyle("X", new string('a', 5000)).Style!.Text.Length == AiSettings.StyleTextMax, "ai style: the text is limited");
+        Check((s with { ActiveStyle = "gone" }).Style is null && (s with { StylePrompts = new() { new("Empty", " ") }, ActiveStyle = "Empty" }).Style is null,
+            "ai style: an unknown or empty style counts as none");
+        var del = s.WithoutStyle("film 2");
+        Check(del.StylePrompts!.Count == 1 && del.ActiveStyle is null && s.WithoutStyle("Crisp").ActiveStyle == "Film 2", "ai style: deleting the active one leaves none");
+        var json = System.Text.Json.JsonSerializer.Serialize(s);
+        var back = System.Text.Json.JsonSerializer.Deserialize<AiSettings>(json)!;
+        Check(back.Style == s.Style && back.StylePrompts!.SequenceEqual(s.StylePrompts!) && !json.Contains("\"Style\""), "ai style: survives settings.json");
+
+        var style = new AiStylePrompt("Film", "muted colours, lifted blacks");
+        var ed = new FakeEditor();
+        var session = new AiSession();
+        var events = new List<AiEvent>();
+        Check(session.IsFirstRequest, "ai style: a new conversation waits for its first request");
+        var chat = new ScriptedChat(Final("ok"));
+        session.RunTurnAsync(chat, ed, "m", false, "Prepare this photo for a family album.", new AiTurnOptions(Style: style), events.Add, CancellationToken.None)
+            .GetAwaiter().GetResult();
+        string firstSent = chat.LastMessages!.OfType<JsonObject>().Last(m => m["role"]?.ToString() == "user")["content"]!.ToString();
+        Check(firstSent.StartsWith("Prepare this photo for a family album.") && firstSent.Contains("\"Film\"") && firstSent.Contains("muted colours, lifted blacks"),
+            "ai style: the first request (a quick prompt too) carries the style");
+        Check(events[0].Kind == AiEventKind.User && events[0].Text == "Prepare this photo for a family album." &&
+              events.Any(e => e.Kind == AiEventKind.Step && e.Text.Contains("\"Film\"")), "ai style: the transcript shows the user's own text and notes the style");
+        Check(!session.IsFirstRequest && session.Messages[1]!["content"]!.ToString().Contains("muted colours"), "ai style: the folded history keeps the style");
+
+        var chat2 = new ScriptedChat(Final("ok"));
+        session.RunTurnAsync(chat2, ed, "m", false, "a bit warmer", new AiTurnOptions(Style: style), null, CancellationToken.None).GetAwaiter().GetResult();
+        var users = chat2.LastMessages!.OfType<JsonObject>().Where(m => m["role"]?.ToString() == "user").Select(m => m["content"]!.ToString()).ToList();
+        Check(users.Count == 2 && users[1] == "a bit warmer" && users[0].Contains("muted colours"), "ai style: later requests go as they are, the style stays in the history");
+        var restored = AiSession.Import(session.Export()!);
+        Check(!restored.IsFirstRequest && restored.Messages.ToJsonString().Contains("lifted blacks"), "ai style: a saved conversation keeps its style");
+
+        var plain = new ScriptedChat(Final("ok"));
+        new AiSession().RunTurnAsync(plain, ed, "m", false, "x", new AiTurnOptions(), null, CancellationToken.None).GetAwaiter().GetResult();
+        Check(plain.LastMessages!.OfType<JsonObject>().Last(m => m["role"]?.ToString() == "user")["content"]!.ToString() == "x", "ai style: no style, request unchanged");
     }
 
     /// <summary>Stage 5: set_curve and set_levels (the histogram's curves and levels).</summary>
@@ -324,15 +373,12 @@ internal static partial class Program
 
     private static void TestPrivacyPolicy()
     {
-        string pl = PrivacyPolicy.Text("pl"), en = PrivacyPolicy.Text("en");
-        Check(pl.StartsWith("# Polityka prywatności") && en.StartsWith("# PhotographerEye Privacy Policy"), "privacy: both texts are embedded");
-        int Sections(string t) => t.Split('\n').Count(l => l.StartsWith("## "));
-        Check(Sections(pl) == Sections(en) && Sections(pl) >= 8, "privacy: Polish and English have the same sections");
+        string en = PrivacyPolicy.Text();
+        Check(en.StartsWith("# PhotographerEye Privacy Policy") && en.Split('\n').Count(l => l.StartsWith("## ")) >= 8, "privacy: the English text is embedded");
         var date = DateTime.ParseExact(PrivacyPolicy.Version, "yyyy-MM-dd", CultureInfo.InvariantCulture);
-        // (the harness runs with invariant globalization: Polish month names spelled out)
-        string[] plMonths = { "stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipca", "sierpnia", "września", "października", "listopada", "grudnia" };
-        Check(pl.Contains($"{date.Day} {plMonths[date.Month - 1]} {date.Year}") && en.Contains(date.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)),
-            "privacy: the texts carry the date of Version (raise both together)");
+        Check(en.Contains("Version of " + date.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)),
+            "privacy: the text carries the date of Version (raise both together)");
+        Check(typeof(PrivacyPolicy).Assembly.GetManifestResourceNames().All(n => !n.Contains("privacy-pl")), "privacy: English only");
         var fresh = new ViewerSettings();
         var ok = PrivacyPolicy.Accept(fresh with { Gamma = 1.2 }, new DateTime(2026, 11, 11, 10, 0, 0));
         Check(!PrivacyPolicy.IsAccepted(fresh) && PrivacyPolicy.IsAccepted(ok) && ok.Gamma == 1.2 && ok.PrivacyAcceptedAt!.Value.Hour == 10,

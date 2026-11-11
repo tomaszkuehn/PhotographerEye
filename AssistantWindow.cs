@@ -61,6 +61,18 @@ public sealed class AssistantWindow : Window
     private readonly TextBlock _status = new() { FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 6, 0, 0) };
     private readonly WrapPanel _quick = new() { Margin = new Thickness(0, 6, 0, 6) };
 
+    // style prompts: the chosen one is added to the first request of a conversation (typed or a quick prompt)
+    private readonly ComboBox _style = new() { MinWidth = 200, Margin = new Thickness(6, 0, 6, 0) };
+    private readonly Button _styleEdit = new() { Content = "Edit styles…", Padding = new Thickness(8, 1, 8, 1) };
+    private readonly TextBlock _styleNote = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
+    private readonly StackPanel _stylePanel = new() { Margin = new Thickness(0, 6, 0, 0), Visibility = Visibility.Collapsed };
+    private readonly ComboBox _styleList = new() { MinWidth = 200, Margin = new Thickness(0, 2, 6, 0) };
+    private readonly TextBox _styleName = new() { Margin = new Thickness(0, 2, 0, 0) };
+    private readonly TextBox _styleText = new() { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 60, MaxHeight = 120, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(0, 2, 0, 0), MaxLength = AiSettings.StyleTextMax };
+    private readonly TextBlock _styleMsg = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
+    private const string NoStyle = "(no style)";
+    private const string NewStyle = "(new style)";
+
     private static readonly (string Label, string Prompt)[] QuickPrompts =
     {
         ("Family album", "Prepare this photo for a family album."),
@@ -80,7 +92,7 @@ public sealed class AssistantWindow : Window
 
         Title = "PhotographerEye — AI assistant";
         Width = 520;
-        Height = 680;
+        Height = 720;
         MinWidth = 400;
         MinHeight = 420;
         ShowInTaskbar = false;
@@ -165,6 +177,7 @@ public sealed class AssistantWindow : Window
         buttons.Children.Add(_send);
 
         var bottom = new StackPanel { Margin = new Thickness(12, 0, 12, 10) };
+        bottom.Children.Add(BuildStyleRow());
         bottom.Children.Add(_quick);
         bottom.Children.Add(_usage);
         bottom.Children.Add(_input);
@@ -198,8 +211,9 @@ public sealed class AssistantWindow : Window
         _mode.SelectedIndex = _s.IsCloud ? 1 : 0;
         _loadingUi = false;
         LoadSettingsUi();
+        FillStyles();
         ShowSession();
-        Loaded += (_, _) =>
+        Loaded +=(_, _) =>
         {
             _input.Focus();
             _ = LoadModelsAsync();
@@ -207,6 +221,166 @@ public sealed class AssistantWindow : Window
     }
 
     private static void Id(UIElement e, string id) => AutomationProperties.SetAutomationId(e, id);
+
+    // ---------- style prompts ----------
+
+    private UIElement BuildStyleRow()
+    {
+        Id(_style, "AiStyle");
+        Id(_styleEdit, "AiStyleEdit");
+        Id(_styleNote, "AiStyleNote");
+        Id(_styleList, "AiStyleList");
+        Id(_styleName, "AiStyleName");
+        Id(_styleText, "AiStyleText");
+        Id(_styleMsg, "AiStyleMsg");
+        _styleNote.Foreground = _muted;
+        _styleMsg.Foreground = _muted;
+        _style.ToolTip = "Your own description of the look you want. It is added to the first request of a conversation\n" +
+                         "(typed or a quick prompt button), and the model keeps following it in that conversation.";
+
+        var row = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
+        var label = new TextBlock { Text = "Style:", VerticalAlignment = VerticalAlignment.Center };
+        DockPanel.SetDock(label, Dock.Left);
+        DockPanel.SetDock(_styleEdit, Dock.Right);
+        row.Children.Add(label);
+        row.Children.Add(_styleEdit);
+        row.Children.Add(_style);
+
+        _stylePanel.Children.Add(Muted("Style to edit"));
+        _stylePanel.Children.Add(_styleList);
+        _stylePanel.Children.Add(Muted("Name"));
+        _stylePanel.Children.Add(_styleName);
+        _stylePanel.Children.Add(Muted("Describe the look in your own words, e.g. \"muted film colours, lifted blacks, warm skin tones, never oversaturated\""));
+        _stylePanel.Children.Add(_styleText);
+        var btns = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
+        var save = new Button { Content = "Save", Padding = new Thickness(8, 1, 8, 1) };
+        var delete = new Button { Content = "Delete", Padding = new Thickness(8, 1, 8, 1), Margin = new Thickness(6, 0, 0, 0) };
+        Id(save, "AiStyleSave");
+        Id(delete, "AiStyleDelete");
+        btns.Children.Add(save);
+        btns.Children.Add(delete);
+        _stylePanel.Children.Add(btns);
+        _stylePanel.Children.Add(_styleMsg);
+
+        _style.SelectionChanged += (_, _) =>
+        {
+            if (_loadingUi || _style.SelectedItem is not ComboBoxItem { Tag: var tag }) return;
+            Save(_s with { ActiveStyle = tag as string });
+            UpdateStyleNote();
+        };
+        _styleEdit.Click += (_, _) =>
+        {
+            bool show = _stylePanel.Visibility != Visibility.Visible;
+            _stylePanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (show) FillStyleEditor(_s.ActiveStyle);
+        };
+        _styleList.SelectionChanged += (_, _) =>
+        {
+            if (_loadingUi) return;
+            ShowStyleInEditor((_styleList.SelectedItem as ComboBoxItem)?.Tag as string);
+        };
+        save.Click += (_, _) => SaveStyle();
+        delete.Click += (_, _) => DeleteStyle();
+
+        var box = new StackPanel();
+        box.Children.Add(row);
+        box.Children.Add(_styleNote);
+        box.Children.Add(_stylePanel);
+        return box;
+    }
+
+    /// <summary>Fills the style combo from the settings (the active one selected).</summary>
+    private void FillStyles()
+    {
+        _loadingUi = true;
+        _style.Items.Clear();
+        _style.Items.Add(new ComboBoxItem { Content = NoStyle, Tag = null });
+        int sel = 0;
+        foreach (var p in _s.StylePrompts ?? new())
+        {
+            _style.Items.Add(new ComboBoxItem { Content = p.Name, Tag = p.Name, ToolTip = p.Text });
+            if (string.Equals(p.Name, _s.ActiveStyle, StringComparison.OrdinalIgnoreCase)) sel = _style.Items.Count - 1;
+        }
+        _style.SelectedIndex = sel;
+        _loadingUi = false;
+        UpdateStyleNote();
+    }
+
+    private void UpdateStyleNote()
+    {
+        var st = _s.Style;
+        var s = CurrentSession(create: false);
+        bool started = s is not null && !s.IsFirstRequest;
+        _styleNote.Text = st is null
+            ? (_s.StylePrompts is { Count: > 0 } ? "No style: requests go to the model as they are." : "No styles yet — \"Edit styles…\" to describe the look you want.")
+            : started
+                ? $"\"{st.Name}\" will be added to the first request of the next conversation (this one has started — \"New conversation\" to use it now)."
+                : $"\"{st.Name}\" is added to the first request of this conversation.";
+    }
+
+    private void FillStyleEditor(string? select)
+    {
+        _loadingUi = true;
+        _styleList.Items.Clear();
+        _styleList.Items.Add(new ComboBoxItem { Content = NewStyle, Tag = null });
+        int sel = 0;
+        foreach (var p in _s.StylePrompts ?? new())
+        {
+            _styleList.Items.Add(new ComboBoxItem { Content = p.Name, Tag = p.Name });
+            if (string.Equals(p.Name, select, StringComparison.OrdinalIgnoreCase)) sel = _styleList.Items.Count - 1;
+        }
+        _styleList.SelectedIndex = sel;
+        _loadingUi = false;
+        ShowStyleInEditor((_styleList.SelectedItem as ComboBoxItem)?.Tag as string);
+    }
+
+    private string? _editingStyle;
+
+    private void ShowStyleInEditor(string? name)
+    {
+        _editingStyle = name;
+        var p = name is null ? null : _s.StylePrompts?.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+        _styleName.Text = p?.Name ?? "";
+        _styleText.Text = p?.Text ?? "";
+        _styleMsg.Text = p is null ? "A new style: give it a name and a description, then Save." : "";
+    }
+
+    private void SaveStyle()
+    {
+        var name = _styleName.Text.Trim();
+        var text = _styleText.Text.Trim();
+        if (name.Length == 0 || text.Length == 0)
+        {
+            _styleMsg.Text = "A style needs a name and a description.";
+            return;
+        }
+        if (string.Equals(name, NoStyle, StringComparison.OrdinalIgnoreCase) || string.Equals(name, NewStyle, StringComparison.OrdinalIgnoreCase))
+        {
+            _styleMsg.Text = "Choose another name.";
+            return;
+        }
+        // a different existing style with the new name would be replaced: only when the user edits that one
+        if (!string.Equals(name, _editingStyle, StringComparison.OrdinalIgnoreCase) &&
+            _s.StylePrompts?.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) == true)
+        {
+            _styleMsg.Text = $"A style named \"{name}\" exists already — choose it above to change it, or use another name.";
+            return;
+        }
+        Save(_s.WithStyle(name, text, _editingStyle));
+        FillStyles();
+        FillStyleEditor(name);
+        _styleMsg.Text = $"Saved; \"{name}\" is the style in use.";
+    }
+
+    private void DeleteStyle()
+    {
+        if (_editingStyle is null) return;
+        var name = _editingStyle;
+        Save(_s.WithoutStyle(name));
+        FillStyles();
+        FillStyleEditor(null);
+        _styleMsg.Text = $"\"{name}\" deleted.";
+    }
 
     private void BuildSettingsPanel()
     {
@@ -524,6 +698,7 @@ public sealed class AssistantWindow : Window
             foreach (var e in s.Transcript)
                 AddLine(e);
         UpdateUsage();
+        UpdateStyleNote();
     }
 
     private void NewConversation()
@@ -681,7 +856,7 @@ public sealed class AssistantWindow : Window
             SetStatus($"{choice.Name} is working…");
             using var client = OllamaClient.For(settings);
             var res = await session.RunTurnAsync(client, _main.AiEditorFor(path, settings.SendMetadata), choice.Name, choice.Vision,
-                text, new AiTurnOptions(settings.MaxSteps, settings.TokenBudget), AddLine, cts.Token);
+                text, new AiTurnOptions(settings.MaxSteps, settings.TokenBudget, settings.Style), AddLine, cts.Token);
             SetStatus($"Done in {(DateTime.Now - started).TotalSeconds:0} s, {res.ModelCalls} model call(s)" +
                       (res.Changed ? " — Ctrl+Z undoes the whole request." : "."));
         }
@@ -706,6 +881,7 @@ public sealed class AssistantWindow : Window
             cts.Dispose();
             SetBusy(false);
             UpdateUsage();
+            UpdateStyleNote();
             if (IsVisible) _input.Focus();
         }
     }
@@ -730,6 +906,7 @@ public sealed class AssistantWindow : Window
         _mode.IsEnabled = !busy;
         _model.IsEnabled = !busy;
         foreach (var b in _quick.Children.OfType<Button>()) b.IsEnabled = !busy;
+        _style.IsEnabled = !busy;
     }
 
     private void SetStatus(string text) => _status.Text = text;

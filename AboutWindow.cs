@@ -61,7 +61,7 @@ public sealed class AboutWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "License: private, non-commercial use.\nModification and redistribution prohibited (LICENSE).",
+            Text = "License: private, non-commercial use. Unmodified copies may be shared free of charge.\nModification and commercial use prohibited (LICENSE).",
             Foreground = muted,
             Margin = new Thickness(0, 14, 0, 0),
             TextWrapping = TextWrapping.Wrap
