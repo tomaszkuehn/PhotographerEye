@@ -17,7 +17,7 @@ public enum AiModelTier
 }
 
 /// <summary>Classification of a model for the assistant, with the label shown in the model list.</summary>
-public sealed record AiModelChoice(string Name, AiModelTier Tier, bool Vision, bool Tools, string Note)
+public sealed record AiModelChoice(string Name, AiModelTier Tier, bool Vision, bool Tools, string Note, int ContextLength = 0)
 {
     public string Display => Tier switch
     {
@@ -78,7 +78,7 @@ public static class AiModels
         };
         if (n.EndsWith("-cloud", StringComparison.Ordinal) || n.Contains("-cloud:") || n.Contains(":cloud")) note += " (cloud)";
         if (!m.CapabilitiesKnown) note += " (guessed from the name)";
-        return new AiModelChoice(m.Name, tier, vision, tools, note);
+        return new AiModelChoice(m.Name, tier, vision, tools, note, m.ContextLength);
     }
 
     /// <summary>Best first: recommended, then vision, text-only, unsuitable; by name within a tier.</summary>

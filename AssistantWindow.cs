@@ -22,7 +22,7 @@ namespace ImgViewer;
 public sealed class AssistantWindow : Window
 {
     private readonly MainWindow _main;
-    private readonly Dictionary<string, AiSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, AiSession> _sessions => _main.AiSessions;
     private AiSettings _s;
     private List<AiModelChoice> _choices = new();
     private CancellationTokenSource? _turnCts;
@@ -46,6 +46,9 @@ public sealed class AssistantWindow : Window
     private readonly PasswordBox _key = new() { Margin = new Thickness(0, 2, 6, 0), MinWidth = 220 };
     private readonly TextBlock _keyState = new() { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBox _steps = new() { Width = 50, Margin = new Thickness(6, 0, 0, 0) };
+    private readonly TextBox _ctxTokens = new() { Width = 70, Margin = new Thickness(6, 0, 0, 0) };
+    private readonly TextBox _budget = new() { Width = 80, Margin = new Thickness(6, 0, 0, 0) };
+    private readonly TextBlock _usage = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 4) };
     private readonly CheckBox _meta = new() { Content = "Send camera data (camera, ISO, aperture, shutter, focal length, date; never GPS or the file name)", Margin = new Thickness(0, 6, 0, 0) };
 
     private readonly StackPanel _transcript = new() { Margin = new Thickness(0, 0, 4, 0) };
@@ -91,6 +94,11 @@ public sealed class AssistantWindow : Window
         _modelNote.Foreground = _muted;
         _keyState.Foreground = _muted;
         _status.Foreground = _muted;
+        _usage.Foreground = _muted;
+        Id(_usage, "AiUsage");
+        _usage.ToolTip = "Context: what the model reads in one call (the conversation so far, the function list and at most one preview).\n" +
+                         "Used: all tokens of this photo's conversation, read + written, against the budget set in ⚙.\n" +
+                         "After each request its working steps are folded into one short line, so follow-ups stay small.";
         _meta.Foreground = _fg;
 
         Id(_mode, "AiMode");
@@ -153,6 +161,7 @@ public sealed class AssistantWindow : Window
 
         var bottom = new StackPanel { Margin = new Thickness(12, 0, 12, 10) };
         bottom.Children.Add(_quick);
+        bottom.Children.Add(_usage);
         bottom.Children.Add(_input);
         bottom.Children.Add(buttons);
         bottom.Children.Add(_status);
@@ -225,20 +234,46 @@ public sealed class AssistantWindow : Window
         keyRow.Children.Add(_keyState);
         _settingsPanel.Children.Add(keyRow);
 
-        var stepsRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
-        stepsRow.Children.Add(new TextBlock { Text = "Most model calls per request:", VerticalAlignment = VerticalAlignment.Center });
-        stepsRow.Children.Add(_steps);
-        _steps.LostKeyboardFocus += (_, _) =>
-        {
-            if (int.TryParse(_steps.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
-                Save(_s with { MaxSteps = Math.Clamp(n, 1, 30) });
-            _steps.Text = _s.MaxSteps.ToString(CultureInfo.InvariantCulture);
-        };
-        _settingsPanel.Children.Add(stepsRow);
+        NumberRow(_steps, "Most model calls per request:", "",
+            n => Save(_s with { MaxSteps = (int)Math.Clamp(n, 1, 30) }), () => _s.MaxSteps);
+        NumberRow(_ctxTokens, "Context window (num_ctx, tokens):", "0 = server default (often 4k: too small with a preview); local models use more memory for larger values",
+            n => Save(_s with { ContextTokens = (int)(n <= 0 ? 0 : Math.Clamp(n, 2048, 262144)) }), () => _s.ContextTokens);
+        NumberRow(_budget, "Token budget per photo:", "all calls of one photo's conversation, read + written; 0 = no limit",
+            n => Save(_s with { TokenBudget = Math.Max(0, n) }), () => _s.TokenBudget);
 
         _meta.Checked += (_, _) => { if (!_loadingUi) Save(_s with { SendMetadata = true }); };
         _meta.Unchecked += (_, _) => { if (!_loadingUi) Save(_s with { SendMetadata = false }); };
         _settingsPanel.Children.Add(_meta);
+    }
+
+    /// <summary>A labelled number box saved when it loses focus (accepts "200k" / "1.5M"); invalid input reverts.</summary>
+    private void NumberRow(TextBox box, string label, string hint, Action<long> save, Func<long> current)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center });
+        row.Children.Add(box);
+        if (hint.Length > 0) box.ToolTip = hint;
+        box.LostKeyboardFocus += (_, _) =>
+        {
+            if (!_loadingUi && ParseTokens(box.Text) is { } n)
+            {
+                save(n);
+                UpdateUsage();
+            }
+            box.Text = current().ToString(CultureInfo.InvariantCulture);
+        };
+        _settingsPanel.Children.Add(row);
+    }
+
+    public static long? ParseTokens(string text)
+    {
+        var t = text.Trim().Replace(" ", "").Replace(',', '.').ToLowerInvariant();
+        double mul = 1;
+        if (t.EndsWith('k')) { mul = 1e3; t = t[..^1]; }
+        else if (t.EndsWith('m')) { mul = 1e6; t = t[..^1]; }
+        return double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && double.IsFinite(v)
+            ? (long)Math.Round(v * mul)
+            : null;
     }
 
     private TextBlock Muted(string text) => new() { Text = text, Foreground = _muted, FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
@@ -248,6 +283,8 @@ public sealed class AssistantWindow : Window
         _loadingUi = true;
         _url.Text = _s.IsCloud ? _s.CloudUrl : _s.LocalUrl;
         _steps.Text = _s.MaxSteps.ToString(CultureInfo.InvariantCulture);
+        _ctxTokens.Text = _s.ContextTokens.ToString(CultureInfo.InvariantCulture);
+        _budget.Text = _s.TokenBudget.ToString(CultureInfo.InvariantCulture);
         _meta.IsChecked = _s.SendMetadata;
         bool stored = !string.IsNullOrEmpty(AiKeyProtector.Unprotect(_s.ApiKeyProtected));
         bool env = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OLLAMA_API_KEY"));
@@ -388,7 +425,44 @@ public sealed class AssistantWindow : Window
         var c = CurrentChoice();
         _modelNote.Text = c is null
             ? "Choose a model. ★ = recommended: it sees the photo and changes the settings."
-            : c.Name + ": " + c.Note;
+            : c.Name + ": " + c.Note + (c.ContextLength > 0 ? $" · context up to {AiSession.Fmt(c.ContextLength)}" : "");
+        UpdateUsage();
+    }
+
+    /// <summary>Context window in effect: num_ctx from the settings, capped by what the model supports (0 = unknown).</summary>
+    private int EffectiveContext()
+    {
+        int model = CurrentChoice()?.ContextLength ?? 0;
+        int asked = _s.ContextTokens;
+        if (asked > 0 && model > 0) return Math.Min(asked, model);
+        return asked > 0 ? asked : model;
+    }
+
+    private void UpdateUsage()
+    {
+        var s = CurrentSession(create: false);
+        var c = CurrentChoice();
+        int ctxMax = EffectiveContext();
+        int ctxNow = s is { LastPromptTokens: > 0 } ? s.LastPromptTokens : (s ?? new AiSession()).EstimateNextContext(c?.Vision ?? false) + (c?.Vision == true ? AiSession.ImageTokens : 0);
+        bool measured = s is { LastPromptTokens: > 0 } && !s.Estimated;
+        string ctx = $"Context: {(measured ? "" : "~")}{AiSession.Fmt(ctxNow)}" + (ctxMax > 0 ? $" / {AiSession.Fmt(ctxMax)}" : "");
+        long used = s?.TotalTokens ?? 0;
+        string budget = _s.TokenBudget > 0 ? $" / {AiSession.Fmt(_s.TokenBudget)}" : " (no limit)";
+        string calls = s is { TotalCalls: > 0 } ? $" in {s.TotalCalls} call(s)" : "";
+        string text = $"{ctx} tokens · used for this photo: {(s?.Estimated == true ? "~" : "")}{AiSession.Fmt(used)}{budget}{calls}";
+        bool warn = false;
+        if (ctxMax > 0 && ctxNow >= ctxMax * 0.9)
+        {
+            text += " — context nearly full: the server cuts the oldest part; raise num_ctx or start a new conversation";
+            warn = true;
+        }
+        else if (s is not null && _s.TokenBudget > 0 && used >= _s.TokenBudget * 0.8)
+        {
+            text += s.OverBudget(_s.TokenBudget) ? " — budget used up" : " — budget nearly used";
+            warn = true;
+        }
+        _usage.Text = text;
+        _usage.Foreground = warn ? Brushes.IndianRed : _muted;
     }
 
     // ---------- conversation ----------
@@ -418,6 +492,7 @@ public sealed class AssistantWindow : Window
         else
             foreach (var e in s.Transcript)
                 AddLine(e);
+        UpdateUsage();
     }
 
     private void NewConversation()
@@ -456,6 +531,7 @@ public sealed class AssistantWindow : Window
         };
         _transcript.Children.Add(tb);
         _scroll.ScrollToEnd();
+        UpdateUsage();
     }
 
     private void OnInputKey(object sender, KeyEventArgs e)
@@ -516,6 +592,12 @@ public sealed class AssistantWindow : Window
         }
 
         var session = CurrentSession(create: true)!;
+        if (session.OverBudget(_s.TokenBudget))
+        {
+            SetStatus($"This photo's conversation used its token budget ({AiSession.Fmt(session.TotalTokens)} of {AiSession.Fmt(_s.TokenBudget)}). " +
+                      "Start a new conversation or raise the budget in ⚙.");
+            return;
+        }
         if (_transcript.Children.Count == 1 && session.Transcript.Count == 0) _transcript.Children.Clear();
         _input.Clear();
         SetBusy(true);
@@ -528,7 +610,7 @@ public sealed class AssistantWindow : Window
             SetStatus($"{choice.Name} is working…");
             using var client = OllamaClient.For(settings);
             var res = await session.RunTurnAsync(client, _main.AiEditorFor(path, settings.SendMetadata), choice.Name, choice.Vision,
-                text, settings.MaxSteps, AddLine, cts.Token);
+                text, new AiTurnOptions(settings.MaxSteps, settings.TokenBudget), AddLine, cts.Token);
             SetStatus($"Done in {(DateTime.Now - started).TotalSeconds:0} s, {res.ModelCalls} model call(s)" +
                       (res.Changed ? " — Ctrl+Z undoes the whole request." : "."));
         }
@@ -552,6 +634,7 @@ public sealed class AssistantWindow : Window
             if (ReferenceEquals(_turnCts, cts)) _turnCts = null;
             cts.Dispose();
             SetBusy(false);
+            UpdateUsage();
             if (IsVisible) _input.Focus();
         }
     }

@@ -60,21 +60,60 @@ internal static partial class Program
                 Final("Gotowe: rozjaśniłem zdjęcie."));
             var session = new AiSession();
             var events = new List<AiEvent>();
-            var res = session.RunTurnAsync(chat, ed, "m", vision: false, "przygotuj do albumu", 8, events.Add, CancellationToken.None)
+            var res = session.RunTurnAsync(chat, ed, "m", vision: false, "przygotuj do albumu", new AiTurnOptions(8), events.Add, CancellationToken.None)
                 .GetAwaiter().GetResult();
             Check(res.FinalText == "Gotowe: rozjaśniłem zdjęcie." && res.ModelCalls == 5 && res.Changed && !res.StoppedAtLimit, "ai: loop ends with the answer");
             Check(ed.Core["Exposure"] == 5 && ed.Core["Contrast"] == 15 && ed.Core["Mono"] == 2 && ed.Core["Saturation"] == -20,
                 "ai: values clamped, numeric strings and nested 'values' accepted, keys case-insensitive");
             Check(ed.SetCalls == 2 && ed.Waits >= 2, "ai: each set_core sets once and waits for the render");
-            var toolMsgs = session.Messages.OfType<JsonObject>().Where(m => m["role"]?.ToString() == "tool").ToList();
+            // what the model got in its last call (the history is compacted after the turn)
+            var toolMsgs = chat.LastMessages!.OfType<JsonObject>().Where(m => m["role"]?.ToString() == "tool").ToList();
             Check(toolMsgs.Count == 5 && toolMsgs.All(m => m["tool_name"] is not null), "ai: one tool message per call");
             Check(toolMsgs[2]["content"]!.ToString().Contains("\"ignored\":\"Bogus\"") && toolMsgs[2]["content"]!.ToString().Contains("image_after"),
                 "ai: set_core reports ignored keys and the statistics after");
             Check(toolMsgs[4]["content"]!.ToString().Contains("unknown function"), "ai: unknown function becomes an error result");
             Check(events.First().Kind == AiEventKind.User && events.Last().Kind == AiEventKind.Assistant &&
                   events.Any(e => e.Kind == AiEventKind.Step && e.Text.Contains("→")), "ai: transcript has the request, steps and the answer");
-            Check(chat.ToolCounts.All(c => c == 4) && !session.Messages.ToJsonString().Contains("\"images\""), "ai: text-only model gets no images");
+            Check(chat.ToolCounts.All(c => c == 4) && !chat.AnyImage, "ai: text-only model gets no images");
             Check(session.Messages[0]!["role"]!.ToString() == "system", "ai: system prompt first");
+
+            // compaction: system, the plain request, one summary with the changes and the answer
+            var h = session.Messages.OfType<JsonObject>().ToList();
+            Check(h.Count == 3 && h[1]["role"]!.ToString() == "user" && h[1]["content"]!.ToString() == "przygotuj do albumu" &&
+                  h[2]["role"]!.ToString() == "assistant" && h[2]["tool_calls"] is null &&
+                  h[2]["content"]!.ToString().StartsWith("[changes: ") && h[2]["content"]!.ToString().Contains("Saturation") &&
+                  h[2]["content"]!.ToString().EndsWith("Gotowe: rozjaśniłem zdjęcie."), "ai: the turn is folded into request + summary");
+            int fullCtx = AiSession.EstimateTokens(chat.LastMessages!);
+            Check(AiSession.EstimateTokens(session.Messages) < fullCtx, $"ai: compaction shrinks the history ({fullCtx} -> {AiSession.EstimateTokens(session.Messages)} est. tokens)");
+
+            // token counters from the server's counts (scripted: 100 read + 10 written per call)
+            Check(session.TotalCalls == 5 && session.TotalPromptTokens == 500 && session.TotalOutputTokens == 50 &&
+                  session.LastPromptTokens == 100 && !session.Estimated, "ai: token counters add up the reported counts");
+
+            // a follow-up turn builds on the short history
+            var chat2 = new ScriptedChat(Final("Cieplej."));
+            session.RunTurnAsync(chat2, ed, "m", false, "cieplej", new AiTurnOptions(8), null, CancellationToken.None).GetAwaiter().GetResult();
+            Check(chat2.LastMessages!.Count == 4 && session.Messages.Count == 5 && session.TotalCalls == 6, "ai: follow-up sends the folded history");
+        }
+
+        // ---- token budget ----
+        {
+            var ed = new FakeEditor();
+            var session = new AiSession();
+            var loop = Enumerable.Range(0, 10).Select(_ => Call(("analyze_image", new JsonObject()))).ToArray();
+            var res = session.RunTurnAsync(new ScriptedChat(loop), ed, "m", false, "x", new AiTurnOptions(8, TokenBudget: 250), null, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Check(res.StoppedAtBudget && res.ModelCalls == 3 && session.OverBudget(250) && !session.OverBudget(0),
+                "ai: the token budget stops the turn before the next call");
+            Check(session.Messages.OfType<JsonObject>().Last()["content"]!.ToString().Contains("token budget"), "ai: budget stop noted in the history");
+            // no counts from the server: estimated from the request size
+            var s2 = new AiSession();
+            s2.RunTurnAsync(new ScriptedChat(Final("ok")) { NoCounts = true }, ed, "m", false, "x", new AiTurnOptions(), null, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Check(s2.Estimated && s2.LastPromptTokens > 500 && s2.TotalOutputTokens > 0, "ai: missing counts are estimated");
+            Check(AiSession.Fmt(950) == "950" && AiSession.Fmt(12345) == "12.3k" && AiSession.Fmt(2_500_000) == "2.5M", "ai: token formatting");
+            Check(ImgViewer.AssistantWindow.ParseTokens("200k") == 200_000 && ImgViewer.AssistantWindow.ParseTokens("1,5M") == 1_500_000 &&
+                  ImgViewer.AssistantWindow.ParseTokens("16384") == 16384 && ImgViewer.AssistantWindow.ParseTokens("abc") is null, "ai: token input parsing");
         }
 
         // ---- vision: preview attached to the request, get_preview adds one image, older ones dropped ----
@@ -82,11 +121,13 @@ internal static partial class Program
             var ed = new FakeEditor();
             var chat = new ScriptedChat(Call(("get_preview", new JsonObject())), Final("ok"));
             var session = new AiSession();
-            session.RunTurnAsync(chat, ed, "m", vision: true, "b&w", 8, null, CancellationToken.None).GetAwaiter().GetResult();
-            int images = session.Messages.OfType<JsonObject>().Count(m => m["images"] is not null);
-            Check(images == 1 && session.Messages.OfType<JsonObject>().Last(m => m["images"] is not null)["role"]!.ToString() == "user" &&
-                  session.Messages.ToJsonString().Contains("older preview removed"), "ai: only the newest preview is kept");
+            session.RunTurnAsync(chat, ed, "m", vision: true, "b&w", new AiTurnOptions(8), null, CancellationToken.None).GetAwaiter().GetResult();
+            var sent = chat.LastMessages!.OfType<JsonObject>().ToList();
+            int images = sent.Count(m => m["images"] is not null);
+            Check(images == 1 && sent.Last(m => m["images"] is not null)["role"]!.ToString() == "user" &&
+                  chat.LastMessages!.ToJsonString().Contains("older preview removed"), "ai: only the newest preview is kept");
             Check(chat.ToolCounts.All(c => c == 5) && chat.FirstUserHadImage, "ai: vision model gets get_preview and the photo with the request");
+            Check(!session.Messages.ToJsonString().Contains("\"images\""), "ai: no image stays in the history after the turn");
         }
 
         // ---- step limit and follow-up turn ----
@@ -94,9 +135,11 @@ internal static partial class Program
             var ed = new FakeEditor();
             var loop = Enumerable.Range(0, 10).Select(_ => Call(("analyze_image", new JsonObject()))).ToArray();
             var session = new AiSession();
-            var res = session.RunTurnAsync(new ScriptedChat(loop), ed, "m", false, "x", 3, null, CancellationToken.None).GetAwaiter().GetResult();
+            var res = session.RunTurnAsync(new ScriptedChat(loop), ed, "m", false, "x", new AiTurnOptions(3), null, CancellationToken.None).GetAwaiter().GetResult();
             Check(res.StoppedAtLimit && res.ModelCalls == 3 && !res.Changed, "ai: step limit stops the turn");
-            Check(session.Messages.OfType<JsonObject>().Last()["role"]!.ToString() == "user", "ai: a stopped turn is closed for the next one");
+            var last = session.Messages.OfType<JsonObject>().Last();
+            Check(session.Messages.Count == 3 && last["role"]!.ToString() == "assistant" && last["content"]!.ToString().Contains("step limit"),
+                "ai: a stopped turn is closed for the next one");
         }
 
         // ---- cancellation and a failing model leave a usable history ----
@@ -108,18 +151,20 @@ internal static partial class Program
             bool cancelled = false;
             try
             {
-                session.RunTurnAsync(chat, ed, "m", false, "x", 8, null, cts.Token).GetAwaiter().GetResult();
+                session.RunTurnAsync(chat, ed, "m", false, "x", new AiTurnOptions(8), null, cts.Token).GetAwaiter().GetResult();
             }
             catch (OperationCanceledException)
             {
                 cancelled = true;
             }
-            Check(cancelled && ed.Core["Exposure"] == 1 && session.Messages.OfType<JsonObject>().Last()["content"]!.ToString().Contains("stopped"),
-                "ai: Stop keeps the changes so far and notes the stop");
+            var lastC = session.Messages.OfType<JsonObject>().Last()["content"]!.ToString();
+            Check(cancelled && ed.Core["Exposure"] == 1 && lastC.Contains("stopped") && lastC.Contains("Exposure") &&
+                  !session.Messages.OfType<JsonObject>().Any(m => m["role"]?.ToString() == "tool"),
+                "ai: Stop keeps the changes so far and folds them into the summary");
             bool failed = false;
             try
             {
-                session.RunTurnAsync(new ScriptedChat(), ed, "m", false, "y", 8, null, CancellationToken.None).GetAwaiter().GetResult();
+                session.RunTurnAsync(new ScriptedChat(), ed, "m", false, "y", new AiTurnOptions(8), null, CancellationToken.None).GetAwaiter().GetResult();
             }
             catch (InvalidOperationException)
             {
@@ -150,6 +195,14 @@ internal static partial class Program
         var caps = OllamaClient.ParseCapabilities(JsonNode.Parse("{\"capabilities\":[\"completion\",\"vision\",\"tools\"]}")!.AsObject());
         Check(caps is not null && caps.Contains("vision") && caps.Contains("tools") && OllamaClient.ParseCapabilities(new JsonObject()) is null,
             "ai: /api/show capabilities parsed");
+        Check(OllamaClient.ParseContextLength(JsonNode.Parse("{\"model_info\":{\"qwen2.context_length\":32768,\"general.x\":1}}")!.AsObject()) == 32768 &&
+              OllamaClient.ParseContextLength(new JsonObject()) == 0, "ai: /api/show context length parsed");
+        var reply = OllamaClient.ParseChat(JsonNode.Parse("{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"prompt_eval_count\":1234,\"eval_count\":56}")!.AsObject());
+        Check(reply.PromptTokens == 1234 && reply.OutputTokens == 56 && reply.Message["content"]!.ToString() == "ok", "ai: /api/chat token counts parsed");
+        bool chatErr = false;
+        try { OllamaClient.ParseChat(JsonNode.Parse("{\"error\":\"model not found\"}")!.AsObject()); }
+        catch (Exception ex) { chatErr = ex.Message.Contains("model not found"); }
+        Check(chatErr, "ai: /api/chat error reported");
 
         // ---- model classification ----
         AiModelChoice C(string n, params string[] c) => AiModels.Classify(new AiModelInfo(n, 0, c, c.Length > 0));
@@ -206,22 +259,26 @@ internal static partial class Program
     {
         private readonly Queue<JsonObject> _replies;
         public readonly List<int> ToolCounts = new();
-        public bool FirstUserHadImage;
+        public bool FirstUserHadImage, AnyImage, NoCounts;
+        public JsonArray? LastMessages;
         public Action<int>? OnCall;
         private int _n;
 
         public ScriptedChat(params JsonObject[] replies) => _replies = new Queue<JsonObject>(replies);
 
-        public Task<JsonObject> ChatAsync(string model, JsonArray messages, JsonArray tools, CancellationToken ct)
+        public Task<AiChatReply> ChatAsync(string model, JsonArray messages, JsonArray tools, CancellationToken ct)
         {
             _n++;
             OnCall?.Invoke(_n);
             ct.ThrowIfCancellationRequested();
             ToolCounts.Add(tools.Count);
+            LastMessages = (JsonArray)messages.DeepClone();
+            AnyImage |= messages.ToJsonString().Contains("\"images\"");
             if (_n == 1)
-                FirstUserHadImage = messages.OfType<JsonObject>().First(m => m["role"]?.ToString() == "user")["images"] is not null;
+                FirstUserHadImage = messages.OfType<JsonObject>().Last(m => m["role"]?.ToString() == "user")["images"] is not null;
             if (_replies.Count == 0) throw new InvalidOperationException("model unavailable");
-            return Task.FromResult((JsonObject)_replies.Dequeue().DeepClone());
+            var msg = (JsonObject)_replies.Dequeue().DeepClone();
+            return Task.FromResult(NoCounts ? new AiChatReply(msg) : new AiChatReply(msg, 100, 10));
         }
     }
 

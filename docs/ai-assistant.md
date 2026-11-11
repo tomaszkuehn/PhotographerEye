@@ -76,6 +76,29 @@ odczytany bezpośrednio z aplikacji.
 - Metadane (aparat, ISO, przysłona, czas, ogniskowa, data) są wysyłane tylko wtedy, gdy użytkownik na to pozwoli.
   GPS i ścieżka pliku nie są wysyłane nigdy.
 
+### 3.4 Kontrola kontekstu i zużycia tokenów
+
+Każde wywołanie modelu wysyła całą historię, więc koszt rośnie z długością rozmowy. Dlatego:
+
+- **Zwijanie tur:** po zakończeniu tury (sukces, limit, Stop, błąd) wszystkie robocze wiadomości (tool_calls, wyniki
+  narzędzi, podglądy) są zastępowane dwiema: poleceniem użytkownika i odpowiedzią `[changes: Exposure +0.30; …]` +
+  wynik. Następne polecenie startuje z krótkiej historii; aktualny stan model odczytuje przez `get_state`.
+- **Jeden podgląd:** w obrębie tury zostaje tylko najnowszy obraz (starsze są zastępowane tekstem
+  „older preview removed”), a po turze w historii nie ma żadnego obrazu.
+- **Budżet na zdjęcie** (ustawienia, domyślnie 200k tokenów, 0 = bez limitu): suma tokenów wejścia i wyjścia wszystkich
+  wywołań w rozmowie o tym zdjęciu. Sprawdzany przed każdym wywołaniem; po przekroczeniu tura się kończy, a nowa się
+  nie zacznie, dopóki użytkownik nie podniesie limitu albo nie zacznie nowej rozmowy.
+- **`num_ctx`** (domyślnie 16384): rozmiar okna kontekstu wysyłany do Ollamy; wyświetlany limit to mniejsza z wartości
+  `num_ctx` i długości kontekstu modelu z `/api/show`.
+- **Limit kroków** na polecenie (domyślnie 8).
+- **Licznik w oknie:** „Context: ~3.1k / 16k tokens · used for this photo: 42k / 200k in N calls”. Czerwone
+  ostrzeżenie przy 90% kontekstu albo 80% budżetu. Liczby pochodzą z `prompt_eval_count`/`eval_count`; gdy serwer ich
+  nie poda, są szacowane (znaki/4, ~1000 na obraz) i oznaczane „~”.
+
+Rozmowy są trzymane w oknie głównym (słownik ścieżka → sesja), więc zamknięcie i ponowne otwarcie okna czatu albo
+powrót do zdjęcia kontynuuje tę samą rozmowę z licznikami, do zamknięcia aplikacji. „Nowa rozmowa” zeruje historię
+i liczniki.
+
 ## 4. Narzędzia (katalog funkcji)
 
 | Etap | Funkcja | Opis |
@@ -120,13 +143,13 @@ serwer, z etykietami kategorii.
 
 - Okno „Asystent AI”: przycisk na pasku narzędzi (ikona robota). Okno jest niemodalne, więc zdjęcie i panel pozostają dostępne.
 - U góry: serwer (lokalny/chmura), model z listy z etykietami, odświeżanie, ustawienia (adres, klucz, limit kroków,
-  metadane).
+  `num_ctx`, budżet tokenów na zdjęcie, metadane). Liczby tokenów można wpisywać jako `16384`, `200k`, `1,5M`.
 - Środek: przebieg rozmowy. Wiadomości użytkownika, odpowiedzi asystenta i wyszarzone linie kroków („Exposure +0.30,
   Contrast +15”).
 - Szybkie polecenia: „Album rodzinny”, „Reportaż”, „Czarno-białe artystyczne”.
-- Dół: pole polecenia (Enter wysyła, Shift+Enter nowa linia), Wyślij, Stop, Nowa rozmowa.
-- Rozmowa należy do zdjęcia. Po zmianie zdjęcia zaczyna się nowa, a historia poprzednich zostaje w pamięci do końca
-  sesji. Zapis w `.eye` jest planowany w etapie 2.
+- Dół: pole polecenia (Enter wysyła, Shift+Enter nowa linia), Wyślij, Stop, Nowa rozmowa, licznik kontekstu i zużycia.
+- Rozmowa należy do zdjęcia. Po zmianie zdjęcia zaczyna się nowa, a historia poprzednich (także po zamknięciu okna
+  czatu) zostaje w pamięci do zamknięcia aplikacji. Zapis w `.eye` jest planowany w etapie 2.
 
 ## 8. Etapy
 
@@ -151,6 +174,9 @@ serwer, z etykietami kategorii.
   - nieznane narzędzie (błąd wraca do modelu, bez wyjątku),
   - limit kroków,
   - odpowiedź końcowa,
-  - podgląd dołączany tylko modelom wizyjnym.
-- Parsowanie odpowiedzi `/api/tags` i `/api/show`, klasyfikacja modeli.
+  - podgląd dołączany tylko modelom wizyjnym, tylko najnowszy,
+  - zwijanie tury do polecenia i podsumowania (także po Stop i limicie), brak obrazów w historii,
+  - liczniki tokenów (z serwera i szacowane), zatrzymanie po przekroczeniu budżetu, parsowanie „200k”/„1,5M”.
+- Parsowanie odpowiedzi `/api/tags`, `/api/show` (capabilities, długość kontekstu) i `/api/chat` (liczniki, błąd),
+  klasyfikacja modeli.
 - Szyfrowanie klucza DPAPI (zaszyfrowanie i odszyfrowanie).

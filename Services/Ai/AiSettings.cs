@@ -22,6 +22,10 @@ public sealed record AiSettings
     public string? ApiKeyProtected { get; init; }
     /// <summary>Most model calls in one assistant turn.</summary>
     public int MaxSteps { get; init; } = 8;
+    /// <summary>Context window asked from Ollama (num_ctx); 0 = the server's default (often only 4k, too small with a preview).</summary>
+    public int ContextTokens { get; init; } = 16384;
+    /// <summary>Most tokens (read + written, all calls) one photo's conversation may use; 0 = no limit.</summary>
+    public long TokenBudget { get; init; } = 200_000;
     /// <summary>Send camera, ISO, aperture, shutter, focal length and date to the model (never GPS or the file path).</summary>
     public bool SendMetadata { get; init; }
     /// <summary>The user agreed to send the preview of the photo to ollama.com.</summary>

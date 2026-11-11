@@ -15,13 +15,19 @@ public interface IAiChat
 {
     /// <summary>
     /// One model call: <paramref name="messages"/> in Ollama format (role, content, images, tool_calls, tool_name),
-    /// <paramref name="tools"/> as function schemas. Returns the assistant message object.
+    /// <paramref name="tools"/> as function schemas. Returns the assistant message and the tokens the call used.
     /// </summary>
-    Task<JsonObject> ChatAsync(string model, JsonArray messages, JsonArray tools, CancellationToken ct);
+    Task<AiChatReply> ChatAsync(string model, JsonArray messages, JsonArray tools, CancellationToken ct);
 }
 
-/// <summary>A model offered by the server with what it can do.</summary>
-public sealed record AiModelInfo(string Name, long Size, IReadOnlyList<string> Capabilities, bool CapabilitiesKnown);
+/// <summary>
+/// The assistant message of one call and its token counts: <paramref name="PromptTokens"/> is what the model read
+/// (the whole conversation sent = the context size), <paramref name="OutputTokens"/> what it wrote. 0 = not reported.
+/// </summary>
+public sealed record AiChatReply(JsonObject Message, int PromptTokens = 0, int OutputTokens = 0);
+
+/// <summary>A model offered by the server with what it can do; <paramref name="ContextLength"/> 0 = unknown.</summary>
+public sealed record AiModelInfo(string Name, long Size, IReadOnlyList<string> Capabilities, bool CapabilitiesKnown, int ContextLength = 0);
 
 /// <summary>HTTP client of the Ollama API (local server or ollama.com): model list, model capabilities, chat.</summary>
 public sealed class OllamaClient : IAiChat, IDisposable
@@ -38,7 +44,10 @@ public sealed class OllamaClient : IAiChat, IDisposable
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
     }
 
-    public static OllamaClient For(AiSettings s) => new(s.BaseUrl, s.ApiKey());
+    /// <summary>Context window asked from the server (options.num_ctx); 0 = the server's default.</summary>
+    public int ContextTokens { get; set; }
+
+    public static OllamaClient For(AiSettings s) => new(s.BaseUrl, s.ApiKey()) { ContextTokens = s.ContextTokens };
 
     public void Dispose() => _http.Dispose();
 
@@ -55,8 +64,10 @@ public sealed class OllamaClient : IAiChat, IDisposable
             await gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                var caps = await ShowCapabilitiesAsync(n.Name, ct).ConfigureAwait(false);
-                return new AiModelInfo(n.Name, n.Size, caps ?? Array.Empty<string>(), caps is not null);
+                var show = await ShowAsync(n.Name, ct).ConfigureAwait(false);
+                var caps = show is null ? null : ParseCapabilities(show);
+                return new AiModelInfo(n.Name, n.Size, caps ?? Array.Empty<string>(), caps is not null,
+                    show is null ? 0 : ParseContextLength(show));
             }
             finally
             {
@@ -67,14 +78,13 @@ public sealed class OllamaClient : IAiChat, IDisposable
         return result;
     }
 
-    /// <summary>Capabilities of a model ("completion", "tools", "vision", "thinking", ...); null when the server does not say.</summary>
-    public async Task<string[]?> ShowCapabilitiesAsync(string model, CancellationToken ct)
+    /// <summary>/api/show of a model (capabilities, model_info); null when the server does not give it.</summary>
+    public async Task<JsonObject?> ShowAsync(string model, CancellationToken ct)
     {
         try
         {
             var body = new JsonObject { ["model"] = model };
-            var res = await PostJsonAsync("/api/show", body, ct).ConfigureAwait(false);
-            return ParseCapabilities(res);
+            return await PostJsonAsync("/api/show", body, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -86,20 +96,33 @@ public sealed class OllamaClient : IAiChat, IDisposable
         }
     }
 
-    public async Task<JsonObject> ChatAsync(string model, JsonArray messages, JsonArray tools, CancellationToken ct)
+    public async Task<AiChatReply> ChatAsync(string model, JsonArray messages, JsonArray tools, CancellationToken ct)
     {
+        var options = new JsonObject { ["temperature"] = 0.3 };
+        if (ContextTokens > 0) options["num_ctx"] = ContextTokens;
         var body = new JsonObject
         {
             ["model"] = model,
             ["messages"] = Json.Clone(messages),
             ["stream"] = false,
-            ["options"] = new JsonObject { ["temperature"] = 0.3 }
+            ["options"] = options
         };
         if (tools.Count > 0) body["tools"] = Json.Clone(tools);
         var res = await PostJsonAsync("/api/chat", body, ct).ConfigureAwait(false);
-        if (res["error"] is JsonNode err) throw new InvalidOperationException("Ollama: " + err);
-        return res["message"] as JsonObject ?? throw new InvalidOperationException("Ollama: the answer has no message");
+        return ParseChat(res);
     }
+
+    /// <summary>The /api/chat answer: message and token counts (prompt_eval_count, eval_count).</summary>
+    public static AiChatReply ParseChat(JsonObject res)
+    {
+        if (res["error"] is JsonNode err) throw new InvalidOperationException("Ollama: " + err);
+        var msg = res["message"] as JsonObject ?? throw new InvalidOperationException("Ollama: the answer has no message");
+        return new AiChatReply(msg, Int(res["prompt_eval_count"]), Int(res["eval_count"]));
+    }
+
+    private static int Int(JsonNode? n) =>
+        n is JsonValue v && v.TryGetValue<long>(out var l) ? (int)Math.Clamp(l, 0, int.MaxValue)
+        : n is JsonValue d && d.TryGetValue<double>(out var x) && double.IsFinite(x) ? (int)Math.Clamp(x, 0, int.MaxValue) : 0;
 
     private async Task<JsonObject> GetJsonAsync(string path, CancellationToken ct)
     {
@@ -128,7 +151,7 @@ public sealed class OllamaClient : IAiChat, IDisposable
             {
             }
             if (detail.Length > 300) detail = detail[..300] + "…";
-            throw new InvalidOperationException($"Ollama {(int)resp.StatusCode} {resp.ReasonPhrase}: {detail}".Trim());
+            throw new HttpRequestException($"Ollama {(int)resp.StatusCode} {resp.ReasonPhrase}: {detail}".Trim(), null, resp.StatusCode);
         }
         return JsonNode.Parse(text) as JsonObject ?? throw new InvalidOperationException("Ollama: not a JSON object");
     }
@@ -148,6 +171,12 @@ public sealed class OllamaClient : IAiChat, IDisposable
         }
         return list.OrderBy(x => x.Item1, StringComparer.OrdinalIgnoreCase).ToList();
     }
+
+    /// <summary>The model's context window from /api/show model_info ("&lt;arch&gt;.context_length"); 0 = not given.</summary>
+    public static int ParseContextLength(JsonObject show) =>
+        show["model_info"] is JsonObject info
+            ? info.Where(kv => kv.Key.EndsWith(".context_length", StringComparison.Ordinal)).Select(kv => Int(kv.Value)).DefaultIfEmpty(0).Max()
+            : 0;
 
     public static string[]? ParseCapabilities(JsonObject show) =>
         show["capabilities"] is JsonArray caps

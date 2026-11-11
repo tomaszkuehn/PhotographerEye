@@ -19,6 +19,12 @@ public partial class MainWindow
 {
     private AssistantWindow? _assistant;
 
+    /// <summary>
+    /// Assistant conversations per photo path. Kept here, not in the window, so closing and reopening the chat window
+    /// (or browsing to another photo and back) continues the same conversation; they last until the app closes.
+    /// </summary>
+    internal readonly Dictionary<string, AiSession> AiSessions = new(StringComparer.OrdinalIgnoreCase);
+
     private void OnAssistantClick(object sender, RoutedEventArgs e)
     {
         if (_assistant is not null)
