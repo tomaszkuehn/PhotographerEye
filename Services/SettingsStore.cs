@@ -38,6 +38,10 @@ public sealed record ViewerSettings
     public double? SlideInterval { get; init; }
     /// <summary>AI assistant: server, model, encrypted API key, limits (null = defaults).</summary>
     public Ai.AiSettings? Ai { get; init; }
+    /// <summary>Version of the privacy policy the user accepted (<see cref="PrivacyPolicy.Version"/>); null = not yet.</summary>
+    public string? PrivacyAcceptedVersion { get; init; }
+    /// <summary>When the user accepted it (local time).</summary>
+    public DateTime? PrivacyAcceptedAt { get; init; }
 }
 
 public static class SettingsStore

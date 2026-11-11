@@ -323,8 +323,34 @@ function Read-Eye { try { return (Get-Content $eyePath -Raw -Encoding UTF8 | Con
 function Wait-Eye([scriptblock]$eyeTest, [int]$ms = 12000) { return Wait-Until { $x = Read-Eye; if ($x -and (& $eyeTest $x)) { $x } } $ms }
 function Tool-Errors { return @([FakeOllama]::ToolResults | Where-Object { $_ -match '"error"' }) }
 
+# ------------------------------------------------------------------ 0. the privacy policy on the first start
+$acc = Wait-Until { Find-Id 'PrivacyAccept' } 30000
+Check ([bool]$acc) 'first start: the privacy policy asks for acceptance'
+if (-not $acc) { throw 'privacy window not found' }
+Check (-not (Find-Id 'BtnAssistant')) 'first start: the main window waits for the acceptance'
+Check ([bool](Find-Id 'PrivacyDecline')) 'first start: the policy can be declined'
+# the first text of the policy window is its heading (the document panel itself is not in the UIA tree)
+function Policy-Heading { $c = New-Object System.Windows.Automation.PropertyCondition($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text); foreach ($w in Our-Windows) { foreach ($e in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $c)) { if ($e.Current.Name -match '^(Polityka prywatno|PhotographerEye Privacy)') { return $e.Current.Name } } }; return '' }
+Invoke-Id 'PrivacyLangPl'
+Start-Sleep -Milliseconds 300
+Check ((Policy-Heading) -match 'Polityka prywatno') 'policy in Polish' (Policy-Heading)
+Invoke-Id 'PrivacyLangEn'
+Start-Sleep -Milliseconds 300
+Check ((Policy-Heading) -match 'Privacy Policy') 'policy in English' (Policy-Heading)
+Invoke-Id 'PrivacyAccept'
+
 if (-not (Wait-Until { Find-Id 'BtnAssistant' } 30000)) { throw 'main window not found' }
 Start-Sleep -Milliseconds 1500
+$st = Get-Content (Join-Path $iso 'settings.json') -Raw | ConvertFrom-Json
+Check ($st.PrivacyAcceptedVersion -and $st.PrivacyAcceptedAt -and $st.Ai.LocalModel -eq 'fake-vl') 'acceptance stored in settings.json (other settings kept)' "$($st.PrivacyAcceptedVersion)"
+
+# the policy from the settings: shown with the acceptance date, nothing to accept
+Invoke-Id 'BtnSettings'
+Invoke-Id 'TilePrivacy'
+$note = Wait-Until { Find-Id 'PrivacyNote' } 10000
+Check ($note -and -not (Find-Id 'PrivacyAccept') -and ($note.Current.Name -match "$($st.PrivacyAcceptedVersion)")) 'settings: the policy with the accepted version' $(if ($note) { $note.Current.Name })
+Invoke-Id 'PrivacyClose'
+[void](Wait-Until { -not (Find-Id 'PrivacyNote') } 5000)
 
 # ------------------------------------------------------------------ 1. the chat window and a basic request
 Invoke-Id 'BtnAssistant'

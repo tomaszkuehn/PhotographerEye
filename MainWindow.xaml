@@ -136,6 +136,8 @@
                                 <WrapPanel>
                                     <ToggleButton x:Name="MnuAutoSaveEdits" Content="&#xE78C;" Tag="Auto-save edits" Style="{StaticResource TileToggle}" Click="OnAutoSaveEditsClick"
                                                   ToolTip="Keep every edit in the photo's .eye file (_eye_ subfolder of the photo folder) as you work, so it is back after a restart. Off: edits are written only with Save Photo." />
+                                    <Button x:Name="MnuPrivacy" AutomationProperties.AutomationId="TilePrivacy" Content="&#xE72E;" Tag="Privacy policy" Style="{StaticResource TileButton}" Click="OnPrivacyClick"
+                                            ToolTip="What the app stores on this computer and what the AI assistant sends (Polish and English)" />
                                     <Button x:Name="MnuAbout" Content="&#xE946;" Tag="About" Style="{StaticResource TileButton}" Click="OnAboutClick"
                                             ToolTip="Version and licences" />
                                 </WrapPanel>

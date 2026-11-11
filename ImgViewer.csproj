@@ -30,6 +30,8 @@
     <Compile Remove="PluginSdk\**" />
     <Compile Remove="eyePlugins\**" />
     <Resource Include="Assets\icon.ico" />
+    <EmbeddedResource Include="Assets\privacy-pl.md" LogicalName="ImgViewer.Assets.privacy-pl.md" />
+    <EmbeddedResource Include="Assets\privacy-en.md" LogicalName="ImgViewer.Assets.privacy-en.md" />
     <None Include="thirdparty\libraw22\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="thirdparty\librawhe\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

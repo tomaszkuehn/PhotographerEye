@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -253,7 +254,28 @@ internal static partial class Program
         var phJson = System.Text.Json.JsonSerializer.Serialize(ph);
         Check(System.Text.Json.JsonSerializer.Deserialize<AiSettings>(phJson)!.PromptHistory!.SequenceEqual(ph.PromptHistory), "ai: prompt history survives settings.json");
 
+        TestPrivacyPolicy();
         TestAiAssistantStages();
+    }
+
+    private static void TestPrivacyPolicy()
+    {
+        string pl = PrivacyPolicy.Text("pl"), en = PrivacyPolicy.Text("en");
+        Check(pl.StartsWith("# Polityka prywatności") && en.StartsWith("# PhotographerEye Privacy Policy"), "privacy: both texts are embedded");
+        int Sections(string t) => t.Split('\n').Count(l => l.StartsWith("## "));
+        Check(Sections(pl) == Sections(en) && Sections(pl) >= 8, "privacy: Polish and English have the same sections");
+        var date = DateTime.ParseExact(PrivacyPolicy.Version, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        // (the harness runs with invariant globalization: Polish month names spelled out)
+        string[] plMonths = { "stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipca", "sierpnia", "września", "października", "listopada", "grudnia" };
+        Check(pl.Contains($"{date.Day} {plMonths[date.Month - 1]} {date.Year}") && en.Contains(date.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)),
+            "privacy: the texts carry the date of Version (raise both together)");
+        var fresh = new ViewerSettings();
+        var ok = PrivacyPolicy.Accept(fresh with { Gamma = 1.2 }, new DateTime(2026, 11, 11, 10, 0, 0));
+        Check(!PrivacyPolicy.IsAccepted(fresh) && PrivacyPolicy.IsAccepted(ok) && ok.Gamma == 1.2 && ok.PrivacyAcceptedAt!.Value.Hour == 10,
+            "privacy: not accepted on the first start, accepted after Accept (other settings kept)");
+        Check(!PrivacyPolicy.IsAccepted(ok with { PrivacyAcceptedVersion = "2000-01-01" }), "privacy: an older version must be accepted again");
+        var back = System.Text.Json.JsonSerializer.Deserialize<ViewerSettings>(System.Text.Json.JsonSerializer.Serialize(ok))!;
+        Check(PrivacyPolicy.IsAccepted(back) && back.PrivacyAcceptedAt == ok.PrivacyAcceptedAt, "privacy: the acceptance survives settings.json");
     }
 
     private static PluginImage Solid(int w, int h, float r, float g, float b)

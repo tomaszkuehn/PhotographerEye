@@ -68,7 +68,9 @@ Remove-Item (Join-Path $td '*') -Filter '*.png' -Force -ErrorAction SilentlyCont
 # a leftover edit from an earlier run would start the test with its masks and tool links
 Remove-Item (Join-Path $td '_eye_') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $debugLog -Force -ErrorAction SilentlyContinue
-(@{ ShadowLift = 0.0; Gamma = 1.0; ShowMaskMarkers = $false } | ConvertTo-Json) | Set-Content (Join-Path $iso 'settings.json') -Encoding UTF8
+# the privacy policy counts as accepted (its window is tested by tools\UiAiTest), so the main window opens at once
+$privacyVersion = [regex]::Match((Get-Content (Join-Path $repo 'Services\PrivacyPolicy.cs') -Raw), 'const string Version = "([^"]+)"').Groups[1].Value
+(@{ ShadowLift = 0.0; Gamma = 1.0; ShowMaskMarkers = $false; PrivacyAcceptedVersion = $privacyVersion } | ConvertTo-Json) | Set-Content (Join-Path $iso 'settings.json') -Encoding UTF8
 
 # --------------------------------------------------------------- test photo
 $photo = Join-Path $td 'photo.png'

@@ -1858,6 +1858,12 @@ public partial class MainWindow : Window
         MnuPreviewFull.IsChecked = _previewQuality == PreviewQuality.Full;
     }
 
+    private void OnPrivacyClick(object sender, RoutedEventArgs e)
+    {
+        CloseSettingsFlyout();
+        new PrivacyWindow(mustAccept: false, SettingsStore.Load().PrivacyAcceptedAt) { Owner = this, WindowStartupLocation = WindowStartupLocation.CenterOwner }.ShowDialog();
+    }
+
     private void OnAboutClick(object sender, RoutedEventArgs e)
     {
         CloseSettingsFlyout();
