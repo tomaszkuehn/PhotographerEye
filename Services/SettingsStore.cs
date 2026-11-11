@@ -36,6 +36,8 @@ public sealed record ViewerSettings
     public List<string>? RecentFolders { get; init; }
     /// <summary>Slideshow interval in seconds (null = 5).</summary>
     public double? SlideInterval { get; init; }
+    /// <summary>AI assistant: server, model, encrypted API key, limits (null = defaults).</summary>
+    public Ai.AiSettings? Ai { get; init; }
 }
 
 public static class SettingsStore

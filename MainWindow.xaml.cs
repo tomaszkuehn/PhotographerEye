@@ -188,6 +188,7 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         Closing += (_, _) =>
         {
+            _assistant?.CancelTurn();
             CommitHistNow();
             CancelBackgroundTasks(quiet: true);
             if (_currentPath is not null) RaiseImageClosed();
@@ -263,6 +264,7 @@ public partial class MainWindow : Window
 
         _index = idx;
         string path = _files[idx];
+        AssistantPhotoSwitching();
         if (_currentPath is not null)
         {
             CommitHistNow();
@@ -274,6 +276,7 @@ public partial class MainWindow : Window
         FlushRendered(sync: false);
         _instantShown = false;
         _currentPath = path;
+        AssistantPhotoChanged();
         SetCropMode(false);
         _lastDisplayed = null;
         _lastDisplayedBox = default;

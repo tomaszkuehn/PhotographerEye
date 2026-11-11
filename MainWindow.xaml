@@ -197,6 +197,8 @@
                         ToolTip="Crop &amp; straighten (C) — drag inside: move, handles: resize, drag outside or Ctrl+drag: rotate, Esc: close" />
                 <Button x:Name="BtnPanel" AutomationProperties.AutomationId="BtnPanel" Content="&#xE9E9;" Style="{StaticResource FlatButton}" Click="OnPanelToggleClick"
                         ToolTip="Adjustments panel — exposure, contrast, white balance, saturation, clarity, dehaze, denoise (E)" />
+                <Button x:Name="BtnAssistant" AutomationProperties.AutomationId="BtnAssistant" Content="&#xE99A;" Style="{StaticResource FlatButton}" Click="OnAssistantClick"
+                        ToolTip="AI assistant (Ollama) — describe the look you want: family album, reportage, artistic black &amp; white…" />
                 <Button x:Name="BtnPresent" Content="&#xE740;" Style="{StaticResource FlatButton}" Click="OnPresentationClick"
                         ToolTip="Presentation — full screen on black, no bars (F / F11; P slideshow; Esc exits)" />
                 </WrapPanel>
