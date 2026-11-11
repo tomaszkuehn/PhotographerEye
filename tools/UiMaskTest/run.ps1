@@ -39,10 +39,11 @@ $iso = Join-Path $td 'appdata'
 $debugLog = Join-Path $env:TEMP 'photographereye-debug.log'
 $report = Join-Path $repo 'UI-TEST.md'
 
-# Any unhandled error: report it and close the app so a failed run never leaves a frozen-looking window.
+# Any unhandled error: report it and close the app this script started (never another PhotographerEye,
+# e.g. the user's own) so a failed run never leaves a frozen-looking window.
 trap {
   Write-Host ('[FATAL] ' + $_.Exception.Message + ' @ line ' + $_.InvocationInfo.ScriptLineNumber)
-  Get-Process PhotographerEye -ErrorAction SilentlyContinue | Stop-Process -Force
+  if ($proc -and -not $proc.HasExited) { try { $proc.Kill() } catch {} }
   exit 1
 }
 
@@ -59,8 +60,7 @@ function Add-Result($phase, $target, $inD, $outD, $verdict, $note) {
 }
 
 # --------------------------------------------------------------- process + appdata
-Get-Process PhotographerEye -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 700
+# Other PhotographerEye windows (the user's) are left alone: the test drives only the process it starts below.
 New-Item -ItemType Directory -Force -Path $iso, $td, $repo | Out-Null
 Remove-Item (Join-Path $iso '*') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $td '*') -Filter '*.png' -Force -ErrorAction SilentlyContinue
