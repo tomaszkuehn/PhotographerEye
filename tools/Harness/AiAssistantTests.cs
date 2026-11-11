@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -502,11 +502,23 @@ internal static partial class Program
             var r = Run(ed, "create_mask", new JsonObject { ["kind"] = "radial", ["center_x"] = 0.5, ["center_y"] = 0.25, ["radius_x"] = 0.3, ["radius_y"] = 0.2 });
             var m = ed.MaskSet.Values.Single();
             Check(r.Changed && m.Key == "mask:1" && m.Kind == "radial" && Math.Abs(m.P[0] - 0.5) < E && Math.Abs(m.P[1] - 0.25) < E &&
-                  Math.Abs(m.P[2] - 0.2) < E && Math.Abs(m.P[3] - 0.2) < E && m.P[4] == 0.5 && r.Content.Contains("changes nothing yet"),
+                  // the model's radii are the inner ellipse; the default feather (1 = 100 % in the panel) doubles it outside
+                  Math.Abs(m.P[2] - 0.4) < E && Math.Abs(m.P[3] - 0.4) < E && Math.Abs(m.P[4] - 0.5) < E && r.Content.Contains("changes nothing yet"),
                 "ai: radial mask placed in view coordinates (mapped through the crop)");
-            var gm = JsonNode.Parse(Run(ed, "get_state", null).Content)!["masks"]!.AsArray()[0]!;
-            Check(Math.Abs(gm["center_x"]!.GetValue<double>() - 0.5) < 1e-3 && Math.Abs(gm["radius_x"]!.GetValue<double>() - 0.3) < 1e-3 &&
-                  Math.Abs(gm["radius_y"]!.GetValue<double>() - 0.2) < 1e-3, "ai: get_state shows the mask in view coordinates");
+            JsonNode Gm() => JsonNode.Parse(Run(ed, "get_state", null).Content)!["masks"]!.AsArray()[0]!;
+            double G(string k) => Gm()[k]!.GetValue<double>();
+            Check(Math.Abs(G("center_x") - 0.5) < 1e-3 && Math.Abs(G("radius_x") - 0.3) < 1e-3 && Math.Abs(G("radius_y") - 0.2) < 1e-3 &&
+                  Math.Abs(G("feather") - 1) < 1e-3, "ai: get_state shows the mask in view coordinates, feather as the panel slider");
+            r = Run(ed, "create_mask", new JsonObject { ["mask"] = "mask:1", ["feather"] = 0.5 });
+            m = ed.MaskSet["mask:1"];
+            Check(r.Changed && Math.Abs(ImgViewer.MaskRender.RadialUserFeather(m.P[4]) - 0.5) < E && Math.Abs(m.P[2] - 0.3) < E && Math.Abs(m.P[1] - 0.25) < E &&
+                  Math.Abs(G("radius_x") - 0.3) < 1e-3 && Math.Abs(G("feather") - 0.5) < 1e-3,
+                "ai: feather 0.5 = 50 % in the panel; reshaping only the feather keeps the centre and the ellipse");
+            Run(ed, "create_mask", new JsonObject { ["mask"] = "mask:1", ["center_x"] = 0.4 });
+            Check(Math.Abs(G("center_x") - 0.4) < 1e-3 && Math.Abs(G("feather") - 0.5) < 1e-3 && Math.Abs(G("radius_y") - 0.2) < 1e-3,
+                "ai: moving a mask keeps its feather and size");
+            Run(ed, "create_mask", new JsonObject { ["mask"] = "mask:1", ["feather"] = 0 });
+            Check(ed.MaskSet["mask:1"].P[4] == 0 && Math.Abs(G("radius_x") - 0.3) < 1e-3, "ai: feather 0 = hard edge on the ellipse");
             r = Run(ed, "set_mask_values", new JsonObject { ["mask"] = "1", ["values"] = new JsonObject { ["exposure"] = 0.5, ["Shadows"] = 20, ["Clarity"] = 0 } });
             m = ed.MaskSet["mask:1"];
             Check(r.Changed && m.Values!.Count == 1 && m.Values["Exposure"] == 0.5 && r.Content.Contains("Shadows") && r.StepNote!.Contains("+0.5"),
@@ -525,6 +537,8 @@ internal static partial class Program
                 "ai: a linear mask needs two points apart");
             r = Run(ed, "create_mask", new JsonObject { ["kind"] = "luma", ["low"] = 0.9, ["high"] = 0.6 });
             Check(r.Changed && ed.MaskSet["mask:2"].P.SequenceEqual(new[] { 0.6, 0.9, 0.1 }), "ai: luma mask (range ordered)");
+            Run(ed, "create_mask", new JsonObject { ["mask"] = "mask:2", ["feather"] = 0.3 });
+            Check(ed.MaskSet["mask:2"].P.SequenceEqual(new[] { 0.6, 0.9, 0.3 }), "ai: reshaping a luma mask keeps its range");
             Check(Run(ed, "create_mask", new JsonObject { ["kind"] = "blob" }).Error, "ai: unknown mask kind refused");
             r = Run(ed, "link_tool_to_mask", new JsonObject { ["filter"] = "fx:tone", ["mask"] = "none" });
             Check(r.Changed && !ed.ToolMask.ContainsKey("fx:tone"), "ai: back to the whole photo");

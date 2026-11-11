@@ -168,8 +168,10 @@ public static class AiTools
 
         // stage 4: local masks
         tools.Add(Fn("create_mask", "Create a local mask, or reshape an existing one (give mask). Coordinates are fractions 0..1 of the photo as it is shown now (x right, y down). " +
-                                    "radial: center_x, center_y, radius_x (fraction of the shown width), radius_y (of the shown height), feather 0..1 (default 0.5). " +
+                                    "radial: center_x, center_y, radius_x (fraction of the shown width), radius_y (of the shown height) of the ellipse with the full effect; " +
+                                    "feather 0..1 = the soft edge outside it (0 hard edge, 0.5 fades out at 1.5× the radius, 1 = default, at 2× the radius). " +
                                     "linear: full effect at (x1,y1), fading to none at (x2,y2). luma: luminance range low..high (0..1) with feather. invert: the outside instead. " +
+                                    "When reshaping, values you leave out stay as they are (e.g. give only feather to soften the edge). " +
                                     "A new mask changes nothing until it gets values (set_mask_values) or a filter is limited to it (link_tool_to_mask).",
             new JsonObject
             {
@@ -726,14 +728,10 @@ public static class AiTools
             {
                 case "radial" when p.Length >= 5:
                 {
-                    var (vx, vy) = ed.PhotoToView(p[0], p[1]);
-                    var (exx, exy) = ed.PhotoToView(p[0] + p[2], p[1]);
-                    var (eyx, eyy) = ed.PhotoToView(p[0], p[1] + p[3]);
-                    o["center_x"] = R(vx); o["center_y"] = R(vy);
-                    // view-fraction radii (the axes swap after a quarter turn)
-                    o["radius_x"] = R(Math.Max(Math.Abs(exx - vx), Math.Abs(eyx - vx)));
-                    o["radius_y"] = R(Math.Max(Math.Abs(exy - vy), Math.Abs(eyy - vy)));
-                    o["feather"] = R(p[4]);
+                    var v = RadialView(ed, p);
+                    o["center_x"] = R(v.Cx); o["center_y"] = R(v.Cy);
+                    o["radius_x"] = R(v.Rx); o["radius_y"] = R(v.Ry);
+                    o["feather"] = R(v.Feather);
                     break;
                 }
                 case "linear" when p.Length >= 4:
@@ -760,6 +758,23 @@ public static class AiTools
         return arr;
     }
 
+    /// <summary>
+    /// A radial mask as the model and the mask panel see it: centre and radii of the inner ellipse (full effect) in view
+    /// fractions, and the feather 0..1 as the panel slider (0 = hard edge, 1 = the soft edge reaches twice the inner
+    /// ellipse). The stored P[2], P[3] are the outer radii and P[4] the band (<see cref="MaskRender.RadialUserFeather"/>).
+    /// </summary>
+    private static (double Cx, double Cy, double Rx, double Ry, double Feather) RadialView(IAiEditor ed, double[] p)
+    {
+        var (vx, vy) = ed.PhotoToView(p[0], p[1]);
+        var (exx, exy) = ed.PhotoToView(p[0] + p[2], p[1]);
+        var (eyx, eyy) = ed.PhotoToView(p[0], p[1] + p[3]);
+        double band = Math.Clamp(p[4], 0, 1), inner = Math.Max(0.001, 1 - band);
+        // view-fraction radii (the axes swap after a quarter turn)
+        double rx = Math.Max(Math.Abs(exx - vx), Math.Abs(eyx - vx)) * inner;
+        double ry = Math.Max(Math.Abs(exy - vy), Math.Abs(eyy - vy)) * inner;
+        return (vx, vy, rx, ry, MaskRender.RadialUserFeather(band));
+    }
+
     private static async Task<AiToolResult> CreateMaskAsync(IAiEditor ed, JsonObject args, CancellationToken ct)
     {
         AiMask? existing = null;
@@ -771,7 +786,8 @@ public static class AiTools
         string kind = (args["kind"]?.ToString() ?? existing?.Kind ?? "radial").Trim().ToLowerInvariant();
         bool invert = args["invert"] is JsonNode inv ? TryNumber(inv, out double iv) && iv != 0 : existing?.Invert ?? false;
         double Get(string k, double d) => TryNumber(args[k], out double v) ? v : d;
-        double feather = Math.Clamp(Get("feather", 0.5), 0, 1);
+        // reshaping keeps what the call leaves out (same kind only)
+        var old = existing is not null && existing.Kind == kind ? existing.P : null;
         double[] p;
         var (pw, ph) = ed.PhotoPixelSize();
         pw = Math.Max(1, pw); ph = Math.Max(1, ph);
@@ -779,32 +795,42 @@ public static class AiTools
         {
             case "radial":
             {
-                double cx = Math.Clamp(Get("center_x", 0.5), -0.5, 1.5), cy = Math.Clamp(Get("center_y", 0.5), -0.5, 1.5);
-                double rx = Math.Clamp(Get("radius_x", Get("radius", 0.25)), 0.01, 2), ry = Math.Clamp(Get("radius_y", Get("radius", rx)), 0.01, 2);
+                var cur = old is { Length: >= 5 } ? RadialView(ed, old) : (Cx: 0.5, Cy: 0.5, Rx: 0.25, Ry: double.NaN, Feather: 1.0);
+                double cx = Math.Clamp(Get("center_x", cur.Cx), -0.5, 1.5), cy = Math.Clamp(Get("center_y", cur.Cy), -0.5, 1.5);
+                bool oneRadius = TryNumber(args["radius"], out _);
+                double rx = Math.Clamp(Get("radius_x", oneRadius ? Get("radius", cur.Rx) : cur.Rx), 0.01, 2);
+                double ry = Math.Clamp(Get("radius_y", oneRadius || double.IsNaN(cur.Ry) ? Get("radius", rx) : cur.Ry), 0.01, 2);
+                // the model gives the inner ellipse and the panel's feather; the soft edge reaches (1 + feather) × it
+                double feather = Math.Clamp(Get("feather", cur.Feather), 0, 1);
+                double band = MaskRender.RadialBandFraction(feather), grow = 1 + feather;
                 var c = ed.ViewToPhoto(cx, cy);
-                var ex = ed.ViewToPhoto(cx + rx, cy);
-                var ey = ed.ViewToPhoto(cx, cy + ry);
+                var ex = ed.ViewToPhoto(cx + rx * grow, cy);
+                var ey = ed.ViewToPhoto(cx, cy + ry * grow);
                 // distances in source pixels; a quarter turn makes the view x run along the photo's y
                 double exdx = (ex.X - c.X) * pw, exdy = (ex.Y - c.Y) * ph, eydx = (ey.X - c.X) * pw, eydy = (ey.Y - c.Y) * ph;
                 double lx = Math.Sqrt(exdx * exdx + exdy * exdy), ly = Math.Sqrt(eydx * eydx + eydy * eydy);
                 bool swapped = Math.Abs(exdy) > Math.Abs(exdx);
                 double srcRx = (swapped ? ly : lx) / pw, srcRy = (swapped ? lx : ly) / ph;
-                p = new[] { c.X, c.Y, Math.Clamp(srcRx, 0.005, 3), Math.Clamp(srcRy, 0.005, 3), feather };
+                p = new[] { c.X, c.Y, Math.Clamp(srcRx, 0.005, 3), Math.Clamp(srcRy, 0.005, 3), band };
+                if (old is { Length: > 5 }) p = p.Concat(old.Skip(5)).ToArray(); // the ellipse's rotation stays
                 break;
             }
             case "linear":
             {
-                var a = ed.ViewToPhoto(Get("x1", 0.5), Get("y1", 0.0));
-                var b = ed.ViewToPhoto(Get("x2", 0.5), Get("y2", 0.5));
+                var (o1x, o1y) = old is { Length: >= 4 } ? ed.PhotoToView(old[0], old[1]) : (0.5, 0.0);
+                var (o2x, o2y) = old is { Length: >= 4 } ? ed.PhotoToView(old[2], old[3]) : (0.5, 0.5);
+                var a = ed.ViewToPhoto(Get("x1", o1x), Get("y1", o1y));
+                var b = ed.ViewToPhoto(Get("x2", o2x), Get("y2", o2y));
                 if (Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) < 0.01) return Fail("x1,y1 and x2,y2 must be apart");
                 p = new[] { a.X, a.Y, b.X, b.Y };
                 break;
             }
             case "luma":
             {
-                double lo = Math.Clamp(Get("low", 0.7), 0, 1), hi = Math.Clamp(Get("high", 1), 0, 1);
+                bool had = old is { Length: >= 3 };
+                double lo = Math.Clamp(Get("low", had ? old![0] : 0.7), 0, 1), hi = Math.Clamp(Get("high", had ? old![1] : 1), 0, 1);
                 if (hi < lo) (lo, hi) = (hi, lo);
-                p = new[] { lo, hi, Math.Clamp(Get("feather", 0.1), 0, 1) };
+                p = new[] { lo, hi, Math.Clamp(Get("feather", had ? old![2] : 0.1), 0, 1) };
                 break;
             }
             default:

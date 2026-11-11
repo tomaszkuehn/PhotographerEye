@@ -127,7 +127,7 @@ przetrwa zamknięcie aplikacji. „Nowa rozmowa” zeruje historię i liczniki.
 | 2 | `apply_preset` | Stosuje preset (po id albo nazwie) jako część tej samej tury. |
 | 3 | `set_crop` | `aspect` (`original`, `free`, `W:H`, także pionowe `4:5`), `size` 0.2..1, `center_x/center_y`; przy `free` prostokąt `x,y,w,h`; `reset`. Kadr mieści się w ramie. Proporcje spoza listy UI (1:1, pionowe) są zapisywane jako `original`, bo etykieta wpływa tylko na późniejsze przeciąganie. |
 | 3 | `straighten` | Kąt −45..45°, reszta geometrii bez zmian. |
-| 4 | `create_mask` | `radial` (środek, promienie, feather), `linear` (x1,y1 → x2,y2), `luma` (low, high, feather). Współrzędne 0..1 są w kadrze, tak jak model widzi podgląd. Aplikacja przelicza je na zdjęcie źródłowe (kadr, prostowanie, obrót). Z `mask` zmienia kształt istniejącej maski. |
+| 4 | `create_mask` | `radial` (środek, promienie, feather), `linear` (x1,y1 → x2,y2), `luma` (low, high, feather). Współrzędne 0..1 są w kadrze, tak jak model widzi podgląd. Aplikacja przelicza je na zdjęcie źródłowe (kadr, prostowanie, obrót). Z `mask` zmienia kształt istniejącej maski, a pominięte parametry zostają bez zmian. W `radial` promienie opisują wewnętrzną elipsę (pełny efekt), a feather 0..1 to ta sama skala co suwak Feather w panelu: 0 = twarda krawędź, 1 (domyślnie) = miękka krawędź do 2× promienia. `get_state` zwraca je w tej samej postaci. |
 | 4 | `set_mask_values` | Wartości podstawowych suwaków dodawane wewnątrz maski. Zera są pomijane, `{}` usuwa wartości. |
 | 4 | `link_tool_to_mask`, `delete_mask` | Ogranicza filtr do maski (`none` przywraca całe zdjęcie). Usunięcie maski przywraca całe zdjęcie powiązanym filtrom. |
 
