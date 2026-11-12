@@ -64,6 +64,11 @@
     <Copy SourceFiles="thirdparty\librawhe\dcraw_emu.exe" DestinationFolder="$(PublishDir)thirdparty\librawhe" SkipUnchangedFiles="true" />
   </Target>
 
+  <!-- The license allows sharing unmodified copies only together with the license file. -->
+  <Target Name="CopyLicenseToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="LICENSE" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" />
+  </Target>
+
   <Target Name="CopyBundledPluginsToPublish" AfterTargets="Publish" DependsOnTargets="CollectBundledPluginFiles">
     <Copy SourceFiles="@(_BundledPluginFile)" DestinationFiles="@(_BundledPluginFile->'$(PublishDir)plugins\%(Folder)\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <!-- Older layouts: all samples in plugins\samples, plugin dlls loose in plugins\. -->
