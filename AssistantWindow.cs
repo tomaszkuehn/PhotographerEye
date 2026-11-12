@@ -645,9 +645,13 @@ public sealed class AssistantWindow : Window
         var s = CurrentSession(create: false);
         var c = CurrentChoice();
         int ctxMax = EffectiveContext();
-        int ctxNow = s is { LastPromptTokens: > 0 } ? s.LastPromptTokens : (s ?? new AiSession()).EstimateNextContext(c?.Vision ?? false) + (c?.Vision == true ? AiSession.ImageTokens : 0);
-        bool measured = s is { LastPromptTokens: > 0 } && !s.LastPromptEstimated;
-        string ctx = $"Context: {(measured ? "" : "~")}{AiSession.Fmt(ctxNow)}" + (ctxMax > 0 ? $" / {AiSession.Fmt(ctxMax)}" : "");
+        // a conversation without requests yet (new or never started) counts from zero; the first request's size is a hint
+        bool fresh = s is null || (s.TotalCalls == 0 && s.LastPromptTokens == 0);
+        int next = (s ?? new AiSession()).EstimateNextContext(c?.Vision ?? false) + (c?.Vision == true ? AiSession.ImageTokens : 0);
+        int ctxNow = fresh ? 0 : s!.LastPromptTokens > 0 ? s.LastPromptTokens : next;
+        bool measured = fresh || (s!.LastPromptTokens > 0 && !s.LastPromptEstimated);
+        string ctx = $"Context: {(measured ? "" : "~")}{AiSession.Fmt(ctxNow)}" + (ctxMax > 0 ? $" / {AiSession.Fmt(ctxMax)}" : "")
+                     + (fresh ? $" (first request ~{AiSession.Fmt(next)})" : "");
         long used = s?.TotalTokens ?? 0;
         string budget = _s.TokenBudget > 0 ? $" / {AiSession.Fmt(_s.TokenBudget)}" : " (no limit)";
         string calls = s is { TotalCalls: > 0 } ? $" in {s.TotalCalls} call(s)" : "";
@@ -656,7 +660,7 @@ public sealed class AssistantWindow : Window
             : " · text only: the photo is not sent, only its statistics";
         string text = $"{ctx} tokens · used for this photo: {(s?.Estimated == true ? "~" : "")}{AiSession.Fmt(used)}{budget}{calls}{sight}";
         bool warn = false;
-        if (ctxMax > 0 && ctxNow >= ctxMax * 0.9)
+        if (ctxMax > 0 && Math.Max(ctxNow, fresh ? next : 0) >= ctxMax * 0.9)
         {
             text += " — context nearly full: the server cuts the oldest part; raise num_ctx or start a new conversation";
             warn = true;
@@ -705,7 +709,9 @@ public sealed class AssistantWindow : Window
     {
         if (_busy) return;
         var path = _main.AiPhotoPath;
-        if (path is not null) _sessions.Remove(path);
+        // an empty session, not none: a .eye file still holding the old conversation (autosave off) must not bring it
+        // and its counters back when the photo is shown again
+        if (path is not null) _sessions[path] = new AiSession();
         _main.AiConversationChanged(); // the .eye file drops the old conversation too
         ShowSession();
         SetStatus("New conversation (the photo keeps its settings).");

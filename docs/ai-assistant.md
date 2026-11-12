@@ -100,7 +100,9 @@ Każde wywołanie modelu wysyła całą historię, więc koszt rośnie z długo�
   Budżet tokenów na zdjęcie nadal przerywa pracę. Komunikat o osiągnięciu limitu podaje jego wartość i miejsce,
   w którym można go zmienić.
 - **Licznik w oknie:** „Context: ~3.1k / 16k tokens · used for this photo: 42k / 200k in N calls”. Czerwone
-  ostrzeżenie przy 90% kontekstu albo 80% budżetu. Liczby pochodzą z `prompt_eval_count`/`eval_count`, ale liczy się
+  ostrzeżenie przy 90% kontekstu albo 80% budżetu. „New conversation” zeruje liczniki („Context: 0 … (first
+  request ~3.1k)”), także gdy plik .eye nadal ma starą rozmowę (autozapis wyłączony) — nie wraca ona po powrocie
+  do zdjęcia. Liczby pochodzą z `prompt_eval_count`/`eval_count`, ale liczy się
   większa z dwóch wartości: licznik serwera albo szacunek (znaki/4, ~1000 na obraz). Lokalna Ollama może podać tylko
   tokeny spoza bufora (ponownie użyty początek rozmowy pomija), co zaniżałoby kontekst i budżet. Wartości szacowane
   są oznaczone „~”.

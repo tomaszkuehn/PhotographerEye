@@ -455,6 +455,8 @@ Invoke-Id 'AiNew'
 $e = Wait-Eye { param($x) -not $x.Assistant }
 Check ([bool]$e) 'New conversation: the .eye file drops it'
 Check (-not ((Transcript) -match 'Done basic')) 'New conversation: the transcript is cleared'
+$usage = (Find-Id 'AiUsage').Current.Name
+Check (($usage -match 'Context: 0[ /]') -and ($usage -match 'used for this photo: 0 ') -and -not ($usage -match 'call\(s\)|preview\(s\) sent')) 'New conversation: the counters start from zero' $usage
 
 # ------------------------------------------------------------------ 6. Up / Down recall earlier requests
 # Keys go only to the test's own input: they are sent only when that element has the keyboard focus.
